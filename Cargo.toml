@@ -1,0 +1,16 @@
+[package]
+name = "kasm"
+version = "0.0.1"
+authors = [ "Rod Vagg <r@va.gg>" ]
+
+[profile.test]
+opt-level = 0
+debug = true
+rpath = false
+lto = false
+debug-assertions = true
+codegen-units = 1
+panic = 'unwind'
+
+[dependencies]
+byteorder = "~0.5.3"
