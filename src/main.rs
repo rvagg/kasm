@@ -1,46 +1,25 @@
 mod parser;
 
-
 use std::env;
-use std::path::Path;
 use std::fs::File;
-use std::error::Error;
-use std::io::prelude::*;
+use std::io::Read;
+use std::path::Path;
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+  let source_file_path = env::args().nth(1).ok_or("Please provide a file")?;
+    let path = Path::new(&source_file_path);
 
-fn main() {
-  use std::u32;
+    let mut file = File::open(&path)?;
 
-  let source_file_path = env::args().nth(1);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
 
-  if !source_file_path.is_some() {
-    println!("Please provide a file");
-    std::process::exit(1);
-  }
+    let unit = parser::parse(
+        &source_file_path,
+        &mut parser::parsable_bytes::ParsableBytes::new(bytes),
+    )?;
 
-  let path_string = String::from(source_file_path.unwrap());
-  let path = Path::new(&path_string);
-  let display = path.display();
+    println!("{}", unit);
 
-  let mut file = match File::open(&path) {
-      Err(why) => panic!(
-          "couldn't open {}: {}"
-        , display
-        , Error::description(&why)
-      )
-    , Ok(file) => file
-  };
-
-  let mut bytes = Vec::new();
-  match file.read_to_end(&mut bytes) {
-      Ok(c)  => c
-    , Err(e) => {
-        println!("error {}", e);
-        return ();
-      }
-  };
-
-  let unit = parser::parse(&path_string, &mut parser::parsable_bytes::ParsableBytes::new(bytes));
-
-  println!("{}", unit);
+    Ok(())
 }

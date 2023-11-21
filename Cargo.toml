@@ -14,3 +14,4 @@ panic = 'unwind'
 
 [dependencies]
 byteorder = "~0.5.3"
+hex = "0.4.3"
