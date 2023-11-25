@@ -1,11 +1,13 @@
 use std::fmt;
 use std::io;
 
+use crate::parser::ast;
+
 pub struct ParsedUnit {
     pub name: String,
     pub magic: u32,
     pub version: u32,
-    pub types: Vec<Type>,
+    pub function_types: Vec<FunctionType>,
     pub imports: Vec<Import>,
     pub functions: Vec<Function>,
     pub memory: Option<Memory>,
@@ -16,10 +18,9 @@ pub struct ParsedUnit {
     pub start: u64,
 }
 
-pub struct Type {
-    pub form: Form,
+pub struct FunctionType {
     pub parameters: Vec<ValueType>,
-    pub return_type: ValueType,
+    pub return_types: Vec<ValueType>,
 }
 
 pub struct Import {
@@ -54,6 +55,7 @@ pub struct Export {
 pub struct FunctionBody {
     pub locals: Vec<ValueType>,
     pub body: Vec<u8>,
+    pub instructions: Vec<ast::Instruction>,
 }
 
 pub struct Data {
@@ -70,15 +72,6 @@ pub enum ExternalKind {
     Table,
     Memory,
     Global,
-}
-
-#[derive(Copy, Clone)]
-pub enum ValueType {
-    Int32,
-    Int64,
-    Float32,
-    Float64,
-    None,
 }
 
 pub struct MemoryType {
@@ -99,7 +92,7 @@ impl ParsedUnit {
             name: name.to_string(),
             magic: 0,
             version: 0,
-            types: vec![],
+            function_types: vec![],
             imports: vec![],
             functions: vec![],
             memory: None,
@@ -117,9 +110,9 @@ impl fmt::Display for ParsedUnit {
         write!(f, "ParsedUnit('{}') {{", self.name).unwrap();
         write!(f, "\n  magic number = {}", self.magic).unwrap();
         write!(f, "\n  version = {}", self.version).unwrap();
-        write!(f, "\n  types").unwrap();
+        write!(f, "\n  function_types").unwrap();
         let mut i = 0;
-        for t in &self.types {
+        for t in &self.function_types {
             write!(f, "\n    {} {}", i, t).unwrap();
             i += 1;
         }
@@ -173,13 +166,22 @@ impl fmt::Display for ParsedUnit {
     }
 }
 
-impl fmt::Display for Type {
+impl fmt::Display for FunctionType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_set()
-            .entries(self.parameters.iter())
-            .finish()
-            .unwrap();
-        write!(f, " : {}", self.return_type)
+        write!(
+            f,
+            "({}) : ({})",
+            self.parameters
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.return_types
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
     }
 }
 
@@ -226,7 +228,18 @@ impl fmt::Display for FunctionBody {
         write!(f, "locals = ").unwrap();
         f.debug_set().entries(self.locals.iter()).finish().unwrap();
         write!(f, " body = ").unwrap();
-        f.debug_set().entries(self.body.iter()).finish()
+        let hex_string = self
+            .body
+            .iter()
+            .map(|byte| format!("{:02x}", byte))
+            .collect::<Vec<String>>()
+            .join("");
+        write!(f, "0x{}", hex_string).unwrap();
+        write!(f, " instructions = ").unwrap();
+        for instruction in &self.instructions {
+            write!(f, "{} ", instruction)?;
+        }
+        Ok(())
     }
 }
 
@@ -236,15 +249,6 @@ impl fmt::Display for Data {
         f.debug_set().entries(self.data.iter()).finish()
     }
 }
-
-/*
-impl Clone for ValueType {
-  impl Clone for Stats {
-    fn clone(&self) -> ValueType {
-      match
-    }
-  }
-}*/
 
 impl ExportIndex {
     pub fn decode(byte: u8, idx: u32) -> Result<ExportIndex, io::Error> {
@@ -261,17 +265,41 @@ impl ExportIndex {
     }
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum ValueType {
+    // Number types
+    I32,
+    I64,
+    F32,
+    F64,
+    // Vector types
+    V128,
+    // Reference types
+    FuncRef,
+    ExternRef,
+}
+
 impl ValueType {
-    pub fn decode(byte: u8) -> Result<ValueType, io::Error> {
+    pub fn is_value_type_byte(byte: u8) -> bool {
+        byte == 0x7f
+            || byte == 0x7e
+            || byte == 0x7d
+            || byte == 0x7c
+            || byte == 0x7b
+            || byte == 0x70
+            || byte == 0x6f
+    }
+
+    pub fn decode(byte: u8) -> Result<Self, String> {
         match byte {
-            0x7f => Ok(ValueType::Int32),
-            0x7e => Ok(ValueType::Int64),
-            0x7d => Ok(ValueType::Float32),
-            0x7c => Ok(ValueType::Float64),
-            _ => {
-                let msg: String = format!("Invalid value type: {}", byte);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
-            }
+            0x7f => Ok(ValueType::I32),
+            0x7e => Ok(ValueType::I64),
+            0x7d => Ok(ValueType::F32),
+            0x7c => Ok(ValueType::F64),
+            0x7b => Ok(ValueType::V128),
+            0x70 => Ok(ValueType::FuncRef),
+            0x6f => Ok(ValueType::ExternRef),
+            _ => Err(format!("Invalid value type: {}", byte)),
         }
     }
 }
@@ -284,10 +312,10 @@ impl ExternalKind {
             0x03 => Ok(ExternalKind::Memory),
             0x04 => Ok(ExternalKind::Global),
             _ => {
-              let msg: String = format!("Invalid external kind: {}", byte);
-              return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
-          }
-      }
+                let msg: String = format!("Invalid external kind: {}", byte);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+            }
+        }
     }
 }
 
@@ -297,11 +325,13 @@ impl fmt::Display for ValueType {
             f,
             "{}",
             match self {
-                &ValueType::Int32 => "Int32",
-                &ValueType::Int64 => "Int64",
-                &ValueType::Float64 => "Float64",
-                &ValueType::Float32 => "Float32",
-                &ValueType::None => "None",
+                &ValueType::I32 => "I32",
+                &ValueType::I64 => "I64",
+                &ValueType::F64 => "F64",
+                &ValueType::F32 => "F32",
+                &ValueType::V128 => "V128",
+                &ValueType::FuncRef => "FuncRef",
+                &ValueType::ExternRef => "ExternRef",
             }
         )
     }

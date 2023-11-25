@@ -1,6 +1,7 @@
-mod ast;
+pub mod ast;
 pub mod parsable_bytes;
 pub mod parsed_unit;
+mod validate;
 
 use std::io;
 use std::u32;
@@ -19,14 +20,15 @@ pub fn parse(
             break;
         }
 
-        let sec_id = bytes.read_vu64()?;
-        let sec_len = bytes.read_vu64()? as usize;
+        let sec_id = bytes.read_byte()?;
+        let sec_len = bytes.read_vu32()?;
         let mut sec_tag = "unknown".to_string();
         if sec_id == 0 {
+            // custom section
             sec_tag = bytes.read_string()?;
         }
 
-        if !bytes.has_at_least(sec_len) {
+        if !bytes.has_at_least(sec_len as usize) {
             let error_message = format!(
                 "not enough bytes left for section, expected {}, got {}",
                 sec_len,
@@ -35,40 +37,39 @@ pub fn parse(
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, error_message));
         }
 
-        println!(
-            "section #{} '{}', len = {}",
-            sec_id,
-            sec_tag,
-            sec_len
-        );
+        println!("section #{} '{}', len = {}", sec_id, sec_tag, sec_len);
 
         //TODO: check sec_len
-        read_sections(sec_id, sec_tag, bytes, &mut unit)?;
+        read_sections(sec_id, bytes, &mut unit)?;
     }
 
     Ok(unit)
 }
 
 fn read_sections(
-    sec_id: u64,
-    sec_tag: String,
+    sec_id: u8,
     bytes: &mut parsable_bytes::ParsableBytes,
     unit: &mut parsed_unit::ParsedUnit,
 ) -> Result<(), io::Error> {
     match sec_id {
-        1 => read_section_type(bytes, &mut unit.types),
+        1 => read_section_type(bytes, &mut unit.function_types),
         2 => read_section_import(bytes, &mut unit.imports),
-        3 => read_section_function(bytes, &mut unit.functions),
+        3 => read_section_function(bytes, &mut unit.functions, &unit.function_types),
         4 => read_section_table(bytes, &mut unit.table),
         5 => read_section_memory(bytes, &mut unit.memory),
         7 => read_section_export(bytes, &mut unit.exports),
         8 => read_section_start(bytes, &mut unit.start),
-        10 => read_section_code(bytes, &mut unit.function_bodies),
+        10 => read_section_code(
+            bytes,
+            &mut unit.function_bodies,
+            &unit.function_types,
+            &unit.functions,
+        ),
         11 => read_section_data(bytes, &mut unit.data),
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unknown section type: #{} '{}'", sec_id, sec_tag),
+                format!("Unknown section type: #{}", sec_id),
             ))
         }
     }?;
@@ -84,40 +85,45 @@ fn read_header(
     *magic = bytes.read_u32()?;
     *version = bytes.read_u32()?;
 
-    assert_eq!(*magic, 0x6d736100);
+    assert_eq!(*magic, 0x6d736100); // '∖0asm'
     println!("magic={}, version={}", magic, version);
     Ok(())
 }
 
 /* SECTION READERS ************************************************/
 
+fn read_result_types(
+    bytes: &mut parsable_bytes::ParsableBytes,
+) -> Result<Vec<parsed_unit::ValueType>, io::Error> {
+    let mut rt: Vec<parsed_unit::ValueType> = vec![];
+    let count = bytes.read_vu64()?;
+    for _ in 0..count {
+        let value = parsed_unit::ValueType::decode(bytes.read_byte()?)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        rt.push(value);
+    }
+    Ok(rt)
+}
+
 fn read_section_type(
     bytes: &mut parsable_bytes::ParsableBytes,
-    types: &mut Vec<parsed_unit::Type>,
+    function_types: &mut Vec<parsed_unit::FunctionType>,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
-        let func_form = bytes.read_vs64()?;
-        assert_eq!(func_form, -0x20);
-        let mut parameters: Vec<parsed_unit::ValueType> = vec![];
-        let parameter_count = bytes.read_vu64()?;
-        for _ in 0..parameter_count {
-            parameters.push(parsed_unit::ValueType::decode(bytes.read_byte()?)?);
+        if bytes.read_byte()? != 0x60 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "expected 0x60 to lead function type",
+            ));
         }
+        let parameters = read_result_types(bytes)?;
+        let return_types = read_result_types(bytes)?;
 
-        let return_type: parsed_unit::ValueType = match bytes.read_byte()? {
-            0 => parsed_unit::ValueType::None,
-            b @ _ => {
-                assert_eq!(b, 1);
-                parsed_unit::ValueType::decode(bytes.read_byte()?)? // TODO: b != 1 = fail
-            }
-        };
-
-        types.push(parsed_unit::Type {
-            form: parsed_unit::Form::Function,
+        function_types.push(parsed_unit::FunctionType {
             parameters: parameters,
-            return_type: return_type,
+            return_types: return_types,
         })
     }
 
@@ -160,11 +166,22 @@ fn read_section_import(
 fn read_section_function(
     bytes: &mut parsable_bytes::ParsableBytes,
     functions: &mut Vec<parsed_unit::Function>,
+    function_types: &Vec<parsed_unit::FunctionType>,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
         let ftype_index = bytes.read_byte()?;
+        if ftype_index >= function_types.len() as u8 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "function type index out of range, expected < {}, got {}",
+                    function_types.len(),
+                    ftype_index
+                ),
+            ));
+        }
 
         functions.push(parsed_unit::Function {
             ftype_index: ftype_index,
@@ -214,10 +231,22 @@ fn read_section_export(
 fn read_section_code(
     bytes: &mut parsable_bytes::ParsableBytes,
     function_bodies: &mut Vec<parsed_unit::FunctionBody>,
+    function_types: &Vec<parsed_unit::FunctionType>,
+    functions: &Vec<parsed_unit::Function>,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
+    if count != functions.len() as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "function count mismatch, expected {}, got {}",
+                functions.len(),
+                count
+            ),
+        ));
+    }
 
-    for i in 0..count {
+    for _ in 0..count {
         let mut locals: Vec<parsed_unit::ValueType> = vec![];
         let size = bytes.read_vu64()? as usize;
         let spos = bytes.pos();
@@ -227,19 +256,23 @@ fn read_section_code(
             let local_n = bytes.read_vu64()?;
             let b = bytes.read_byte()?;
             for _ in 0..local_n {
-                locals.push(parsed_unit::ValueType::decode(b)?);
+                let value = parsed_unit::ValueType::decode(b)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                locals.push(value);
             }
         }
         let lpos = bytes.pos();
         let body = bytes.read_bytes(size - (lpos - spos))?;
 
+        let ftype = &function_types[functions[function_bodies.len()].ftype_index as usize];
         //TODO: parse function bodies
-        let ast = self::ast::to_ast(&body)?;
-        println!("AST #{}: {}", i, ast);
+        let instructions: Vec<ast::Instruction> = self::ast::to_instructions(&ftype, &body)?;
+        // println!("AST #{}: {}", i, ast);
 
         let function_body = parsed_unit::FunctionBody {
             locals: locals,
             body: body,
+            instructions: instructions,
         };
         function_bodies.push(function_body);
 

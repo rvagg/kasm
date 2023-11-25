@@ -1,69 +1,58 @@
+use once_cell::sync::OnceCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::slice::Iter;
+use std::sync::Arc;
 
-#[derive(PartialEq)]
-pub enum Node {
+#[derive(PartialEq, Clone, Copy, Hash, Eq)]
+pub enum InstructionType {
+    // Control instructions¶ ---------------------------------------------------
+    Unreachable,
     Nop,
-    Block {
-        children: Vec<Node>,
-    },
-    Loop {
-        children: Vec<Node>,
-    },
-    If {
-        children: Vec<Node>,
-    },
-    Else {
-        children: Vec<Node>,
-    },
-    Select,
-    Br {
-        argument_count: u8,
-        relative_depth: u32,
-    },
-    BrIf {
-        argument_count: u8,
-        relative_depth: u32,
-    },
+    Block,
+    Loop,
+    If,
+    Else,
+    Br,
+    BrIf,
     BrTable,
     Return,
-    Unreachable,
+    Call,
+    CallIndirect,
+
+    // Reference instructions¶ -------------------------------------------------
+    RefNull,
+    RefIsNull,
+    RefFunc,
+
+    // Parametric instructions¶ ------------------------------------------------
     Drop,
-    End,
-    I32Const {
-        value: i32,
-    },
-    I64Const {
-        value: i64,
-    },
-    F64Const {
-        value: f64,
-    },
-    F32Const {
-        value: f32,
-    },
-    GetLocal {
-        local_index: u32,
-    },
-    SetLocal {
-        local_index: u32,
-    },
-    Call {
-        argument_count: u8,
-        function_index: u32,
-    },
-    CallIndirect {
-        argument_count: u8,
-        type_index: u32,
-    },
-    CallImport {
-        argument_count: u8,
-        import_index: u32,
-    },
-    TeeLocal {
-        local_index: u32,
-    },
+    Select,
+    SelectT,
+
+    // Variable instructions¶ --------------------------------------------------
+    LocalGet,
+    LocalSet,
+    LocalTee,
+    GlobalGet,
+    GlobalSet,
+
+    // Table instructions¶ -----------------------------------------------------
+    TableGet,
+    TableSet,
+    TableInit,
+    ElemDrop,
+    TableCopy,
+    TableGrow,
+    TableSize,
+    TableFill,
+
+    // Memory instructions¶ ----------------------------------------------------
+    I32Load,
+    I64Load,
+    F32Load,
+    F64Load,
     I32Load8S,
     I32Load8U,
     I32Load16S,
@@ -74,21 +63,69 @@ pub enum Node {
     I64Load16U,
     I64Load32S,
     I64Load32U,
-    I32Load,
-    I64Load,
-    F32Load,
-    F64Load,
+    I32Store,
+    I64Store,
+    F32Store,
+    F64Store,
     I32Store8,
     I32Store16,
     I64Store8,
     I64Store16,
     I64Store32,
-    I32Store,
-    I64Store,
-    F32Store,
-    F64Store,
-    GrowMemory,
-    CurrentMemory,
+    MemorySize,
+    MemoryGrow,
+    MemoryInit,
+    DataDrop,
+    MemoryCopy,
+    MemoryFill,
+
+    // Numeric instructions¶ ----------------------------------------------------
+    I32Const,
+    I64Const,
+    F64Const,
+    F32Const,
+
+    I32Eqz,
+    I32Eq,
+    I32Ne,
+    I32LtS,
+    I32LtU,
+    I32GtS,
+    I32GtU,
+    I32LeS,
+    I32LeU,
+    I32GeS,
+    I32GeU,
+
+    I64Eqz,
+    I64Eq,
+    I64Ne,
+    I64LtS,
+    I64LtU,
+    I64GtS,
+    I64GtU,
+    I64LeS,
+    I64LeU,
+    I64GeS,
+    I64GeU,
+
+    F32Eq,
+    F32Ne,
+    F32Lt,
+    F32Le,
+    F32Gt,
+    F32Ge,
+
+    F64Eq,
+    F64Ne,
+    F64Lt,
+    F64Le,
+    F64Gt,
+    F64Ge,
+
+    I32Clz,
+    I32Ctz,
+    I32Popcnt,
     I32Add,
     I32Sub,
     I32Mul,
@@ -104,20 +141,10 @@ pub enum Node {
     I32ShrS,
     I32Rotr,
     I32Rotl,
-    I32Eq,
-    I32Ne,
-    I32LtS,
-    I32LeS,
-    I32LtU,
-    I32LeU,
-    I32GtS,
-    I32GeS,
-    I32GtU,
-    I32GeU,
-    I32Clz,
-    I32Ctz,
-    I32Popcnt,
-    I32Eqz,
+
+    I64Clz,
+    I64Ctz,
+    I64Popcnt,
     I64Add,
     I64Sub,
     I64Mul,
@@ -133,337 +160,2710 @@ pub enum Node {
     I64ShrS,
     I64Rotr,
     I64Rotl,
-    I64Eq,
-    I64Ne,
-    I64LtS,
-    I64LeS,
-    I64LtU,
-    I64LeU,
-    I64GtS,
-    I64GeS,
-    I64GtU,
-    I64GeU,
-    I64Clz,
-    I64Ctz,
-    I64Popcnt,
-    I64Eqz,
+
+    F32Abs,
+    F32Neg,
+    F32Ceil,
+    F32Floor,
+    F32Trunc,
+    F32Nearest,
+    F32Sqrt,
     F32Add,
     F32Sub,
     F32Mul,
     F32Div,
     F32Min,
     F32Max,
-    F32Abs,
-    F32Neg,
     F32Copysign,
-    F32Ceil,
-    F32Floor,
-    F32Trunc,
-    F32Nearest,
-    F32Sqrt,
-    F32Eq,
-    F32Ne,
-    F32Lt,
-    F32Le,
-    F32Gt,
-    F32Ge,
+
+    F64Abs,
+    F64Neg,
+    F64Ceil,
+    F64Floor,
+    F64Trunc,
+    F64Nearest,
+    F64Sqrt,
     F64Add,
     F64Sub,
     F64Mul,
     F64Div,
     F64Min,
     F64Max,
-    F64Abs,
-    F64Neg,
     F64Copysign,
-    F64Ceil,
-    F64Floor,
-    F64Trunc,
-    F64Nearest,
-    F64Sqrt,
-    F64Eq,
-    F64Ne,
-    F64Lt,
-    F64Le,
-    F64Gt,
-    F64Ge,
-    I32TruncSF32,
-    I32TruncSF64,
-    I32TruncUF32,
-    I32TruncUF64,
+
     I32WrapI64,
-    I64TruncSF32,
-    I64TruncSF64,
-    I64TruncUF32,
-    I64TruncUF64,
-    I64ExtendSI32,
-    I64ExtendUI32,
-    F32ConvertSI32,
-    F32ConvertUI32,
-    F32ConvertSI64,
-    F32ConvertUI64,
+    I32TruncF32S,
+    I32TruncF32U,
+    I32TruncF64S,
+    I32TruncF64U,
+    I64ExtendI32S,
+    I64ExtendI32U,
+    I64TruncF32S,
+    I64TruncF32U,
+    I64TruncF64S,
+    I64TruncF64U,
+    F32ConvertI32S,
+    F32ConvertI32U,
+    F32ConvertI64S,
+    F32ConvertI64U,
     F32DemoteF64,
-    F32ReinterpretI32,
-    F64ConvertSI32,
-    F64ConvertUI32,
-    F64ConvertSI64,
-    F64ConvertUI64,
+    F64ConvertI32S,
+    F64ConvertI32U,
+    F64ConvertI64S,
+    F64ConvertI64U,
     F64PromoteF32,
-    F64ReinterpretI64,
     I32ReinterpretF32,
     I64ReinterpretF64,
-    UNKNOWN,
+    F32ReinterpretI32,
+    F64ReinterpretI64,
+
+    I32Extend8S,
+    I32Extend16S,
+    I64Extend8S,
+    I64Extend16S,
+    I64Extend32S,
+
+    I32TruncSatF32S,
+    I32TruncSatF32U,
+    I32TruncSatF64S,
+    I32TruncSatF64U,
+    I64TruncSatF32S,
+    I64TruncSatF32U,
+    I64TruncSatF64S,
+    I64TruncSatF64U,
+
+    // Vector instructions¶ ----------------------------------------------------
+    V128Load,
+    V128Load8x8S,
+    V128Load8x8U,
+    V128Load16x4S,
+    V128Load16x4U,
+    V128Load32x2S,
+    V128Load32x2U,
+    V128Load8Splat,
+    V128Load16Splat,
+    V128Load32Splat,
+    V128Load64Splat,
+    V128Load32Zero,
+    V128Load64Zero,
+    V128Store,
+    V128Load8Lane,
+    V128Load16Lane,
+    V128Load32Lane,
+    V128Load64Lane,
+    V128Store8Lane,
+    V128Store16Lane,
+    V128Store32Lane,
+    V128Store64Lane,
+
+    V128Const,
+
+    I8x16Shuffle,
+
+    I8x16ExtractLaneS,
+    I8x16ExtractLaneU,
+    I8x16ReplaceLane,
+    I16x8ExtractLaneS,
+    I16x8ExtractLaneU,
+    I16x8ReplaceLane,
+    I32x4ExtractLane,
+    I32x4ReplaceLane,
+    I64x2ExtractLane,
+    I64x2ReplaceLane,
+    F32x4ExtractLane,
+    F32x4ReplaceLane,
+    F64x2ExtractLane,
+    F64x2ReplaceLane,
+
+    I8x16Swizzle,
+    I8x16Splat,
+    I16x8Splat,
+    I32x4Splat,
+    I64x2Splat,
+    F32x4Splat,
+    F64x2Splat,
+
+    I8x16Eq,
+    I8x16Ne,
+    I8x16LtS,
+    I8x16LtU,
+    I8x16GtS,
+    I8x16GtU,
+    I8x16LeS,
+    I8x16LeU,
+    I8x16GeS,
+    I8x16GeU,
+
+    I16x8Eq,
+    I16x8Ne,
+    I16x8LtS,
+    I16x8LtU,
+    I16x8GtS,
+    I16x8GtU,
+    I16x8LeS,
+    I16x8LeU,
+    I16x8GeS,
+    I16x8GeU,
+
+    I32x4Eq,
+    I32x4Ne,
+    I32x4LtS,
+    I32x4LtU,
+    I32x4GtS,
+    I32x4GtU,
+    I32x4LeS,
+    I32x4LeU,
+    I32x4GeS,
+    I32x4GeU,
+
+    I64x2Eq,
+    I64x2Ne,
+    I64x2LtS,
+    I64x2GtS,
+    I64x2LeS,
+    I64x2GeS,
+
+    F32x4Eq,
+    F32x4Ne,
+    F32x4Lt,
+    F32x4Gt,
+    F32x4Le,
+    F32x4Ge,
+
+    F64x2Eq,
+    F64x2Ne,
+    F64x2Lt,
+    F64x2Gt,
+    F64x2Le,
+    F64x2Ge,
+
+    V128Not,
+    V128And,
+    V128AndNot,
+    V128Or,
+    V128Xor,
+    V128Bitselect,
+    V128AnyTrue,
+
+    I8x16Abs,
+    I8x16Neg,
+    I8x16Popcnt,
+    I8x16AllTrue,
+    I8x16Bitmask,
+    I8x16NarrowI16x8S,
+    I8x16NarrowI16x8U,
+    I8x16Shl,
+    I8x16ShrS,
+    I8x16ShrU,
+    I8x16Add,
+    I8x16AddSaturateS,
+    I8x16AddSaturateU,
+    I8x16Sub,
+    I8x16SubSaturateS,
+    I8x16SubSaturateU,
+    I8x16MinS,
+    I8x16MinU,
+    I8x16MaxS,
+    I8x16MaxU,
+    I8x16AvgrU,
+
+    I16x8ExtAddPairwiseI8x16S,
+    I16x8ExtAddPairwiseI8x16U,
+    I16x8Abs,
+    I16x8Neg,
+    I16x8Q15MulrSatS,
+    I16x8AllTrue,
+    I16x8Bitmask,
+    I16x8NarrowI32x4S,
+    I16x8NarrowI32x4U,
+    I16x8ExtendLowI8x16S,
+    I16x8ExtendHighI8x16S,
+    I16x8ExtendLowI8x16U,
+    I16x8ExtendHighI8x16U,
+    I16x8Shl,
+    I16x8ShrS,
+    I16x8ShrU,
+    I16x8Add,
+    I16x8AddSaturateS,
+    I16x8AddSaturateU,
+    I16x8Sub,
+    I16x8SubSaturateS,
+    I16x8SubSaturateU,
+    I16x8Mul,
+    I16x8MinS,
+    I16x8MinU,
+    I16x8MaxS,
+    I16x8MaxU,
+    I16x8AvgrU,
+    I16x8ExtMulLowI8x16S,
+    I16x8ExtMulHighI8x16S,
+    I16x8ExtMulLowI8x16U,
+    I16x8ExtMulHighI8x16U,
+
+    I32x4ExtAddPairwiseI16x8S,
+    I32x4ExtAddPairwiseI16x8U,
+    I32x4Abs,
+    I32x4Neg,
+    I32x4AllTrue,
+    I32x4Bitmask,
+    I32x4ExtendLowI16x8S,
+    I32x4ExtendHighI16x8S,
+    I32x4ExtendLowI16x8U,
+    I32x4ExtendHighI16x8U,
+    I32x4Shl,
+    I32x4ShrS,
+    I32x4ShrU,
+    I32x4Add,
+    I32x4Sub,
+    I32x4Mul,
+    I32x4MinS,
+    I32x4MinU,
+    I32x4MaxS,
+    I32x4MaxU,
+    I32x4DotI16x8S,
+    I32x4ExtMulLowI16x8S,
+    I32x4ExtMulHighI16x8S,
+    I32x4ExtMulLowI16x8U,
+    I32x4ExtMulHighI16x8U,
+
+    I64x2Abs,
+    I64x2Neg,
+    I64x2AllTrue,
+    I64x2Bitmask,
+    I64x2ExtendLowI32x4S,
+    I64x2ExtendHighI32x4S,
+    I64x2ExtendLowI32x4U,
+    I64x2ExtendHighI32x4U,
+    I64x2Shl,
+    I64x2ShrS,
+    I64x2ShrU,
+    I64x2Add,
+    I64x2Sub,
+    I64x2Mul,
+    I64x2ExtMulLowI32x4S,
+    I64x2ExtMulHighI32x4S,
+    I64x2ExtMulLowI32x4U,
+    I64x2ExtMulHighI32x4U,
+
+    F32x4Ceil,
+    F32x4Floor,
+    F32x4Trunc,
+    F32x4Nearest,
+    F32x4Abs,
+    F32x4Neg,
+    F32x4Sqrt,
+    F32x4Add,
+    F32x4Sub,
+    F32x4Mul,
+    F32x4Div,
+    F32x4Min,
+    F32x4Max,
+    F32x4PMin,
+    F32x4PMax,
+
+    F64x2Ceil,
+    F64x2Floor,
+    F64x2Trunc,
+    F64x2Nearest,
+    F64x2Abs,
+    F64x2Neg,
+    F64x2Sqrt,
+    F64x2Add,
+    F64x2Sub,
+    F64x2Mul,
+    F64x2Div,
+    F64x2Min,
+    F64x2Max,
+    F64x2PMin,
+    F64x2PMax,
+
+    I32x4TruncSatF32x4S,
+    I32x4TruncSatF32x4U,
+    F32x4ConvertI32x4S,
+    F32x4ConvertI32x4U,
+    I32x4TruncSatF64x2SZero,
+    I32x4TruncSatF64x2UZero,
+    F64x2ConvertLowI32x4S,
+    F64x2ConvertLowI32x4U,
+    F32x4DemoteF64x2Zero,
+    F64x2PromoteLowF32x4,
+
+    End,
 }
 
-pub fn to_ast(bytes: &[u8]) -> Result<Node, io::Error> {
-    let mut iter = bytes.iter();
-    Ok(Node::Block {
-        children: consume_block(&mut iter)?,
+#[derive(PartialEq, Clone)]
+pub struct Instruction {
+    typ: InstructionType,
+    data: InstructionData,
+}
+
+impl Instruction {
+    pub fn get_type(&self) -> &InstructionType {
+        &self.typ
+    }
+
+    pub fn get_data(&self) -> &InstructionData {
+        &self.data
+    }
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let coding = get_codings_by_type().get(&self.typ).unwrap();
+        write!(f, "{}", coding.name)
+    }
+}
+
+#[derive(PartialEq, Clone)]
+pub enum InstructionData {
+    SimpleInstruction,
+
+    // Control instructions¶ ---------------------------------------------------
+    BlockInstruction {
+        blocktype: BlockType,
+    },
+    LabelledInstruction {
+        label_index: u32,
+    },
+    TableLabelledInstruction {
+        labels: Vec<u32>,
+        label_index: u32,
+    },
+    FunctionInstruction {
+        function_index: u32,
+    },
+    IndirectInstruction {
+        type_index: u32,
+        table_index: u32,
+    },
+
+    // Reference instructions¶ -------------------------------------------------
+    RefTypeInstruction {
+        ref_type: u8,
+    },
+
+    // Parametric instructions¶ ------------------------------------------------
+    ValueTypeInstruction {
+        value_types: Vec<u8>,
+    },
+
+    // Variable instructions¶ --------------------------------------------------
+    LocalInstruction {
+        local_index: u32,
+    },
+    GlobalInstruction {
+        global_index: u32,
+    },
+
+    // Table instructions¶ -----------------------------------------------------
+    TableInstruction {
+        table_index: u32,
+    },
+    TableInitInstruction {
+        elem_index: u32,
+        table_index: u32,
+    },
+    ElemInstruction {
+        elem_index: u32,
+    },
+    TableCopyInstruction {
+        src_table_index: u32,
+        dst_table_index: u32,
+    },
+
+    // Memory instructions¶ ----------------------------------------------------
+    MemoryInstruction {
+        memarg: MemArg,
+    },
+    DataInstruction {
+        data_index: u32,
+    },
+
+    // Numeric instructions¶ ----------------------------------------------------
+    I32Instruction {
+        value: i32,
+    },
+    I64Instruction {
+        value: i64,
+    },
+    F64Instruction {
+        value: f64,
+    },
+    F32Instruction {
+        value: f32,
+    },
+
+    // Vector instructions¶ ----------------------------------------------------
+    V128MemoryLaneInstruction {
+        memarg: MemArg,
+        lane_index: u8,
+    },
+    V128Instruction {
+        value: [u8; 16],
+    },
+    V128LanesInstruction {
+        lane_indices: Vec<u8>,
+    },
+    V128LaneInstruction {
+        lane_index: u8,
+    },
+}
+
+type MemArg = (u32, u32); // (align, offset)
+
+#[derive(Clone)]
+pub struct InstructionCoding {
+    pub typ: InstructionType,
+    pub opcode: u8,
+    pub subopcode: u32,
+    pub name: &'static str,
+    pub parse_bytes: Arc<dyn Fn(&mut Iter<u8>) -> Result<InstructionData, io::Error> + Send + Sync>,
+}
+
+impl InstructionCoding {
+    pub fn new_simple(
+        typ: InstructionType,
+        opcode: u8,
+        subopcode: u32,
+        name: &'static str,
+    ) -> Self {
+        Self {
+            typ,
+            opcode,
+            subopcode,
+            name,
+            parse_bytes: Arc::new(move |_| Ok(InstructionData::SimpleInstruction.clone())),
+        }
+    }
+
+    pub fn new_with_data(
+        typ: InstructionType,
+        opcode: u8,
+        subopcode: u32,
+        name: &'static str,
+        parse_bytes: Arc<dyn Fn(&mut Iter<u8>) -> Result<InstructionData, io::Error> + Send + Sync>,
+    ) -> Self {
+        Self {
+            typ,
+            opcode,
+            subopcode,
+            name,
+            parse_bytes,
+        }
+    }
+}
+
+pub fn get_codings() -> &'static Vec<InstructionCoding> {
+    static CODINGS: OnceCell<Vec<InstructionCoding>> = OnceCell::new();
+    CODINGS.get_or_init(|| {
+        vec![
+            // Control instructions¶ -------------------------------------------
+            InstructionCoding::new_simple(InstructionType::Unreachable, 0x00, 0, "unreachable"),
+            InstructionCoding::new_simple(InstructionType::Nop, 0x01, 0, "nop"),
+            InstructionCoding::new_with_data(
+                InstructionType::Block,
+                0x02,
+                0,
+                "block",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::BlockInstruction {
+                            blocktype: consume_blocktype(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::Loop,
+                0x03,
+                0,
+                "loop",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::BlockInstruction {
+                            blocktype: consume_blocktype(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::If,
+                0x04,
+                0,
+                "if",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::BlockInstruction {
+                            blocktype: consume_blocktype(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_simple(InstructionType::Else, 0x04, 0, "else"),
+            InstructionCoding::new_with_data(
+                InstructionType::Br,
+                0x0c,
+                0,
+                "br",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::LabelledInstruction {
+                            label_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::BrIf,
+                0x0d,
+                0,
+                "br_if",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::LabelledInstruction {
+                            label_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::BrTable,
+                0x0e,
+                0,
+                "br_table",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableLabelledInstruction {
+                            labels: consume_vu32vec(iter)?,
+                            label_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_simple(InstructionType::Return, 0x0f, 0, "return"),
+            InstructionCoding::new_with_data(
+                InstructionType::Call,
+                0x10,
+                0,
+                "call",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::FunctionInstruction {
+                            function_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::CallIndirect,
+                0x11,
+                0,
+                "call_indirect",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::IndirectInstruction {
+                            type_index: consume_vu32(iter)?,
+                            table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            // Reference instructions¶ -----------------------------------------
+            InstructionCoding::new_with_data(
+                InstructionType::RefNull,
+                0xd0,
+                0,
+                "ref.null",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::RefTypeInstruction {
+                            ref_type: next_byte(iter)?, // TODO: implement reference types
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_simple(InstructionType::RefIsNull, 0xd1, 0, "ref.is_null"),
+            InstructionCoding::new_with_data(
+                InstructionType::RefFunc,
+                0xd2,
+                0,
+                "ref.func",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::FunctionInstruction {
+                            function_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            // Parametric instructions¶ ----------------------------------------
+            InstructionCoding::new_simple(InstructionType::Drop, 0x1a, 0, "drop"),
+            InstructionCoding::new_simple(InstructionType::Select, 0x1b, 0, "select"),
+            InstructionCoding::new_with_data(
+                InstructionType::SelectT,
+                0x1c,
+                0,
+                "selectt", // TODO: name is just "select?
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::ValueTypeInstruction {
+                            value_types: consume_u8vec(iter)?, // TODO: type vector?
+                        })
+                    },
+                ),
+            ),
+            // Variable instructions¶ ------------------------------------------
+            InstructionCoding::new_with_data(
+                InstructionType::LocalGet,
+                0x20,
+                0,
+                "local.get",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::LocalInstruction {
+                            local_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::LocalSet,
+                0x21,
+                0,
+                "local.set",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::LocalInstruction {
+                            local_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::LocalTee,
+                0x22,
+                0,
+                "local.tee",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::LocalInstruction {
+                            local_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::GlobalGet,
+                0x23,
+                0,
+                "global.get",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::GlobalInstruction {
+                            global_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::GlobalSet,
+                0x24,
+                0,
+                "global.set",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::GlobalInstruction {
+                            global_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            // Table instructions¶ ---------------------------------------------
+            InstructionCoding::new_with_data(
+                InstructionType::TableGet,
+                0x25,
+                0,
+                "table.get",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableInstruction {
+                            table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::TableSet,
+                0x26,
+                0,
+                "table.set",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableInstruction {
+                            table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::TableInit,
+                0xfc,
+                12,
+                "table.init",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableInitInstruction {
+                            elem_index: consume_vu32(iter)?,
+                            table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::ElemDrop,
+                0xfc,
+                13,
+                "elem.drop",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::ElemInstruction {
+                            elem_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::TableCopy,
+                0xfc,
+                14,
+                "table.copy",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableCopyInstruction {
+                            src_table_index: consume_vu32(iter)?,
+                            dst_table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::TableGrow,
+                0xfc,
+                15,
+                "table.grow",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableInstruction {
+                            table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::TableSize,
+                0xfc,
+                16,
+                "table.size",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableInstruction {
+                            table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::TableFill,
+                0xfc,
+                17,
+                "table.fill",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::TableInstruction {
+                            table_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            // Memory instructions¶ --------------------------------------------
+            InstructionCoding::new_with_data(
+                InstructionType::I32Load,
+                0x28,
+                0,
+                "i32.load",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Load,
+                0x29,
+                0,
+                "i64.load",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F32Load,
+                0x2a,
+                0,
+                "f32.load",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F64Load,
+                0x2b,
+                0,
+                "f64.load",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32Load8S,
+                0x2c,
+                0,
+                "i32.load8s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32Load8U,
+                0x2d,
+                0,
+                "i32.load8u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32Load16S,
+                0x2e,
+                0,
+                "i32.load16s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32Load16U,
+                0x2f,
+                0,
+                "i32.load16u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Load8S,
+                0x30,
+                0,
+                "i64.load8s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Load8U,
+                0x31,
+                0,
+                "i64.load8u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Load16S,
+                0x32,
+                0,
+                "i64.load16s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Load16U,
+                0x33,
+                0,
+                "i64.load16u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Load32S,
+                0x34,
+                0,
+                "i64.load32s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Load32U,
+                0x35,
+                0,
+                "i64.load32u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32Store,
+                0x36,
+                0,
+                "i32.store",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Store,
+                0x37,
+                0,
+                "i64.store",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F32Store,
+                0x38,
+                0,
+                "f32.store",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F64Store,
+                0x39,
+                0,
+                "f64.store",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32Store8,
+                0x3a,
+                0,
+                "i32.store8",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32Store16,
+                0x3b,
+                0,
+                "i32.store16",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Store8,
+                0x3c,
+                0,
+                "i64.store8",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Store16,
+                0x3d,
+                0,
+                "i64.store16",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Store32,
+                0x3e,
+                0,
+                "i64.store32",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_simple(InstructionType::MemorySize, 0x3f, 0, "memory.size"),
+            InstructionCoding::new_simple(InstructionType::MemoryGrow, 0x40, 0, "memory.grow"),
+            InstructionCoding::new_with_data(
+                InstructionType::MemoryInit,
+                0xfc,
+                8,
+                "memory.init",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        if next_byte(iter)? != 0x0 {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "expected 0x0 for memory init",
+                            ));
+                        }
+                        Ok(InstructionData::DataInstruction {
+                            data_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::DataDrop,
+                0xfc,
+                9,
+                "data.drop",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::DataInstruction {
+                            data_index: consume_vu32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::MemoryCopy,
+                0xfc,
+                10,
+                "memory.copy",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        if next_byte(iter)? != 0x0 || next_byte(iter)? != 0x0 {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "expected 0x0 0x0 for memory copy",
+                            ));
+                        }
+                        Ok(InstructionData::SimpleInstruction)
+                    },
+                ),
+            ),
+            InstructionCoding::new_simple(InstructionType::MemoryFill, 0xfc, 11, "memory.fill"),
+            // Numeric instructions¶ -------------------------------------------
+            InstructionCoding::new_with_data(
+                InstructionType::I32Const,
+                0x41,
+                0,
+                "i32.const",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::I32Instruction {
+                            value: consume_vs32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64Const,
+                0x42,
+                0,
+                "i64.const",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::I64Instruction {
+                            value: consume_vs64(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F32Const,
+                0x43,
+                0,
+                "f32.const",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::F32Instruction {
+                            value: consume_f32(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F64Const,
+                0x44,
+                0,
+                "f64.const",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::F64Instruction {
+                            value: consume_f64(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_simple(InstructionType::I32Eqz, 0x45, 0, "i32.eqz"),
+            InstructionCoding::new_simple(InstructionType::I32Eq, 0x46, 0, "i32.eq"),
+            InstructionCoding::new_simple(InstructionType::I32Ne, 0x47, 0, "i32.ne"),
+            InstructionCoding::new_simple(InstructionType::I32LtS, 0x48, 0, "i32.lt_s"),
+            InstructionCoding::new_simple(InstructionType::I32LtU, 0x49, 0, "i32.lt_u"),
+            InstructionCoding::new_simple(InstructionType::I32GtS, 0x4a, 0, "i32.gt_s"),
+            InstructionCoding::new_simple(InstructionType::I32GtU, 0x4b, 0, "i32.gt_u"),
+            InstructionCoding::new_simple(InstructionType::I32LeS, 0x4c, 0, "i32.le_s"),
+            InstructionCoding::new_simple(InstructionType::I32LeU, 0x4d, 0, "i32.le_u"),
+            InstructionCoding::new_simple(InstructionType::I32GeS, 0x4e, 0, "i32.ge_s"),
+            InstructionCoding::new_simple(InstructionType::I32GeU, 0x4f, 0, "i32.ge_u"),
+            InstructionCoding::new_simple(InstructionType::I64Eqz, 0x50, 0, "i64.eqz"),
+            InstructionCoding::new_simple(InstructionType::I64Eq, 0x51, 0, "i64.eq"),
+            InstructionCoding::new_simple(InstructionType::I64Ne, 0x52, 0, "i64.ne"),
+            InstructionCoding::new_simple(InstructionType::I64LtS, 0x53, 0, "i64.lt_s"),
+            InstructionCoding::new_simple(InstructionType::I64LtU, 0x54, 0, "i64.lt_u"),
+            InstructionCoding::new_simple(InstructionType::I64GtS, 0x55, 0, "i64.gt_s"),
+            InstructionCoding::new_simple(InstructionType::I64GtU, 0x56, 0, "i64.gt_u"),
+            InstructionCoding::new_simple(InstructionType::I64LeS, 0x57, 0, "i64.le_s"),
+            InstructionCoding::new_simple(InstructionType::I64LeU, 0x58, 0, "i64.le_u"),
+            InstructionCoding::new_simple(InstructionType::I64GeS, 0x59, 0, "i64.ge_s"),
+            InstructionCoding::new_simple(InstructionType::I64GeU, 0x5a, 0, "i64.ge_u"),
+            InstructionCoding::new_simple(InstructionType::F32Eq, 0x5b, 0, "f32.eq"),
+            InstructionCoding::new_simple(InstructionType::F32Ne, 0x5c, 0, "f32.ne"),
+            InstructionCoding::new_simple(InstructionType::F32Lt, 0x5d, 0, "f32.lt"),
+            InstructionCoding::new_simple(InstructionType::F32Le, 0x5e, 0, "f32.le"),
+            InstructionCoding::new_simple(InstructionType::F32Gt, 0x5f, 0, "f32.gt"),
+            InstructionCoding::new_simple(InstructionType::F32Ge, 0x60, 0, "f32.ge"),
+            InstructionCoding::new_simple(InstructionType::F64Eq, 0x61, 0, "f64.eq"),
+            InstructionCoding::new_simple(InstructionType::F64Ne, 0x62, 0, "f64.ne"),
+            InstructionCoding::new_simple(InstructionType::F64Lt, 0x63, 0, "f64.lt"),
+            InstructionCoding::new_simple(InstructionType::F64Le, 0x64, 0, "f64.le"),
+            InstructionCoding::new_simple(InstructionType::F64Gt, 0x65, 0, "f64.gt"),
+            InstructionCoding::new_simple(InstructionType::F64Ge, 0x66, 0, "f64.ge"),
+            InstructionCoding::new_simple(InstructionType::I32Clz, 0x67, 0, "i32.clz"),
+            InstructionCoding::new_simple(InstructionType::I32Ctz, 0x68, 0, "i32.ctz"),
+            InstructionCoding::new_simple(InstructionType::I32Popcnt, 0x69, 0, "i32.popcnt"),
+            InstructionCoding::new_simple(InstructionType::I32Add, 0x6a, 0, "i32.add"),
+            InstructionCoding::new_simple(InstructionType::I32Sub, 0x6b, 0, "i32.sub"),
+            InstructionCoding::new_simple(InstructionType::I32Mul, 0x6c, 0, "i32.mul"),
+            InstructionCoding::new_simple(InstructionType::I32DivS, 0x6d, 0, "i32.div_s"),
+            InstructionCoding::new_simple(InstructionType::I32DivU, 0x6e, 0, "i32.div_u"),
+            InstructionCoding::new_simple(InstructionType::I32RemS, 0x6f, 0, "i32.rem_s"),
+            InstructionCoding::new_simple(InstructionType::I32RemU, 0x70, 0, "i32.rem_u"),
+            InstructionCoding::new_simple(InstructionType::I32And, 0x71, 0, "i32.and"),
+            InstructionCoding::new_simple(InstructionType::I32Or, 0x72, 0, "i32.or"),
+            InstructionCoding::new_simple(InstructionType::I32Xor, 0x73, 0, "i32.xor"),
+            InstructionCoding::new_simple(InstructionType::I32Shl, 0x74, 0, "i32.shl"),
+            InstructionCoding::new_simple(InstructionType::I32ShrU, 0x75, 0, "i32.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I32ShrS, 0x76, 0, "i32.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I32Rotr, 0x77, 0, "i32.rotr"),
+            InstructionCoding::new_simple(InstructionType::I32Rotl, 0x78, 0, "i32.rotl"),
+            InstructionCoding::new_simple(InstructionType::I64Clz, 0x79, 0, "i64.clz"),
+            InstructionCoding::new_simple(InstructionType::I64Ctz, 0x7a, 0, "i64.ctz"),
+            InstructionCoding::new_simple(InstructionType::I64Popcnt, 0x7b, 0, "i64.popcnt"),
+            InstructionCoding::new_simple(InstructionType::I64Add, 0x7c, 0, "i64.add"),
+            InstructionCoding::new_simple(InstructionType::I64Sub, 0x7d, 0, "i64.sub"),
+            InstructionCoding::new_simple(InstructionType::I64Mul, 0x7e, 0, "i64.mul"),
+            InstructionCoding::new_simple(InstructionType::I64DivS, 0x7f, 0, "i64.div_s"),
+            InstructionCoding::new_simple(InstructionType::I64DivU, 0x80, 0, "i64.div_u"),
+            InstructionCoding::new_simple(InstructionType::I64RemS, 0x81, 0, "i64.rem_s"),
+            InstructionCoding::new_simple(InstructionType::I64RemU, 0x82, 0, "i64.rem_u"),
+            InstructionCoding::new_simple(InstructionType::I64And, 0x83, 0, "i64.and"),
+            InstructionCoding::new_simple(InstructionType::I64Or, 0x84, 0, "i64.or"),
+            InstructionCoding::new_simple(InstructionType::I64Xor, 0x85, 0, "i64.xor"),
+            InstructionCoding::new_simple(InstructionType::I64Shl, 0x86, 0, "i64.shl"),
+            InstructionCoding::new_simple(InstructionType::I64ShrU, 0x87, 0, "i64.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I64ShrS, 0x88, 0, "i64.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I64Rotr, 0x89, 0, "i64.rotr"),
+            InstructionCoding::new_simple(InstructionType::I64Rotl, 0x8a, 0, "i64.rotl"),
+            InstructionCoding::new_simple(InstructionType::F32Abs, 0x8b, 0, "f32.abs"),
+            InstructionCoding::new_simple(InstructionType::F32Neg, 0x8c, 0, "f32.neg"),
+            InstructionCoding::new_simple(InstructionType::F32Ceil, 0x8d, 0, "f32.ceil"),
+            InstructionCoding::new_simple(InstructionType::F32Floor, 0x8e, 0, "f32.floor"),
+            InstructionCoding::new_simple(InstructionType::F32Trunc, 0x8f, 0, "f32.trunc"),
+            InstructionCoding::new_simple(InstructionType::F32Nearest, 0x90, 0, "f32.nearest"),
+            InstructionCoding::new_simple(InstructionType::F32Sqrt, 0x91, 0, "f32.sqrt"),
+            InstructionCoding::new_simple(InstructionType::F32Add, 0x92, 0, "f32.add"),
+            InstructionCoding::new_simple(InstructionType::F32Sub, 0x93, 0, "f32.sub"),
+            InstructionCoding::new_simple(InstructionType::F32Mul, 0x94, 0, "f32.mul"),
+            InstructionCoding::new_simple(InstructionType::F32Div, 0x95, 0, "f32.div"),
+            InstructionCoding::new_simple(InstructionType::F32Min, 0x96, 0, "f32.min"),
+            InstructionCoding::new_simple(InstructionType::F32Max, 0x97, 0, "f32.max"),
+            InstructionCoding::new_simple(InstructionType::F32Copysign, 0x98, 0, "f32.copysign"),
+            InstructionCoding::new_simple(InstructionType::F64Abs, 0x99, 0, "f64.abs"),
+            InstructionCoding::new_simple(InstructionType::F64Neg, 0x9a, 0, "f64.neg"),
+            InstructionCoding::new_simple(InstructionType::F64Ceil, 0x9b, 0, "f64.ceil"),
+            InstructionCoding::new_simple(InstructionType::F64Floor, 0x9c, 0, "f64.floor"),
+            InstructionCoding::new_simple(InstructionType::F64Trunc, 0x9d, 0, "f64.trunc"),
+            InstructionCoding::new_simple(InstructionType::F64Nearest, 0x9e, 0, "f64.nearest"),
+            InstructionCoding::new_simple(InstructionType::F64Sqrt, 0x9f, 0, "f64.sqrt"),
+            InstructionCoding::new_simple(InstructionType::F64Add, 0xa0, 0, "f64.add"),
+            InstructionCoding::new_simple(InstructionType::F64Sub, 0xa1, 0, "f64.sub"),
+            InstructionCoding::new_simple(InstructionType::F64Mul, 0xa2, 0, "f64.mul"),
+            InstructionCoding::new_simple(InstructionType::F64Div, 0xa3, 0, "f64.div"),
+            InstructionCoding::new_simple(InstructionType::F64Min, 0xa4, 0, "f64.min"),
+            InstructionCoding::new_simple(InstructionType::F64Max, 0xa5, 0, "f64.max"),
+            InstructionCoding::new_simple(InstructionType::F64Copysign, 0xa6, 0, "f64.copysign"),
+            InstructionCoding::new_simple(InstructionType::I32WrapI64, 0xa7, 0, "i32.wrapi64"),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncF32S,
+                0xa8,
+                0,
+                "i32.trunc_f32_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncF32U,
+                0xa9,
+                0,
+                "i32.trunc_f32_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncF64S,
+                0xaa,
+                0,
+                "i32.trunc_f64_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncF64U,
+                0xab,
+                0,
+                "i32.trunc_f64_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64ExtendI32S,
+                0xac,
+                0,
+                "i64.extendi32__s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64ExtendI32U,
+                0xad,
+                0,
+                "i64.extendi32__u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncF32S,
+                0xae,
+                0,
+                "i64.trunc_f32_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncF32U,
+                0xaf,
+                0,
+                "i64.trunc_f32_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncF64S,
+                0xb0,
+                0,
+                "i64.trunc_f64_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncF64U,
+                0xb1,
+                0,
+                "i64.trunc_f64_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32ConvertI32S,
+                0xb2,
+                0,
+                "f32.convert_i32_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32ConvertI32U,
+                0xb3,
+                0,
+                "f32.convert_i32_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32ConvertI64S,
+                0xb4,
+                0,
+                "f32.convert_i64_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32ConvertI64U,
+                0xb5,
+                0,
+                "f32.convert_i64_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::F32DemoteF64, 0xb6, 0, "f32.demote_f64"),
+            InstructionCoding::new_simple(
+                InstructionType::F64ConvertI32S,
+                0xb7,
+                0,
+                "f64.convert_i32_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64ConvertI32U,
+                0xb8,
+                0,
+                "f64.convert_i32_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64ConvertI64S,
+                0xb9,
+                0,
+                "f64.convert_i64_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64ConvertI64U,
+                0xba,
+                0,
+                "f64.convert_i64_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64PromoteF32,
+                0xbb,
+                0,
+                "f64.promote_f32",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32ReinterpretF32,
+                0xbc,
+                0,
+                "i32.reinterpret_f32",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64ReinterpretF64,
+                0xbd,
+                0,
+                "i64.reinterpret_f64",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32ReinterpretI32,
+                0xbe,
+                0,
+                "f32.reinterpret_i32",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64ReinterpretI64,
+                0xbf,
+                0,
+                "f64.reinterpret_i64",
+            ),
+            InstructionCoding::new_simple(InstructionType::I32Extend8S, 0xc0, 0, "i32.extend8_s"),
+            InstructionCoding::new_simple(InstructionType::I32Extend16S, 0xc1, 0, "i32.extend16_s"),
+            InstructionCoding::new_simple(InstructionType::I64Extend8S, 0xc2, 0, "i64.extend8_s"),
+            InstructionCoding::new_simple(InstructionType::I64Extend16S, 0xc3, 0, "i64.extend16_s"),
+            InstructionCoding::new_simple(InstructionType::I64Extend32S, 0xc4, 0, "i64.extend32_s"),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncSatF32S,
+                0xfc,
+                0,
+                "i32.trunc_sat_f32_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncSatF32U,
+                0xfc,
+                1,
+                "i32.trunc_sat_f32_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncSatF64S,
+                0xfc,
+                2,
+                "i32.trunc_sat_f64_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32TruncSatF64U,
+                0xfc,
+                3,
+                "i32.trunc_sat_f64_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncSatF32S,
+                0xfc,
+                4,
+                "i64.trunc_sat_f32_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncSatF32U,
+                0xfc,
+                5,
+                "i64.trunc_sat_f32_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncSatF64S,
+                0xfc,
+                6,
+                "i64.trunc_sat_f64_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64TruncSatF64U,
+                0xfc,
+                7,
+                "i64.trunc_sat_f64_u",
+            ),
+            // Vector instructions¶ --------------------------------------------
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load,
+                0xfd,
+                0,
+                "v128.load",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load8x8S,
+                0xfd,
+                1,
+                "v128.load8x8_s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load8x8U,
+                0xfd,
+                2,
+                "v128.load8x8_u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load16x4S,
+                0xfd,
+                3,
+                "v128.load16x4_s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load16x4U,
+                0xfd,
+                4,
+                "v128.load16x4_u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load32x2S,
+                0xfd,
+                5,
+                "v128.load32x2_s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load32x2U,
+                0xfd,
+                6,
+                "v128.load32x2_u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load8Splat,
+                0xfd,
+                7,
+                "v128.load8_splat",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load16Splat,
+                0xfd,
+                8,
+                "v128.load16_splat",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load32Splat,
+                0xfd,
+                9,
+                "v128.load32_splat",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load64Splat,
+                0xfd,
+                10,
+                "v128.load64_splat",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load32Zero,
+                0xfd,
+                92,
+                "v128.load32zero",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load64Zero,
+                0xfd,
+                93,
+                "v128.load64zero",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Store,
+                0xfd,
+                11,
+                "v128.store",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::MemoryInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load8Lane,
+                0xfd,
+                84,
+                "v128.load8_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load16Lane,
+                0xfd,
+                85,
+                "v128.load16_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load32Lane,
+                0xfd,
+                86,
+                "v128.load32_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Load64Lane,
+                0xfd,
+                87,
+                "v128.load64_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Store8Lane,
+                0xfd,
+                88,
+                "v128.store8_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Store16Lane,
+                0xfd,
+                89,
+                "v128.store16_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Store32Lane,
+                0xfd,
+                90,
+                "v128.store32_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Store64Lane,
+                0xfd,
+                91,
+                "v128.store64_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128MemoryLaneInstruction {
+                            memarg: (consume_vu32(iter)?, consume_vu32(iter)?),
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::V128Const,
+                0xfd,
+                12,
+                "v128.const",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128Instruction {
+                            value: consume_v128(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I8x16Shuffle,
+                0xfd,
+                13,
+                "i8x16shuffle",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LanesInstruction {
+                            lane_indices: consume_u8vec(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I8x16ExtractLaneS,
+                0xfd,
+                21,
+                "i8x16.extract_lane_s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I8x16ExtractLaneU,
+                0xfd,
+                22,
+                "i8x16.extract_lane_u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I8x16ReplaceLane,
+                0xfd,
+                23,
+                "i8x16.replace_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I16x8ExtractLaneS,
+                0xfd,
+                24,
+                "i16x8.extract_lane_s",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I16x8ExtractLaneU,
+                0xfd,
+                25,
+                "i16x8.extract_lane_u",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I16x8ReplaceLane,
+                0xfd,
+                26,
+                "i16x8.replace_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32x4ExtractLane,
+                0xfd,
+                27,
+                "i32x4.extract_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I32x4ReplaceLane,
+                0xfd,
+                28,
+                "i32x4.replace_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64x2ExtractLane,
+                0xfd,
+                29,
+                "i64x2.extract_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::I64x2ReplaceLane,
+                0xfd,
+                30,
+                "i64x2.replace_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F32x4ExtractLane,
+                0xfd,
+                31,
+                "f32x4.extract_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F32x4ReplaceLane,
+                0xfd,
+                32,
+                "f32x4.replace_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F64x2ExtractLane,
+                0xfd,
+                33,
+                "f64x2.extract_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_data(
+                InstructionType::F64x2ReplaceLane,
+                0xfd,
+                34,
+                "f64x2.replace_lane",
+                Arc::new(
+                    |iter: &mut Iter<u8>| -> Result<InstructionData, io::Error> {
+                        Ok(InstructionData::V128LaneInstruction {
+                            lane_index: next_byte(iter)?,
+                        })
+                    },
+                ),
+            ),
+            InstructionCoding::new_simple(InstructionType::I8x16Swizzle, 0xfd, 14, "i8x16.swizzle"),
+            InstructionCoding::new_simple(InstructionType::I8x16Splat, 0xfd, 15, "i8x16.splat"),
+            InstructionCoding::new_simple(InstructionType::I16x8Splat, 0xfd, 16, "i16x8.splat"),
+            InstructionCoding::new_simple(InstructionType::I32x4Splat, 0xfd, 17, "i32x4.splat"),
+            InstructionCoding::new_simple(InstructionType::I64x2Splat, 0xfd, 18, "i64x2.splat"),
+            InstructionCoding::new_simple(InstructionType::F32x4Splat, 0xfd, 19, "f32x4.splat"),
+            InstructionCoding::new_simple(InstructionType::F64x2Splat, 0xfd, 20, "f64x2.splat"),
+            InstructionCoding::new_simple(InstructionType::I8x16Eq, 0xfd, 35, "i8x16.eq"),
+            InstructionCoding::new_simple(InstructionType::I8x16Ne, 0xfd, 36, "i8x16.ne"),
+            InstructionCoding::new_simple(InstructionType::I8x16LtS, 0xfd, 37, "i8x16.lt_s"),
+            InstructionCoding::new_simple(InstructionType::I8x16LtU, 0xfd, 38, "i8x16.lt_u"),
+            InstructionCoding::new_simple(InstructionType::I8x16GtS, 0xfd, 39, "i8x16.gt_s"),
+            InstructionCoding::new_simple(InstructionType::I8x16GtU, 0xfd, 40, "i8x16.gt_u"),
+            InstructionCoding::new_simple(InstructionType::I8x16LeS, 0xfd, 41, "i8x16.le_s"),
+            InstructionCoding::new_simple(InstructionType::I8x16LeU, 0xfd, 42, "i8x16.le_u"),
+            InstructionCoding::new_simple(InstructionType::I8x16GeS, 0xfd, 43, "i8x16.ge_s"),
+            InstructionCoding::new_simple(InstructionType::I8x16GeU, 0xfd, 44, "i8x16.ge_u"),
+            InstructionCoding::new_simple(InstructionType::I16x8Eq, 0xfd, 45, "i16x8.eq"),
+            InstructionCoding::new_simple(InstructionType::I16x8Ne, 0xfd, 46, "i16x8.ne"),
+            InstructionCoding::new_simple(InstructionType::I16x8LtS, 0xfd, 47, "i16x8.lt_s"),
+            InstructionCoding::new_simple(InstructionType::I16x8LtU, 0xfd, 48, "i16x8.lt_u"),
+            InstructionCoding::new_simple(InstructionType::I16x8GtS, 0xfd, 49, "i16x8.gt_s"),
+            InstructionCoding::new_simple(InstructionType::I16x8GtU, 0xfd, 50, "i16x8.gt_u"),
+            InstructionCoding::new_simple(InstructionType::I16x8LeS, 0xfd, 51, "i16x8.le_s"),
+            InstructionCoding::new_simple(InstructionType::I16x8LeU, 0xfd, 52, "i16x8.le_u"),
+            InstructionCoding::new_simple(InstructionType::I16x8GeS, 0xfd, 53, "i16x8.ge_s"),
+            InstructionCoding::new_simple(InstructionType::I16x8GeU, 0xfd, 54, "i16x8.ge_u"),
+            InstructionCoding::new_simple(InstructionType::I32x4Eq, 0xfd, 55, "i32x4.eq"),
+            InstructionCoding::new_simple(InstructionType::I32x4Ne, 0xfd, 56, "i32x4.ne"),
+            InstructionCoding::new_simple(InstructionType::I32x4LtS, 0xfd, 57, "i32x4.lt_s"),
+            InstructionCoding::new_simple(InstructionType::I32x4LtU, 0xfd, 58, "i32x4.lt_u"),
+            InstructionCoding::new_simple(InstructionType::I32x4GtS, 0xfd, 59, "i32x4.gt_s"),
+            InstructionCoding::new_simple(InstructionType::I32x4GtU, 0xfd, 60, "i32x4.gt_u"),
+            InstructionCoding::new_simple(InstructionType::I32x4LeS, 0xfd, 61, "i32x4.le_s"),
+            InstructionCoding::new_simple(InstructionType::I32x4LeU, 0xfd, 62, "i32x4.le_u"),
+            InstructionCoding::new_simple(InstructionType::I32x4GeS, 0xfd, 63, "i32x4.ge_s"),
+            InstructionCoding::new_simple(InstructionType::I32x4GeU, 0xfd, 64, "i32x4.ge_u"),
+            InstructionCoding::new_simple(InstructionType::I64x2Eq, 0xfd, 214, "i64x2.eq"),
+            InstructionCoding::new_simple(InstructionType::I64x2Ne, 0xfd, 215, "i64x2.ne"),
+            InstructionCoding::new_simple(InstructionType::I64x2LtS, 0xfd, 216, "i64x2.lt_s"),
+            InstructionCoding::new_simple(InstructionType::I64x2GtS, 0xfd, 217, "i64x2.gt_s"),
+            InstructionCoding::new_simple(InstructionType::I64x2LeS, 0xfd, 218, "i64x2.le_s"),
+            InstructionCoding::new_simple(InstructionType::I64x2GeS, 0xfd, 219, "i64x2.ge_s"),
+            InstructionCoding::new_simple(InstructionType::F32x4Eq, 0xfd, 65, "f32x4.eq"),
+            InstructionCoding::new_simple(InstructionType::F32x4Ne, 0xfd, 66, "f32x4.ne"),
+            InstructionCoding::new_simple(InstructionType::F32x4Lt, 0xfd, 67, "f32x4.lt"),
+            InstructionCoding::new_simple(InstructionType::F32x4Gt, 0xfd, 68, "f32x4.gt"),
+            InstructionCoding::new_simple(InstructionType::F32x4Le, 0xfd, 69, "f32x4.le"),
+            InstructionCoding::new_simple(InstructionType::F32x4Ge, 0xfd, 70, "f32x4.ge"),
+            InstructionCoding::new_simple(InstructionType::F64x2Eq, 0xfd, 71, "f64x2.eq"),
+            InstructionCoding::new_simple(InstructionType::F64x2Ne, 0xfd, 72, "f64x2.ne"),
+            InstructionCoding::new_simple(InstructionType::F64x2Lt, 0xfd, 73, "f64x2.lt"),
+            InstructionCoding::new_simple(InstructionType::F64x2Gt, 0xfd, 74, "f64x2.gt"),
+            InstructionCoding::new_simple(InstructionType::F64x2Le, 0xfd, 75, "f64x2.le"),
+            InstructionCoding::new_simple(InstructionType::F64x2Ge, 0xfd, 76, "f64x2.ge"),
+            InstructionCoding::new_simple(InstructionType::V128Not, 0xfd, 77, "v128.not"),
+            InstructionCoding::new_simple(InstructionType::V128And, 0xfd, 78, "v128.and"),
+            InstructionCoding::new_simple(InstructionType::V128AndNot, 0xfd, 79, "v128.andnot"),
+            InstructionCoding::new_simple(InstructionType::V128Or, 0xfd, 80, "v128.or"),
+            InstructionCoding::new_simple(InstructionType::V128Xor, 0xfd, 81, "v128.xor"),
+            InstructionCoding::new_simple(
+                InstructionType::V128Bitselect,
+                0xfd,
+                82,
+                "v128.bitselect",
+            ),
+            InstructionCoding::new_simple(InstructionType::V128AnyTrue, 0xfd, 83, "v128.anytrue"),
+            InstructionCoding::new_simple(InstructionType::I8x16Abs, 0xfd, 96, "i8x16.abs"),
+            InstructionCoding::new_simple(InstructionType::I8x16Neg, 0xfd, 97, "i8x16.neg"),
+            InstructionCoding::new_simple(InstructionType::I8x16Popcnt, 0xfd, 98, "i8x16.popcnt"),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16AllTrue,
+                0xfd,
+                99,
+                "i8x16.all_true",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16Bitmask,
+                0xfd,
+                100,
+                "i8x16.bitmask",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16NarrowI16x8S,
+                0xfd,
+                101,
+                "i8x16.narrow_i16x8_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16NarrowI16x8U,
+                0xfd,
+                102,
+                "i8x16.narrow_i16x8_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I8x16Shl, 0xfd, 107, "i8x16.shl"),
+            InstructionCoding::new_simple(InstructionType::I8x16ShrS, 0xfd, 108, "i8x16.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I8x16ShrU, 0xfd, 109, "i8x16.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I8x16Add, 0xfd, 110, "i8x16.add"),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16AddSaturateS,
+                0xfd,
+                111,
+                "i8x16.add_sat_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16AddSaturateU,
+                0xfd,
+                112,
+                "i8x16.add_sat_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I8x16Sub, 0xfd, 113, "i8x16.sub"),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16SubSaturateS,
+                0xfd,
+                114,
+                "i8x16.sub_sat_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I8x16SubSaturateU,
+                0xfd,
+                115,
+                "i8x16.sub_sat_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I8x16MinS, 0xfd, 118, "i8x16.min_s"),
+            InstructionCoding::new_simple(InstructionType::I8x16MinU, 0xfd, 119, "i8x16.min_u"),
+            InstructionCoding::new_simple(InstructionType::I8x16MaxS, 0xfd, 120, "i8x16.max_s"),
+            InstructionCoding::new_simple(InstructionType::I8x16MaxU, 0xfd, 121, "i8x16.max_u"),
+            InstructionCoding::new_simple(InstructionType::I8x16AvgrU, 0xfd, 123, "i8x16.avgr_u"),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtAddPairwiseI8x16S,
+                0xfd,
+                124,
+                "i16x8.extadd_pairwise_i8x16_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtAddPairwiseI8x16U,
+                0xfd,
+                125,
+                "i16x8.extadd_pairwise_i8x16_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I16x8Abs, 0xfd, 128, "i16x8.abs"),
+            InstructionCoding::new_simple(InstructionType::I16x8Neg, 0xfd, 129, "i16x8.neg"),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8Q15MulrSatS,
+                0xfd,
+                130,
+                "i16x8.q15mulr_sat_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8AllTrue,
+                0xfd,
+                131,
+                "i16x8.all_true",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8Bitmask,
+                0xfd,
+                132,
+                "i16x8.bitmask",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8NarrowI32x4S,
+                0xfd,
+                133,
+                "i16x8.narrow_i32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8NarrowI32x4U,
+                0xfd,
+                134,
+                "i16x8.narrow_i32x4_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtendLowI8x16S,
+                0xfd,
+                135,
+                "i16x8.extend_low_i8x16_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtendHighI8x16S,
+                0xfd,
+                136,
+                "i16x8.extend_high_i8x16_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtendLowI8x16U,
+                0xfd,
+                137,
+                "i16x8.extend_low_i8x16_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtendHighI8x16U,
+                0xfd,
+                138,
+                "i16x8.extend_high_i8x16_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I16x8Shl, 0xfd, 139, "i16x8.shl"),
+            InstructionCoding::new_simple(InstructionType::I16x8ShrS, 0xfd, 140, "i16x8.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I16x8ShrU, 0xfd, 141, "i16x8.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I16x8Add, 0xfd, 142, "i16x8.add"),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8AddSaturateS,
+                0xfd,
+                143,
+                "i16x8.add_sat_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8AddSaturateU,
+                0xfd,
+                144,
+                "i16x8.add_sat_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I16x8Sub, 0xfd, 145, "i16x8.sub"),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8SubSaturateS,
+                0xfd,
+                146,
+                "i16x8.sub_sat_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8SubSaturateU,
+                0xfd,
+                147,
+                "i16x8.sub_sat_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I16x8Mul, 0xfd, 149, "i16x8.mul"),
+            InstructionCoding::new_simple(InstructionType::I16x8MinS, 0xfd, 150, "i16x8.min_s"),
+            InstructionCoding::new_simple(InstructionType::I16x8MinU, 0xfd, 151, "i16x8.min_u"),
+            InstructionCoding::new_simple(InstructionType::I16x8MaxS, 0xfd, 152, "i16x8.max_s"),
+            InstructionCoding::new_simple(InstructionType::I16x8MaxU, 0xfd, 153, "i16x8.max_u"),
+            InstructionCoding::new_simple(InstructionType::I16x8AvgrU, 0xfd, 155, "i16x8.avgr_u"),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtMulLowI8x16S,
+                0xfd,
+                156,
+                "i16x8.extmul_low_i8x16_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtMulHighI8x16S,
+                0xfd,
+                157,
+                "i16x8.extmul_high_i8x16_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtMulLowI8x16U,
+                0xfd,
+                158,
+                "i16x8.extmul_low_i8x16_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I16x8ExtMulHighI8x16U,
+                0xfd,
+                159,
+                "i16x8.extmul_high_i8x16_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtAddPairwiseI16x8S,
+                0xfd,
+                126,
+                "i32x4.extadd_pairwise_i16x8_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtAddPairwiseI16x8U,
+                0xfd,
+                127,
+                "i32x4.extadd_pairwise_i16x8_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I32x4Abs, 0xfd, 160, "i32x4.abs"),
+            InstructionCoding::new_simple(InstructionType::I32x4Neg, 0xfd, 161, "i32x4.neg"),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4AllTrue,
+                0xfd,
+                163,
+                "i32x4.all_true",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4Bitmask,
+                0xfd,
+                164,
+                "i32x4.bitmask",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtendLowI16x8S,
+                0xfd,
+                167,
+                "i32x4.extend_low_i16x8_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtendHighI16x8S,
+                0xfd,
+                168,
+                "i32x4.extend_high_i16x8_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtendLowI16x8U,
+                0xfd,
+                169,
+                "i32x4.extend_low_i16x8_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtendHighI16x8U,
+                0xfd,
+                170,
+                "i32x4.extend_high_i16x8_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I32x4Shl, 0xfd, 171, "i32x4.shl"),
+            InstructionCoding::new_simple(InstructionType::I32x4ShrS, 0xfd, 172, "i32x4.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I32x4ShrU, 0xfd, 173, "i32x4.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I32x4Add, 0xfd, 174, "i32x4.add"),
+            InstructionCoding::new_simple(InstructionType::I32x4Sub, 0xfd, 177, "i32x4.sub"),
+            InstructionCoding::new_simple(InstructionType::I32x4Mul, 0xfd, 181, "i32x4.mul"),
+            InstructionCoding::new_simple(InstructionType::I32x4MinS, 0xfd, 182, "i32x4.min_s"),
+            InstructionCoding::new_simple(InstructionType::I32x4MinU, 0xfd, 183, "i32x4.min_u"),
+            InstructionCoding::new_simple(InstructionType::I32x4MaxS, 0xfd, 184, "i32x4.max_s"),
+            InstructionCoding::new_simple(InstructionType::I32x4MaxU, 0xfd, 185, "i32x4.max_u"),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4DotI16x8S,
+                0xfd,
+                186,
+                "i32x4.dot_i16x8_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtMulLowI16x8S,
+                0xfd,
+                188,
+                "i32x4.extmul_low_i16x8_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtMulHighI16x8S,
+                0xfd,
+                189,
+                "i32x4.extmul_high_i16x8_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtMulLowI16x8U,
+                0xfd,
+                190,
+                "i32x4.extmul_low_i16x8_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4ExtMulHighI16x8U,
+                0xfd,
+                191,
+                "i32x4.extmul_high_i16x8_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I64x2Abs, 0xfd, 192, "i64x2.abs"),
+            InstructionCoding::new_simple(InstructionType::I64x2Neg, 0xfd, 193, "i64x2.neg"),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2AllTrue,
+                0xfd,
+                195,
+                "i64x2.all_true",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2Bitmask,
+                0xfd,
+                196,
+                "i64x2.bitmask",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtendLowI32x4S,
+                0xfd,
+                199,
+                "i64x2.extend_low_i32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtendHighI32x4S,
+                0xfd,
+                200,
+                "i64x2.extend_high_i32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtendLowI32x4U,
+                0xfd,
+                201,
+                "i64x2.extend_low_i32x4_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtendHighI32x4U,
+                0xfd,
+                202,
+                "i64x2.extend_high_i32x4_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::I64x2Shl, 0xfd, 203, "i64x2.shl"),
+            InstructionCoding::new_simple(InstructionType::I64x2ShrS, 0xfd, 204, "i64x2.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I64x2ShrU, 0xfd, 205, "i64x2.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I64x2Add, 0xfd, 206, "i64x2.add"),
+            InstructionCoding::new_simple(InstructionType::I64x2Sub, 0xfd, 209, "i64x2.sub"),
+            InstructionCoding::new_simple(InstructionType::I64x2Mul, 0xfd, 213, "i64x2.mul"),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtMulLowI32x4S,
+                0xfd,
+                220,
+                "i64x2.extmul_low_i32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtMulHighI32x4S,
+                0xfd,
+                221,
+                "i64x2.extmul_high_i32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtMulLowI32x4U,
+                0xfd,
+                222,
+                "i64x2.extmul_low_i32x4_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I64x2ExtMulHighI32x4U,
+                0xfd,
+                223,
+                "i64x2.extmul_high_i32x4_u",
+            ),
+            InstructionCoding::new_simple(InstructionType::F32x4Ceil, 0xfd, 103, "f32x4.ceil"),
+            InstructionCoding::new_simple(InstructionType::F32x4Floor, 0xfd, 104, "f32x4.floor"),
+            InstructionCoding::new_simple(InstructionType::F32x4Trunc, 0xfd, 105, "f32x4.trunc"),
+            InstructionCoding::new_simple(
+                InstructionType::F32x4Nearest,
+                0xfd,
+                106,
+                "f32x4.nearest",
+            ),
+            InstructionCoding::new_simple(InstructionType::F32x4Abs, 0xfd, 224, "f32x4.abs"),
+            InstructionCoding::new_simple(InstructionType::F32x4Neg, 0xfd, 225, "f32x4.neg"),
+            InstructionCoding::new_simple(InstructionType::F32x4Sqrt, 0xfd, 227, "f32x4.sqrt"),
+            InstructionCoding::new_simple(InstructionType::F32x4Add, 0xfd, 228, "f32x4.add"),
+            InstructionCoding::new_simple(InstructionType::F32x4Sub, 0xfd, 229, "f32x4.sub"),
+            InstructionCoding::new_simple(InstructionType::F32x4Mul, 0xfd, 230, "f32x4.mul"),
+            InstructionCoding::new_simple(InstructionType::F32x4Div, 0xfd, 231, "f32x4.div"),
+            InstructionCoding::new_simple(InstructionType::F32x4Min, 0xfd, 232, "f32x4.min"),
+            InstructionCoding::new_simple(InstructionType::F32x4Max, 0xfd, 233, "f32x4.max"),
+            InstructionCoding::new_simple(InstructionType::F32x4PMin, 0xfd, 234, "f32x4.pmin"),
+            InstructionCoding::new_simple(InstructionType::F32x4PMax, 0xfd, 235, "f32x4.pmax"),
+            InstructionCoding::new_simple(InstructionType::F64x2Ceil, 0xfd, 116, "f64x2.ceil"),
+            InstructionCoding::new_simple(InstructionType::F64x2Floor, 0xfd, 117, "f64x2.floor"),
+            InstructionCoding::new_simple(InstructionType::F64x2Trunc, 0xfd, 122, "f64x2.trunc"),
+            InstructionCoding::new_simple(
+                InstructionType::F64x2Nearest,
+                0xfd,
+                148,
+                "f64x2.nearest",
+            ),
+            InstructionCoding::new_simple(InstructionType::F64x2Abs, 0xfd, 236, "f64x2.abs"),
+            InstructionCoding::new_simple(InstructionType::F64x2Neg, 0xfd, 237, "f64x2.neg"),
+            InstructionCoding::new_simple(InstructionType::F64x2Sqrt, 0xfd, 239, "f64x2.sqrt"),
+            InstructionCoding::new_simple(InstructionType::F64x2Add, 0xfd, 240, "f64x2.add"),
+            InstructionCoding::new_simple(InstructionType::F64x2Sub, 0xfd, 241, "f64x2.sub"),
+            InstructionCoding::new_simple(InstructionType::F64x2Mul, 0xfd, 242, "f64x2.mul"),
+            InstructionCoding::new_simple(InstructionType::F64x2Div, 0xfd, 243, "f64x2.div"),
+            InstructionCoding::new_simple(InstructionType::F64x2Min, 0xfd, 244, "f64x2.min"),
+            InstructionCoding::new_simple(InstructionType::F64x2Max, 0xfd, 245, "f64x2.max"),
+            InstructionCoding::new_simple(InstructionType::F64x2PMin, 0xfd, 246, "f64x2.pmin"),
+            InstructionCoding::new_simple(InstructionType::F64x2PMax, 0xfd, 247, "f64x2.pmax"),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4TruncSatF32x4S,
+                0xfd,
+                248,
+                "i32x4.trunc_sat_f32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4TruncSatF32x4U,
+                0xfd,
+                249,
+                "i32x4.trunc_sat_f32x4_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32x4ConvertI32x4S,
+                0xfd,
+                250,
+                "f32x4.convert_i32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32x4ConvertI32x4U,
+                0xfd,
+                251,
+                "f32x4.convert_i32x4_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4TruncSatF64x2SZero,
+                0xfd,
+                252,
+                "i32x4.trunc_sat_f64x2_s_zero",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::I32x4TruncSatF64x2UZero,
+                0xfd,
+                253,
+                "i32x4.trunc_sat_f64x2_u_zero",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64x2ConvertLowI32x4S,
+                0xfd,
+                254,
+                "f64x2.convert_low_i32x4_s",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64x2ConvertLowI32x4U,
+                0xfd,
+                255,
+                "f64x2.convert_low_i32x4_u",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F32x4DemoteF64x2Zero,
+                0xfd,
+                94,
+                "f32x4.demote_f64x2_zero",
+            ),
+            InstructionCoding::new_simple(
+                InstructionType::F64x2PromoteLowF32x4,
+                0xfd,
+                95,
+                "f64x2.promote_low_f32x4",
+            ),
+            InstructionCoding::new_simple(InstructionType::End, 0x0b, 0, "end"),
+        ]
     })
+}
+
+pub fn get_codings_by_opcode() -> &'static HashMap<u8, InstructionCoding> {
+    static CODINGS_BY_OPCODE: OnceCell<HashMap<u8, InstructionCoding>> = OnceCell::new();
+    CODINGS_BY_OPCODE.get_or_init(|| {
+        let mut map: HashMap<u8, InstructionCoding> = HashMap::new();
+        for coding in get_codings().iter() {
+            map.insert(coding.opcode, coding.clone());
+        }
+        map
+    })
+}
+
+pub fn get_codings_by_type() -> &'static HashMap<InstructionType, InstructionCoding> {
+    static CODINGS_BY_NAME: OnceCell<HashMap<InstructionType, InstructionCoding>> = OnceCell::new();
+    CODINGS_BY_NAME.get_or_init(|| {
+        let mut map: HashMap<InstructionType, InstructionCoding> = HashMap::new();
+        for coding in get_codings().iter() {
+            map.insert(coding.typ, coding.clone());
+        }
+        map
+    })
+}
+
+struct InstructionIterator<'a> {
+    iter: &'a mut Iter<'a, u8>,
+    ended: bool,
+}
+
+impl<'a> Iterator for InstructionIterator<'a> {
+    type Item = Result<Instruction, io::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ended {
+            return None;
+        }
+
+        match next_byte(self.iter) {
+            Ok(opcode) => match get_codings_by_opcode().get(&opcode) {
+                Some(block_coding) => {
+                    let instruction = (block_coding.to_owned().parse_bytes)(&mut self.iter);
+                    match instruction {
+                        Ok(data) => {
+                            println!("opcode: {} '{}'", opcode, block_coding.name);
+                            if let InstructionType::End = block_coding.typ {
+                                self.ended = true;
+                            }
+                            Some(Ok(Instruction {
+                                typ: block_coding.typ,
+                                data: data,
+                            }))
+                        }
+                        Err(e) => {
+                            println!("error: {}", e);
+                            Some(Err(e))
+                        }
+                    }
+                }
+                None => Some(Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown opcode: {}", opcode),
+                ))),
+            },
+            Err(e) => Some(Err(e)),
+        }
+    }
+}
+
+// TODO: need locals too so we can pick up local loads beyond function params, globals too for the same reason
+pub fn to_instructions(
+    ftype: &super::parsed_unit::FunctionType,
+    bytes: &[u8],
+) -> Result<Vec<Instruction>, io::Error> {
+    let mut iter: Iter<'_, u8> = bytes.iter();
+    let instruction_iter = InstructionIterator {
+        iter: &mut iter,
+        ended: false,
+    };
+    let mut instructions: Vec<Instruction> = vec![];
+    let mut validator = super::validate::Validator::new(ftype);
+    for result in instruction_iter {
+        let instruction = result?;
+        match validator.validate(&instruction) {
+            Ok(_) => {}
+            Err(e) => {
+                println!("validation error: {}", e);
+            }
+        }
+        /*map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                e,
+            )
+        })?;
+        */
+        instructions.push(instruction);
+    }
+    Ok(instructions)
 }
 
 fn next_byte(iter: &mut Iter<u8>) -> Result<u8, io::Error> {
     iter.next()
-        .cloned()
+        .copied()
         .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "no more bytes to read"))
 }
 
-fn consume_block(iter: &mut Iter<u8>) -> Result<Vec<Node>, io::Error> {
-    let mut nodes: Vec<Node> = vec![];
-
-    while let Ok(expr) = consume_expression(iter) {
-        if expr == Node::End {
-            break;
-        }
-        nodes.push(expr);
-    }
-
-    Ok(nodes)
+#[derive(PartialEq, Clone, Copy)]
+pub enum BlockType {
+    Empty,
+    Type(super::parsed_unit::ValueType),
+    TypeIndex(i32),
 }
 
-fn consume_expression(iter: &mut Iter<u8>) -> Result<Node, io::Error> {
+fn consume_blocktype(iter: &mut Iter<u8>) -> Result<BlockType, io::Error> {
+    // if first byte is 0x40, it's an empty type
+    // if it's one of the value type bytes, it's a value type
+    // otherwise, interpret the first byte and following bytes as a signed
+    // LEB128 integer using read_vs32, and use that as the type index _if_ it's
+    // positive, otherwise it's an error
     let b = next_byte(iter)?;
+    if b == 0x40 {
+        Ok(BlockType::Empty)
+    } else if super::parsed_unit::ValueType::is_value_type_byte(b) {
+        Ok(BlockType::Type(
+            super::parsed_unit::ValueType::decode(b)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        ))
+    } else {
+        let mut first_byte = Some(b);
+        let type_index = super::parsable_bytes::read_vs32(&mut || match first_byte.take() {
+            Some(byte) => Ok(byte),
+            None => next_byte(iter),
+        })?;
+        if type_index < 0 {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid block type index",
+            ))
+        } else {
+            Ok(BlockType::TypeIndex(type_index))
+        }
+    }
+}
 
-    let nd = match b {
-        0x00 => Node::Nop,
-        0x01 => Node::Block {
-            children: consume_block(iter)?,
-        },
-        0x02 => Node::Loop {
-            children: consume_block(iter)?,
-        },
-        0x03 => Node::If {
-            children: consume_block(iter)?,
-        },
-        0x04 => Node::Else {
-            children: consume_block(iter)?,
-        },
-        0x05 => Node::Select, //TODO: ? what's after this?
-        0x06 => Node::Br {
-            argument_count: consume_vu1(iter)?,
-            relative_depth: consume_vu32(iter)?,
-        },
-        0x07 => Node::BrIf {
-            argument_count: consume_vu1(iter)?,
-            relative_depth: consume_vu32(iter)?,
-        },
-        0x08 => Node::BrTable, //TODO: ?
-        0x09 => Node::Return,
-        0x0a => Node::Unreachable,
-        0x0b => Node::Drop,
-        // 0x0c, 0x0d, 0x0e,
-        0x0f => Node::End,
+fn consume_u8vec(iter: &mut Iter<u8>) -> Result<Vec<u8>, io::Error> {
+    let len = consume_vu64(iter)?;
+    let mut vec: Vec<u8> = vec![];
+    for _ in 0..len {
+        vec.push(consume_vu1(iter)?);
+    }
+    Ok(vec)
+}
 
-        0x10 => Node::I32Const {
-            value: consume_vs32(iter)?,
-        },
-        0x11 => Node::I64Const {
-            value: consume_vs64(iter)?,
-        },
-        0x12 => Node::F64Const {
-            value: consume_f64(iter)?,
-        },
-        0x13 => Node::F32Const {
-            value: consume_f32(iter)?,
-        },
-        0x14 => Node::GetLocal {
-            local_index: consume_vu32(iter)?,
-        },
-        0x15 => Node::SetLocal {
-            local_index: consume_vu32(iter)?,
-        },
-        0x16 => Node::Call {
-            argument_count: consume_vu1(iter)?,
-            function_index: consume_vu32(iter)?,
-        },
-        0x17 => Node::CallIndirect {
-            argument_count: consume_vu1(iter)?,
-            type_index: consume_vu32(iter)?,
-        },
-        0x18 => Node::CallImport {
-            argument_count: consume_vu1(iter)?,
-            import_index: consume_vu32(iter)?,
-        },
-        0x19 => Node::TeeLocal {
-            local_index: consume_vu32(iter)?,
-        },
+fn consume_vu32vec(iter: &mut Iter<u8>) -> Result<Vec<u32>, io::Error> {
+    let len = consume_vu64(iter)?;
+    let mut vec: Vec<u32> = vec![];
+    for _ in 0..len {
+        vec.push(consume_vu32(iter)?);
+    }
+    Ok(vec)
+}
 
-        0x20 => Node::I32Load8S,
-        0x21 => Node::I32Load8U,
-        0x22 => Node::I32Load16S,
-        0x23 => Node::I32Load16U,
-        0x24 => Node::I64Load8S,
-        0x25 => Node::I64Load8U,
-        0x26 => Node::I64Load16S,
-        0x27 => Node::I64Load16U,
-        0x28 => Node::I64Load32S,
-        0x29 => Node::I64Load32U,
-        0x2a => Node::I32Load,
-        0x2b => Node::I64Load,
-        0x2c => Node::F32Load,
-        0x2d => Node::F64Load,
-        0x2e => Node::I32Store8,
-        0x2f => Node::I32Store16,
-        0x30 => Node::I64Store8,
-        0x31 => Node::I64Store16,
-        0x32 => Node::I64Store32,
-        0x33 => Node::I32Store,
-        0x34 => Node::I64Store,
-        0x35 => Node::F32Store,
-        0x36 => Node::F64Store,
-        // 0x37, 0x38,
-        0x39 => Node::GrowMemory,
-        // 0x3a,
-        0x3b => Node::CurrentMemory,
-
-        0x40 => Node::I32Add,
-        0x41 => Node::I32Sub,
-        0x42 => Node::I32Mul,
-        0x43 => Node::I32DivS,
-        0x44 => Node::I32DivU,
-        0x45 => Node::I32RemS,
-        0x46 => Node::I32RemU,
-        0x47 => Node::I32And,
-        0x48 => Node::I32Or,
-        0x49 => Node::I32Xor,
-        0x4a => Node::I32Shl,
-        0x4b => Node::I32ShrU,
-        0x4c => Node::I32ShrS,
-        0xb6 => Node::I32Rotr,
-        0xb7 => Node::I32Rotl,
-        0x4d => Node::I32Eq,
-        0x4e => Node::I32Ne,
-        0x4f => Node::I32LtS,
-        0x50 => Node::I32LeS,
-        0x51 => Node::I32LtU,
-        0x52 => Node::I32LeU,
-        0x53 => Node::I32GtS,
-        0x54 => Node::I32GeS,
-        0x55 => Node::I32GtU,
-        0x56 => Node::I32GeU,
-        0x57 => Node::I32Clz,
-        0x58 => Node::I32Ctz,
-        0x59 => Node::I32Popcnt,
-        0x5a => Node::I32Eqz,
-        0x5b => Node::I64Add,
-        0x5c => Node::I64Sub,
-        0x5d => Node::I64Mul,
-        0x5e => Node::I64DivS,
-        0x5f => Node::I64DivU,
-        0x60 => Node::I64RemS,
-        0x61 => Node::I64RemU,
-        0x62 => Node::I64And,
-        0x63 => Node::I64Or,
-        0x64 => Node::I64Xor,
-        0x65 => Node::I64Shl,
-        0x66 => Node::I64ShrU,
-        0x67 => Node::I64ShrS,
-        0xb8 => Node::I64Rotr,
-        0xb9 => Node::I64Rotl,
-        0x68 => Node::I64Eq,
-        0x69 => Node::I64Ne,
-        0x6a => Node::I64LtS,
-        0x6b => Node::I64LeS,
-        0x6c => Node::I64LtU,
-        0x6d => Node::I64LeU,
-        0x6e => Node::I64GtS,
-        0x6f => Node::I64GeS,
-        0x70 => Node::I64GtU,
-        0x71 => Node::I64GeU,
-        0x72 => Node::I64Clz,
-        0x73 => Node::I64Ctz,
-        0x74 => Node::I64Popcnt,
-        0xba => Node::I64Eqz,
-        0x75 => Node::F32Add,
-        0x76 => Node::F32Sub,
-        0x77 => Node::F32Mul,
-        0x78 => Node::F32Div,
-        0x79 => Node::F32Min,
-        0x7a => Node::F32Max,
-        0x7b => Node::F32Abs,
-        0x7c => Node::F32Neg,
-        0x7d => Node::F32Copysign,
-        0x7e => Node::F32Ceil,
-        0x7f => Node::F32Floor,
-        0x80 => Node::F32Trunc,
-        0x81 => Node::F32Nearest,
-        0x82 => Node::F32Sqrt,
-        0x83 => Node::F32Eq,
-        0x84 => Node::F32Ne,
-        0x85 => Node::F32Lt,
-        0x86 => Node::F32Le,
-        0x87 => Node::F32Gt,
-        0x88 => Node::F32Ge,
-        0x89 => Node::F64Add,
-        0x8a => Node::F64Sub,
-        0x8b => Node::F64Mul,
-        0x8c => Node::F64Div,
-        0x8d => Node::F64Min,
-        0x8e => Node::F64Max,
-        0x8f => Node::F64Abs,
-        0x90 => Node::F64Neg,
-        0x91 => Node::F64Copysign,
-        0x92 => Node::F64Ceil,
-        0x93 => Node::F64Floor,
-        0x94 => Node::F64Trunc,
-        0x95 => Node::F64Nearest,
-        0x96 => Node::F64Sqrt,
-        0x97 => Node::F64Eq,
-        0x98 => Node::F64Ne,
-        0x99 => Node::F64Lt,
-        0x9a => Node::F64Le,
-        0x9b => Node::F64Gt,
-        0x9c => Node::F64Ge,
-        0x9d => Node::I32TruncSF32,
-        0x9e => Node::I32TruncSF64,
-        0x9f => Node::I32TruncUF32,
-        0xa0 => Node::I32TruncUF64,
-        0xa1 => Node::I32WrapI64,
-        0xa2 => Node::I64TruncSF32,
-        0xa3 => Node::I64TruncSF64,
-        0xa4 => Node::I64TruncUF32,
-        0xa5 => Node::I64TruncUF64,
-        0xa6 => Node::I64ExtendSI32,
-        0xa7 => Node::I64ExtendUI32,
-        0xa8 => Node::F32ConvertSI32,
-        0xa9 => Node::F32ConvertUI32,
-        0xaa => Node::F32ConvertSI64,
-        0xab => Node::F32ConvertUI64,
-        0xac => Node::F32DemoteF64,
-        0xad => Node::F32ReinterpretI32,
-        0xae => Node::F64ConvertSI32,
-        0xaf => Node::F64ConvertUI32,
-        0xb0 => Node::F64ConvertSI64,
-        0xb1 => Node::F64ConvertUI64,
-        0xb2 => Node::F64PromoteF32,
-        0xb3 => Node::F64ReinterpretI64,
-        0xb4 => Node::I32ReinterpretF32,
-        0xb5 => Node::I64ReinterpretF64,
-
-        _ => Node::UNKNOWN,
-    };
-
-    Ok(nd)
+fn consume_vu64(iter: &mut Iter<u8>) -> Result<u64, io::Error> {
+    super::parsable_bytes::read_vu64(&mut || next_byte(iter))
 }
 
 fn consume_vu32<'a>(iter: &mut Iter<'a, u8>) -> Result<u32, io::Error> {
@@ -473,12 +2873,6 @@ fn consume_vu32<'a>(iter: &mut Iter<'a, u8>) -> Result<u32, io::Error> {
 fn consume_vu1(iter: &mut Iter<u8>) -> Result<u8, io::Error> {
     super::parsable_bytes::read_vu1(&mut || next_byte(iter))
 }
-
-/*
-fn consume_vu64(iter : &mut Iter<u8>) -> u64 {
-  super::parsable_bytes::read_vu64(&mut || { next_byte(iter) })
-}
-*/
 
 fn consume_vs32(iter: &mut Iter<u8>) -> Result<i32, io::Error> {
     super::parsable_bytes::read_vs32(&mut || next_byte(iter))
@@ -496,225 +2890,6 @@ fn consume_f64(iter: &mut Iter<u8>) -> Result<f64, io::Error> {
     super::parsable_bytes::read_f64(&mut || next_byte(iter))
 }
 
-fn to_string(node: &Node) -> String {
-    match node {
-        &Node::Nop => format!("nop"),
-        &Node::Block { ref children } => match children.len() {
-            0 => format!("()"),
-            1 => format!("({})", to_string(&children[0])),
-            2 => format!(
-                "(\n\t{}\n\t{}\n)",
-                to_string(&children[0]),
-                to_string(&children[1])
-            ),
-            3 => format!(
-                "(\n\t{}\n\t{}\n\t{}\n)",
-                to_string(&children[0]),
-                to_string(&children[1]),
-                to_string(&children[2])
-            ),
-            4 => format!(
-                "(\n\t{}\n\t{}\n\t{}\n\t{}\n)",
-                to_string(&children[0]),
-                to_string(&children[1]),
-                to_string(&children[2]),
-                to_string(&children[3])
-            ),
-            _ => format!("_({})", to_string(&children[0])),
-        },
-        &Node::Loop { ref children } => match children.len() {
-            0 => format!("(loop)"),
-            _ => format!("(loop {})", to_string(&children[0])),
-        },
-        &Node::If { children: _ } => format!("if"),
-        &Node::Else { children: _ } => format!("else"),
-        &Node::Select => format!("select"),
-        &Node::Br {
-            argument_count: _,
-            relative_depth: _,
-        } => format!("br"),
-        &Node::BrIf {
-            argument_count: _,
-            relative_depth: _,
-        } => format!("br_if"),
-        &Node::BrTable => format!("br_table"),
-        &Node::Return => format!("return"),
-        &Node::Unreachable => format!("unreachable"),
-        &Node::Drop => format!("drop"),
-        &Node::End => format!("end"),
-        &Node::I32Const { ref value } => format!("i32.const {}", value),
-        &Node::I64Const { ref value } => format!("i64.const {}", value),
-        &Node::F64Const { ref value } => format!("f64.const {}", value),
-        &Node::F32Const { ref value } => format!("f32.const {}", value),
-        &Node::GetLocal { local_index: _ } => format!("get_local"),
-        &Node::SetLocal { local_index: _ } => format!("set_local"),
-        &Node::Call {
-            argument_count,
-            function_index,
-        } => format!("call {}({})", function_index, argument_count),
-        &Node::CallIndirect {
-            argument_count: _,
-            type_index: _,
-        } => format!("call_indirect"),
-        &Node::CallImport {
-            argument_count: _,
-            import_index: _,
-        } => format!("call_import"),
-        &Node::TeeLocal { local_index: _ } => format!("tee_local"),
-        &Node::I32Load8S => format!("i32.load8_s"),
-        &Node::I32Load8U => format!("i32.load8_u"),
-        &Node::I32Load16S => format!("i32.load16_s"),
-        &Node::I32Load16U => format!("i32.load16_u"),
-        &Node::I64Load8S => format!("i64.load8_s"),
-        &Node::I64Load8U => format!("i64.load8_u"),
-        &Node::I64Load16S => format!("i64.load16_s"),
-        &Node::I64Load16U => format!("i64.load16_u"),
-        &Node::I64Load32S => format!("i64.load32_s"),
-        &Node::I64Load32U => format!("i64.load32_u"),
-        &Node::I32Load => format!("i32.load"),
-        &Node::I64Load => format!("i64.load"),
-        &Node::F32Load => format!("f32.load"),
-        &Node::F64Load => format!("f64.load"),
-        &Node::I32Store8 => format!("i32.store8"),
-        &Node::I32Store16 => format!("i32.store16"),
-        &Node::I64Store8 => format!("i64.store8"),
-        &Node::I64Store16 => format!("i64.store16"),
-        &Node::I64Store32 => format!("i64.store32"),
-        &Node::I32Store => format!("i32.store"),
-        &Node::I64Store => format!("i64.store"),
-        &Node::F32Store => format!("f32.store"),
-        &Node::F64Store => format!("f64.store"),
-        &Node::GrowMemory => format!("grow_memory"),
-        &Node::CurrentMemory => format!("current_memory"),
-        &Node::I32Add => format!("i32.add"),
-        &Node::I32Sub => format!("i32.sub"),
-        &Node::I32Mul => format!("i32.mul"),
-        &Node::I32DivS => format!("i32.div_s"),
-        &Node::I32DivU => format!("i32.div_u"),
-        &Node::I32RemS => format!("i32.rem_s"),
-        &Node::I32RemU => format!("i32.rem_u"),
-        &Node::I32And => format!("i32.and"),
-        &Node::I32Or => format!("i32.or"),
-        &Node::I32Xor => format!("i32.xor"),
-        &Node::I32Shl => format!("i32.shl"),
-        &Node::I32ShrU => format!("i32.shr_u"),
-        &Node::I32ShrS => format!("i32.shr_s"),
-        &Node::I32Rotr => format!("i32.rotr"),
-        &Node::I32Rotl => format!("i32.rotl"),
-        &Node::I32Eq => format!("i32.eq"),
-        &Node::I32Ne => format!("i32.ne"),
-        &Node::I32LtS => format!("i32.lt_s"),
-        &Node::I32LeS => format!("i32.le_s"),
-        &Node::I32LtU => format!("i32.lt_u"),
-        &Node::I32LeU => format!("i32.le_u"),
-        &Node::I32GtS => format!("i32.gt_s"),
-        &Node::I32GeS => format!("i32.ge_s"),
-        &Node::I32GtU => format!("i32.gt_u"),
-        &Node::I32GeU => format!("i32.ge_u"),
-        &Node::I32Clz => format!("i32.clz"),
-        &Node::I32Ctz => format!("i32.ctz"),
-        &Node::I32Popcnt => format!("i32.popcnt"),
-        &Node::I32Eqz => format!("i32.eqz"),
-        &Node::I64Add => format!("i64.add"),
-        &Node::I64Sub => format!("i64.sub"),
-        &Node::I64Mul => format!("i64.mul"),
-        &Node::I64DivS => format!("i64.div_s"),
-        &Node::I64DivU => format!("i64.div_u"),
-        &Node::I64RemS => format!("i64.rem_s"),
-        &Node::I64RemU => format!("i64.rem_u"),
-        &Node::I64And => format!("i64.and"),
-        &Node::I64Or => format!("i64.or"),
-        &Node::I64Xor => format!("i64.xor"),
-        &Node::I64Shl => format!("i64.shl"),
-        &Node::I64ShrU => format!("i64.shr_u"),
-        &Node::I64ShrS => format!("i64.shr_s"),
-        &Node::I64Rotr => format!("i64.rotr"),
-        &Node::I64Rotl => format!("i64.rotl"),
-        &Node::I64Eq => format!("i64.eq"),
-        &Node::I64Ne => format!("i64.ne"),
-        &Node::I64LtS => format!("i64.lt_s"),
-        &Node::I64LeS => format!("i64.le_s"),
-        &Node::I64LtU => format!("i64.lt_u"),
-        &Node::I64LeU => format!("i64.le_u"),
-        &Node::I64GtS => format!("i64.gt_s"),
-        &Node::I64GeS => format!("i64.ge_s"),
-        &Node::I64GtU => format!("i64.gt_u"),
-        &Node::I64GeU => format!("i64.ge_u"),
-        &Node::I64Clz => format!("i64.clz"),
-        &Node::I64Ctz => format!("i64.ctz"),
-        &Node::I64Popcnt => format!("i64.popcnt"),
-        &Node::I64Eqz => format!("i64.eqz"),
-        &Node::F32Add => format!("f32.add"),
-        &Node::F32Sub => format!("f32.sub"),
-        &Node::F32Mul => format!("f32.mul"),
-        &Node::F32Div => format!("f32.div"),
-        &Node::F32Min => format!("f32.min"),
-        &Node::F32Max => format!("f32.max"),
-        &Node::F32Abs => format!("f32.abs"),
-        &Node::F32Neg => format!("f32.neg"),
-        &Node::F32Copysign => format!("f32.copysign"),
-        &Node::F32Ceil => format!("f32.ceil"),
-        &Node::F32Floor => format!("f32.floor"),
-        &Node::F32Trunc => format!("f32.trunc"),
-        &Node::F32Nearest => format!("f32.nearest"),
-        &Node::F32Sqrt => format!("f32.sqrt"),
-        &Node::F32Eq => format!("f32.eq"),
-        &Node::F32Ne => format!("f32.ne"),
-        &Node::F32Lt => format!("f32.lt"),
-        &Node::F32Le => format!("f32.le"),
-        &Node::F32Gt => format!("f32.gt"),
-        &Node::F32Ge => format!("f32.ge"),
-        &Node::F64Add => format!("f64.add"),
-        &Node::F64Sub => format!("f64.sub"),
-        &Node::F64Mul => format!("f64.mul"),
-        &Node::F64Div => format!("f64.div"),
-        &Node::F64Min => format!("f64.min"),
-        &Node::F64Max => format!("f64.max"),
-        &Node::F64Abs => format!("f64.abs"),
-        &Node::F64Neg => format!("f64.neg"),
-        &Node::F64Copysign => format!("f64.copysign"),
-        &Node::F64Ceil => format!("f64.ceil"),
-        &Node::F64Floor => format!("f64.floor"),
-        &Node::F64Trunc => format!("f64.trunc"),
-        &Node::F64Nearest => format!("f64.nearest"),
-        &Node::F64Sqrt => format!("f64.sqrt"),
-        &Node::F64Eq => format!("f64.eq"),
-        &Node::F64Ne => format!("f64.ne"),
-        &Node::F64Lt => format!("f64.lt"),
-        &Node::F64Le => format!("f64.le"),
-        &Node::F64Gt => format!("f64.gt"),
-        &Node::F64Ge => format!("f64.ge"),
-        &Node::I32TruncSF32 => format!("i32.trunc_s/f32"),
-        &Node::I32TruncSF64 => format!("i32.trunc_s/f64"),
-        &Node::I32TruncUF32 => format!("i32.trunc_u/f32"),
-        &Node::I32TruncUF64 => format!("i32.trunc_u/f64"),
-        &Node::I32WrapI64 => format!("i32.wrap_i64"),
-        &Node::I64TruncSF32 => format!("i64.trunc_s/f32"),
-        &Node::I64TruncSF64 => format!("i64.trunc_s/f64"),
-        &Node::I64TruncUF32 => format!("i64.trunc_u/f32"),
-        &Node::I64TruncUF64 => format!("i64.trunc_u/f64"),
-        &Node::I64ExtendSI32 => format!("i64.extend_s/i32"),
-        &Node::I64ExtendUI32 => format!("i64.extend_u/i32"),
-        &Node::F32ConvertSI32 => format!("f32.convert_s/i32"),
-        &Node::F32ConvertUI32 => format!("f32.convert_u/i32"),
-        &Node::F32ConvertSI64 => format!("f32.convert_s/i64"),
-        &Node::F32ConvertUI64 => format!("f32.convert_u/i64"),
-        &Node::F32DemoteF64 => format!("f32.demote/f64"),
-        &Node::F32ReinterpretI32 => format!("f32.reinterpret/i32"),
-        &Node::F64ConvertSI32 => format!("f64.convert_s/i32"),
-        &Node::F64ConvertUI32 => format!("f64.convert_u/i32"),
-        &Node::F64ConvertSI64 => format!("f64.convert_s/i64"),
-        &Node::F64ConvertUI64 => format!("f64.convert_u/i64"),
-        &Node::F64PromoteF32 => format!("f64.promote/f32"),
-        &Node::F64ReinterpretI64 => format!("f64.reinterpret/i64"),
-        &Node::I32ReinterpretF32 => format!("i32.reinterpret/f32"),
-        &Node::I64ReinterpretF64 => format!("i64.reinterpret/f64"),
-        &Node::UNKNOWN => format!("UNKNOWN"),
-    }
-}
-
-impl fmt::Display for Node {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", to_string(self))
-    }
+fn consume_v128(iter: &mut Iter<u8>) -> Result<[u8; 16], io::Error> {
+    super::parsable_bytes::read_v128(&mut || next_byte(iter))
 }

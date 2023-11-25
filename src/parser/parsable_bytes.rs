@@ -510,6 +510,17 @@ where
     rdr.read_f64::<LittleEndian>()
 }
 
+pub fn read_v128<F>(reader: &mut F) -> Result<[u8; 16], io::Error>
+where
+    F: FnMut() -> Result<u8, io::Error>,
+{
+    let mut buf = [0u8; 16];
+    for i in 0..16 {
+        buf[i] = reader()?;
+    }
+    Ok(buf)
+}
+
 #[test]
 fn test_read_f64() {
     let read = |v: Vec<u8>| read_f64(&mut next_byte(v)).expect("Failed to read f64");
