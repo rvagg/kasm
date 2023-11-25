@@ -5,6 +5,8 @@ mod tests {
     use serde::Deserialize;
     use std::collections::HashMap;
 
+    use kasm;
+
     pub type Bin = HashMap<String, Base64DecodedBytes>;
 
     #[derive(Debug)]
@@ -36,16 +38,17 @@ mod tests {
         commands: Vec<Command>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     #[serde(untagged)]
     enum Command {
-        Module(ModuleCommand),
         AssertReturn(AssertReturnCommand),
         AssertTrapCommand(AssertTrapCommand),
         AssertInvalid(AssertInvalidCommand),
+        Module(ModuleCommand),
     }
 
-    #[derive(Deserialize)]
+    // ModuleCommand is simple enough that's a catch-all; so it must be listed last
+    #[derive(Deserialize, Debug)]
     struct ModuleCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -53,7 +56,7 @@ mod tests {
         filename: String,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     struct AssertReturnCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -62,7 +65,7 @@ mod tests {
         expected: Vec<TypedValue>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     struct AssertInvalidCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -72,7 +75,7 @@ mod tests {
         module_type: String,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     struct AssertTrapCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -81,7 +84,7 @@ mod tests {
         text: String,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     struct Action {
         #[serde(rename = "type")]
         action_type: String,
@@ -89,7 +92,7 @@ mod tests {
         args: Vec<TypedValue>,
     }
 
-    #[derive(Deserialize)]
+    #[derive(Deserialize, Debug)]
     struct TypedValue {
         #[serde(rename = "type")]
         value_type: String,
@@ -114,10 +117,54 @@ mod tests {
 
             let test_data: TestData = serde_json::from_str(&json_string).unwrap();
 
-            test_data.bin.iter().for_each(|(k, v)| {
-                let hex_string: String = v.0.iter().map(|b| format!("{:02x}", b)).collect();
-                println!("{}: {}", k, hex_string);
-            });
+            struct InvalidCommand<'a> {
+                command: &'a AssertInvalidCommand,
+                bin: &'a Vec<u8>,
+                code: &'a String,
+            }
+            let assert_invalid_commands: Vec<_> = test_data
+                .spec
+                .commands
+                .iter()
+                .enumerate()
+                .filter_map(|(index, command)| {
+                    if let Command::AssertInvalid(ref cmd) = command {
+                        Some(InvalidCommand {
+                            command: cmd,
+                            bin: &test_data.bin[&cmd.filename].0,
+                            code: &test_data.code[index],
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for icab in &assert_invalid_commands {
+                let code_hex = icab
+                    .bin
+                    .clone()
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join("");
+                println!(
+                    "AssertInvalid: line = {}, filename = {}, text = {}, wasm = {}, wat = {}",
+                    icab.command.line,
+                    icab.command.filename,
+                    icab.command.text,
+                    code_hex,
+                    icab.code
+                );
+                match kasm::parser::parse(
+                    format!("{}/{}", icab.command.filename, icab.command.line).as_str(),
+                    &mut kasm::parser::parsable_bytes::ParsableBytes::new(icab.bin.clone()),
+                ) {
+                    Ok(_) => panic!("should not succeed"),
+                    Err(e) => assert_eq!(e.to_string(), icab.command.text),
+                }
+            }
+
+            /*
             test_data
                 .spec
                 .commands
@@ -152,6 +199,7 @@ mod tests {
                         }
                     }
                 });
+                */
         }
     }
 }

@@ -128,8 +128,48 @@ impl ParsableBytes {
         })
     }
 
+    pub fn read_vu1(&mut self) -> Result<u8, io::Error> {
+        read_vu1(&mut || match self.next() {
+            Some(byte) => Ok(byte),
+            None => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "no more bytes to read",
+            )),
+        })
+    }
+
     pub fn read_vs64(&mut self) -> Result<i64, io::Error> {
         read_vs64(&mut || match self.next() {
+            Some(byte) => Ok(byte),
+            None => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "no more bytes to read",
+            )),
+        })
+    }
+
+    pub fn read_vs32(&mut self) -> Result<i32, io::Error> {
+        read_vs32(&mut || match self.next() {
+            Some(byte) => Ok(byte),
+            None => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "no more bytes to read",
+            )),
+        })
+    }
+
+    pub fn read_f64(&mut self) -> Result<f64, io::Error> {
+        read_f64(&mut || match self.next() {
+            Some(byte) => Ok(byte),
+            None => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "no more bytes to read",
+            )),
+        })
+    }
+
+    pub fn read_f32(&mut self) -> Result<f32, io::Error> {
+        read_f32(&mut || match self.next() {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,

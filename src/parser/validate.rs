@@ -194,9 +194,12 @@ impl<'a> Validator<'a> {
             | ast::InstructionType::I32ShrU
             | ast::InstructionType::I32Rotr
             | ast::InstructionType::I32Rotl => {
-                self.pop_expected(ValOrUnknown::Val(super::parsed_unit::ValueType::I32)).ok_or("type mismatch")?;
-                self.pop_expected(ValOrUnknown::Val(super::parsed_unit::ValueType::I32)).ok_or("type mismatch")?;
-                self.push_val(ValOrUnknown::Val(super::parsed_unit::ValueType::I32)).ok_or("type mismatch")
+                self.pop_expected(ValOrUnknown::Val(super::parsed_unit::ValueType::I32))
+                    .ok_or("type mismatch")?;
+                self.pop_expected(ValOrUnknown::Val(super::parsed_unit::ValueType::I32))
+                    .ok_or("type mismatch")?;
+                self.push_val(ValOrUnknown::Val(super::parsed_unit::ValueType::I32))
+                    .ok_or("type mismatch")
             }
 
             // (i32):i32
@@ -206,9 +209,15 @@ impl<'a> Validator<'a> {
             | ast::InstructionType::I32Popcnt
             | ast::InstructionType::I32Extend8S
             | ast::InstructionType::I32Extend16S => {
-                self.pop_expected(ValOrUnknown::Val(super::parsed_unit::ValueType::I32)).ok_or("type mismatch")?;
-                self.push_val(ValOrUnknown::Val(super::parsed_unit::ValueType::I32)).ok_or("type mismatch")
+                self.pop_expected(ValOrUnknown::Val(super::parsed_unit::ValueType::I32))
+                    .ok_or("type mismatch")?;
+                self.push_val(ValOrUnknown::Val(super::parsed_unit::ValueType::I32))
+                    .ok_or("type mismatch")
             }
+
+            ast::InstructionType::I32Const => self
+                .push_val(ValOrUnknown::Val(super::parsed_unit::ValueType::I32))
+                .ok_or("type mismatch"),
 
             ast::InstructionType::LocalGet => {
                 if let ast::InstructionData::LocalInstruction { local_index: li } = *inst.get_data()
@@ -224,10 +233,51 @@ impl<'a> Validator<'a> {
                 }
             }
 
+            ast::InstructionType::Block | ast::InstructionType::Loop | ast::InstructionType::If => {
+                // special case for If we need to pop an i32
+                if inst.get_type() == &ast::InstructionType::If {
+                    self.pop_expected(ValOrUnknown::Val(super::parsed_unit::ValueType::I32))
+                        .ok_or("type mismatch")?;
+                }
+
+                if let ast::InstructionData::BlockInstruction { blocktype: bt } = *inst.get_data() {
+                    let mut end_types = Vec::new();
+                    match bt {
+                        // simple []->[type] version
+                        ast::BlockType::Type(t) => {
+                            end_types.push(ValOrUnknown::Val(t));
+                        }
+                        ast::BlockType::Empty => {}
+                        // TODO: TypeIndex form with start_types too
+                        ast::BlockType::TypeIndex(ti) => {}
+                    }
+                    self.push_ctrl(*inst.get_type(), Vec::new(), end_types);
+                    Ok(())
+                } else {
+                    println!("validate: Block: invalid data");
+                    Err("invalid instruction")
+                }
+            }
+
+            ast::InstructionType::Else => {
+                let ctrl = self.pop_ctrl()?;
+                if ctrl.instruction != ast::InstructionType::If {
+                    println!("validate: Else: invalid instruction");
+                    Err("invalid instruction")
+                } else {
+                    let mut end_types = Vec::new();
+                    for t in ctrl.start_types {
+                        end_types.push(t);
+                    }
+                    self.push_ctrl(ast::InstructionType::Else, Vec::new(), end_types);
+                    Ok(())
+                }
+            }
+
             ast::InstructionType::End => {
                 let ctrl = self.pop_ctrl()?;
                 if ctrl.end_types.len() != 0 {
-                     self.push_vals(ctrl.end_types).ok_or("type mismatch")
+                    self.push_vals(ctrl.end_types).ok_or("type mismatch")
                 } else {
                     Ok(())
                 }

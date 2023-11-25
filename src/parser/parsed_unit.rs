@@ -1,8 +1,11 @@
 use std::fmt;
 use std::io;
 
+use base64::write;
+
 use crate::parser::ast;
 
+#[derive(Debug)]
 pub struct ParsedUnit {
     pub name: String,
     pub magic: u32,
@@ -14,15 +17,18 @@ pub struct ParsedUnit {
     pub exports: Vec<Export>,
     pub function_bodies: Vec<FunctionBody>,
     pub data: Vec<Data>,
-    pub table: Vec<u64>,
+    pub table: Vec<TableType>,
     pub start: u64,
+    pub elements: Vec<Element>,
 }
 
+#[derive(Debug)]
 pub struct FunctionType {
     pub parameters: Vec<ValueType>,
     pub return_types: Vec<ValueType>,
 }
 
+#[derive(Debug)]
 pub struct Import {
     pub external_kind: ExternalKind,
     pub module: String,
@@ -31,40 +37,148 @@ pub struct Import {
     pub memory_type: Option<MemoryType>,
 }
 
+#[derive(Debug)]
 pub struct Function {
     pub ftype_index: u8,
 }
 
+#[derive(Debug)]
 pub struct Memory {
     pub min: u64,
     pub max: u64,
     pub exported: bool,
 }
 
+#[derive(Debug)]
 pub enum ExportIndex {
     Function(u64),
     Table(u64),
     Memory(u64),
     Global(u64),
 }
+
+#[derive(Debug)]
 pub struct Export {
     pub index: ExportIndex,
     pub name: String,
 }
 
+#[derive(Debug)]
 pub struct FunctionBody {
     pub locals: Vec<ValueType>,
-    pub body: Vec<u8>,
     pub instructions: Vec<ast::Instruction>,
 }
 
+#[derive(Debug)]
 pub struct Data {
     pub address: u64,
     pub data: Vec<u8>,
 }
 
-pub enum Form {
-    Function,
+#[derive(Debug)]
+pub enum RefType {
+    FuncRef,
+    ExternRef,
+}
+
+impl From<RefType> for ValueType {
+    fn from(rt: RefType) -> Self {
+        match rt {
+            RefType::FuncRef => ValueType::FuncRef,
+            RefType::ExternRef => ValueType::ExternRef,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Limits {
+    pub min: u32,
+    pub max: u32, // TODO: is u32::MAX ok for unlimited?
+}
+
+impl Limits {
+    pub fn new(min: u32, max: u32) -> Limits {
+        Limits { min, max }
+    }
+}
+
+#[derive(Debug)]
+pub struct TableType {
+    pub ref_type: RefType,
+    pub limits: Limits,
+}
+
+impl fmt::Display for TableType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "TableType({}) min = {}, max = {}",
+            match self.ref_type {
+                RefType::FuncRef => "FuncRef",
+                RefType::ExternRef => "ExternRef",
+            },
+            self.limits.min,
+            self.limits.max
+        )
+    }
+}
+
+#[derive(Debug)]
+pub enum ElementMode {
+    Passive,
+    Declarative,
+    Active {
+        table_index: u32,
+        offset: Vec<ast::Instruction>,
+    },
+}
+
+impl fmt::Display for ElementMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &ElementMode::Passive => write!(f, "Passive"),
+            &ElementMode::Declarative => write!(f, "Declarative"),
+            &ElementMode::Active {
+                table_index,
+                ref offset,
+            } => {
+                write!(f, "Active {{ table_index = {}, offset =", table_index).unwrap();
+                for instruction in offset {
+                    write!(f, "{} ", instruction)?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Element {
+    pub ref_type: RefType,
+    pub init: Vec<Vec<ast::Instruction>>,
+    pub mode: ElementMode,
+}
+
+impl fmt::Display for Element {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Element({}) init = [",
+            match self.ref_type {
+                RefType::FuncRef => "FuncRef",
+                RefType::ExternRef => "ExternRef",
+            }
+        )
+        .unwrap();
+        for iv in &self.init {
+            write!(f, "[")?;
+            for instruction in iv {
+                write!(f, "{} ", instruction)?;
+            }
+            write!(f, "] ")?;
+        }
+        write!(f, "] mode = {}", self.mode)
+    }
 }
 
 pub enum ExternalKind {
@@ -74,6 +188,7 @@ pub enum ExternalKind {
     Global,
 }
 
+#[derive(Debug)]
 pub struct MemoryType {
     // limits : ResizableLimits
 }
@@ -101,6 +216,7 @@ impl ParsedUnit {
             data: vec![],
             table: vec![],
             start: 0,
+            elements: vec![],
         }
     }
 }
@@ -227,6 +343,7 @@ impl fmt::Display for FunctionBody {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "locals = ").unwrap();
         f.debug_set().entries(self.locals.iter()).finish().unwrap();
+        /* TODO: do we want this back? need to intercept the reader
         write!(f, " body = ").unwrap();
         let hex_string = self
             .body
@@ -235,6 +352,7 @@ impl fmt::Display for FunctionBody {
             .collect::<Vec<String>>()
             .join("");
         write!(f, "0x{}", hex_string).unwrap();
+         */
         write!(f, " instructions = ").unwrap();
         for instruction in &self.instructions {
             write!(f, "{} ", instruction)?;
@@ -258,7 +376,7 @@ impl ExportIndex {
             0x02 => Ok(ExportIndex::Memory(idx as u64)),
             0x03 => Ok(ExportIndex::Global(idx as u64)),
             _ => {
-                let msg: String = format!("Invalid export type: {}", byte);
+                let msg: String = format!("invalid export type: {}", byte);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
             }
         }
@@ -299,7 +417,7 @@ impl ValueType {
             0x7b => Ok(ValueType::V128),
             0x70 => Ok(ValueType::FuncRef),
             0x6f => Ok(ValueType::ExternRef),
-            _ => Err(format!("Invalid value type: {}", byte)),
+            _ => Err(format!("invalid value type: {}", byte)),
         }
     }
 }
@@ -312,7 +430,7 @@ impl ExternalKind {
             0x03 => Ok(ExternalKind::Memory),
             0x04 => Ok(ExternalKind::Global),
             _ => {
-                let msg: String = format!("Invalid external kind: {}", byte);
+                let msg: String = format!("invalid external kind: {}", byte);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
             }
         }
