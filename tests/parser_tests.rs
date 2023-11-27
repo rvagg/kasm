@@ -104,7 +104,7 @@ mod tests {
         use std::fs;
         use std::path::Path;
 
-        let json_files = vec!["i32.json", "i64.json"];
+        let json_files = vec!["i32.json", "i64.json", "f32.json", "f64.json"];
 
         for file in json_files {
             println!("testing file: {}", file);
@@ -129,11 +129,15 @@ mod tests {
                 .enumerate()
                 .filter_map(|(index, command)| {
                     if let Command::AssertInvalid(ref cmd) = command {
-                        Some(InvalidCommand {
-                            command: cmd,
-                            bin: &test_data.bin[&cmd.filename].0,
-                            code: &test_data.code[index],
-                        })
+                        match cmd.filename.split('.').last() {
+                            Some("wasm") => Some(InvalidCommand {
+                                command: cmd,
+                                bin: &test_data.bin[&cmd.filename].0,
+                                code: &test_data.code[index],
+                            }),
+                            Some("wat") => None,
+                            _ => panic!("Unexpected file extension in filename: {}", cmd.filename),
+                        }
                     } else {
                         None
                     }
