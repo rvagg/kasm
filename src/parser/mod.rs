@@ -83,16 +83,13 @@ fn read_sections(
         3 => read_section_function(bytes, &mut unit.functions, &unit.function_types),
         4 => read_section_table(bytes, &mut unit.table),
         5 => read_section_memory(bytes, &mut unit.memory),
+        6 => read_section_global(bytes, &mut unit.globals),
         7 => read_section_export(bytes, &mut unit.exports),
         8 => read_section_start(bytes, &mut unit.start),
         9 => read_section_elements(bytes, &mut unit.elements),
-        10 => read_section_code(
-            bytes,
-            &mut unit.function_bodies,
-            &unit.function_types,
-            &unit.functions,
-        ),
+        10 => read_section_code(bytes, &mut unit.code, &unit.function_types, &unit.functions),
         11 => read_section_data(bytes, &mut unit.data),
+        12 => read_section_datacount(bytes, &mut unit.data),
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -224,17 +221,16 @@ fn read_section_function(
 
 fn read_section_memory(
     bytes: &mut parsable_bytes::ParsableBytes,
-    memory: &mut Option<parsed_unit::Memory>,
+    memory: &mut Vec<parsed_unit::Memory>,
 ) -> Result<(), io::Error> {
-    let min = bytes.read_vu64()?;
-    let max = bytes.read_vu64()?;
-    let exported = bytes.read_bool()?; // going away in next version?
+    let count = bytes.read_vu64()?;
 
-    *memory = Some(parsed_unit::Memory {
-        min: min,
-        max: max,
-        exported: exported,
-    });
+    for _ in 0..count {
+        let limits = parsed_unit::Limits::decode(bytes)?;
+        memory.push(parsed_unit::Memory {
+            memory_type: limits,
+        })
+    }
 
     Ok(())
 }
@@ -314,21 +310,112 @@ fn read_section_code(
     Ok(())
 }
 
+impl parsed_unit::Data {
+    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
+        let mut mode = parsed_unit::DataMode::Passive;
+        // let mem_index: u32 = 0;
+        // let expr : Vec<ast::Instruction> = vec![];
+
+        let typ = bytes.read_vu32()?;
+        match typ {
+            0 => {
+                mode = parsed_unit::DataMode::Active {
+                    memory_index: 0,
+                    offset: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
+                };
+            }
+            1 => {} // nothing else needed
+            2 => {
+                mode = parsed_unit::DataMode::Active {
+                    memory_index: bytes.read_vu32()?,
+                    offset: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
+                };
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown data type: 0x{:02x}", typ),
+            ))?,
+        };
+
+        Ok(parsed_unit::Data {
+            init: bytes.read_u8vec()?,
+            mode: mode,
+        })
+    }
+}
+
 fn read_section_data(
     bytes: &mut parsable_bytes::ParsableBytes,
-    data: &mut Vec<parsed_unit::Data>,
+    datas: &mut Vec<parsed_unit::Data>,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
-        let address = bytes.read_vu64()?;
-        let size = bytes.read_vu64()?;
-        let bytes = bytes.read_bytes(size as usize)?;
-        let d = parsed_unit::Data {
-            address: address,
-            data: bytes,
+        let data = parsed_unit::Data::decode(bytes)?;
+        println!("data type: {:?}", data);
+        datas.push(data);
+    }
+
+    Ok(())
+}
+
+fn read_section_datacount(
+    bytes: &mut parsable_bytes::ParsableBytes,
+    datas: &mut Vec<parsed_unit::Data>,
+) -> Result<(), io::Error> {
+    let count = bytes.read_vu32()?;
+    if count != datas.len() as u32 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "data count mismatch, expected {}, got {}",
+                datas.len(),
+                count
+            ),
+        ));
+    }
+    Ok(())
+}
+
+impl parsed_unit::GlobalType {
+    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
+        let value_type = parsed_unit::ValueType::decode(bytes.read_byte()?)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let mut_byte = bytes.read_byte()?;
+        let mutable = match mut_byte {
+            0x00 => false,
+            0x01 => true,
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown global type: 0x{:02x}", mut_byte),
+            ))?,
         };
-        data.push(d);
+        Ok(parsed_unit::GlobalType {
+            value_type: value_type,
+            mutable: mutable,
+        })
+    }
+}
+
+impl parsed_unit::Global {
+    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
+        Ok(parsed_unit::Global {
+            global_type: parsed_unit::GlobalType::decode(bytes)?,
+            init: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
+        })
+    }
+}
+
+fn read_section_global(
+    bytes: &mut parsable_bytes::ParsableBytes,
+    globals: &mut Vec<parsed_unit::Global>,
+) -> Result<(), io::Error> {
+    let count = bytes.read_vu64()?;
+
+    for _ in 0..count {
+        let data = parsed_unit::Global::decode(bytes)?;
+        println!("global: {:?}", data);
+        globals.push(data);
     }
 
     Ok(())
@@ -351,19 +438,20 @@ impl parsed_unit::RefType {
 impl parsed_unit::Limits {
     pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
         // if first byte is 0x00 then it's [0,0], if it's 0x01 then the next 2 u32's are [from,to]
-        let byte = bytes.read_byte()?;
-        match byte {
-            0x00 => Ok(parsed_unit::Limits::new(0, u32::MAX)),
+        let typ = bytes.read_byte()?;
+        let min = bytes.read_vu32()?;
+        let mut max = u32::MAX;
+        match typ {
+            0x00 => {}
             0x01 => {
-                let min = bytes.read_vu32()?;
-                let max = bytes.read_vu32()?;
-                Ok(parsed_unit::Limits::new(min, max))
+                max = bytes.read_vu32()?;
             }
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unknown limits type: 0x{:02x}", byte),
-            )),
-        }
+                format!("unknown limits type: 0x{:02x}", typ),
+            ))?,
+        };
+        Ok(parsed_unit::Limits { min, max })
     }
 }
 
@@ -405,65 +493,52 @@ fn read_section_start(
 
 impl parsed_unit::Element {
     pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
-        let mut read_type = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<parsed_unit::RefType, io::Error> {
-            let byte = bytes.read_byte()?;
-            match byte {
-                0x70 => Ok(parsed_unit::RefType::FuncRef),
-                0x6f => Ok(parsed_unit::RefType::ExternRef),
-                _ => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unknown element ref type: 0x{:02x}", byte),
-                )),
-            }
-        };
-        let mut read_element_kind = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<parsed_unit::RefType, io::Error> {
-            let byte = bytes.read_byte()?;
-            match byte {
-                0x00 => Ok(parsed_unit::RefType::FuncRef),
-                _ => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unknown element element kind: 0x{:02x}", byte),
-                )),
-            }
-        };
-        let mut read_expr = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<ast::Instruction>, io::Error> {
-            // TODO: must be a constant expression
-            self::ast::Instruction::decode_expression(
-                &parsed_unit::FunctionType {
-                    // TODO: confirm this is the right signature for these: [0,n]=>[x]
-                    parameters: vec![parsed_unit::ValueType::I32, parsed_unit::ValueType::I32],
-                    return_types: vec![parsed_unit::ValueType::I32],
-                },
-                bytes,
-            )
-        };
-        let mut read_table_index = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<u32, io::Error> { bytes.read_vu32() };
+        let mut read_type =
+            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<parsed_unit::RefType, io::Error> {
+                let byte = bytes.read_byte()?;
+                match byte {
+                    0x70 => Ok(parsed_unit::RefType::FuncRef),
+                    0x6f => Ok(parsed_unit::RefType::ExternRef),
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown element ref type: 0x{:02x}", byte),
+                    )),
+                }
+            };
+        let mut read_element_kind =
+            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<parsed_unit::RefType, io::Error> {
+                let byte = bytes.read_byte()?;
+                match byte {
+                    0x00 => Ok(parsed_unit::RefType::FuncRef),
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown element element kind: 0x{:02x}", byte),
+                    )),
+                }
+            };
+        let mut read_table_index =
+            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<u32, io::Error> {
+                bytes.read_vu32()
+            };
         let mut read_init = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
             let count = bytes.read_vu32()?;
             let mut init: Vec<Vec<ast::Instruction>> = vec![];
             for _ in 0..count {
-                // TODO: do these need to be constant expressions?
-                let expr = self::ast::Instruction::decode_expression(
-                    &parsed_unit::FunctionType {
-                        // TODO: what is the right signature here??
-                        parameters: vec![parsed_unit::ValueType::I32, parsed_unit::ValueType::I32],
-                        return_types: vec![parsed_unit::ValueType::I32],
-                    },
-                    bytes,
-                )?;
-                init.push(expr);
+                // TODO: does this need to be a constant expression? probably, also confirm signautre
+                init.push(consume_constant_expr(bytes)?);
             }
             Ok(init)
         };
-        let mut read_func_indexes = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<u32>, io::Error> {
-            let count = bytes.read_vu32()?;
-            let mut func_indexes: Vec<u32> = vec![];
-            for _ in 0..count {
-                let func_index = bytes.read_vu32()?;
-                func_indexes.push(func_index);
-            }
-            Ok(func_indexes)
-        };
+        let mut read_func_indexes =
+            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<u32>, io::Error> {
+                let count = bytes.read_vu32()?;
+                let mut func_indexes: Vec<u32> = vec![];
+                for _ in 0..count {
+                    let func_index = bytes.read_vu32()?;
+                    func_indexes.push(func_index);
+                }
+                Ok(func_indexes)
+            };
         let mut read_func_index_init = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
             let fi = read_func_indexes(bytes)?;
             let mut init: Vec<Vec<ast::Instruction>> = vec![];
@@ -494,7 +569,7 @@ impl parsed_unit::Element {
                     ref_type: parsed_unit::RefType::FuncRef,
                     mode: parsed_unit::ElementMode::Active {
                         table_index: 0,
-                        offset: read_expr(bytes)?,
+                        offset: consume_constant_expr(bytes)?,
                     },
                     init: read_func_index_init(bytes)?,
                 })
@@ -510,7 +585,10 @@ impl parsed_unit::Element {
             2 => {
                 // 2:u32 𝑥:tableidx 𝑒:expr et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode active {table 𝑥, offset 𝑒}}
                 Ok(parsed_unit::Element {
-                    mode: parsed_unit::ElementMode::Active { table_index: read_table_index(bytes)?, offset: read_expr(bytes)? },
+                    mode: parsed_unit::ElementMode::Active {
+                        table_index: read_table_index(bytes)?,
+                        offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
+                    },
                     ref_type: read_element_kind(bytes)?,
                     init: read_func_index_init(bytes)?,
                 })
@@ -529,7 +607,7 @@ impl parsed_unit::Element {
                     ref_type: parsed_unit::RefType::FuncRef,
                     mode: parsed_unit::ElementMode::Active {
                         table_index: 0,
-                        offset: read_expr(bytes)?,
+                        offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
                     },
                     init: read_init(bytes)?,
                 })
@@ -547,7 +625,7 @@ impl parsed_unit::Element {
                 Ok(parsed_unit::Element {
                     mode: parsed_unit::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
-                        offset: read_expr(bytes)?,
+                        offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
                     },
                     ref_type: read_type(bytes)?,
                     init: read_init(bytes)?,
@@ -582,4 +660,17 @@ fn read_section_elements(
     }
 
     Ok(())
+}
+
+fn consume_constant_expr(
+    bytes: &mut parsable_bytes::ParsableBytes,
+) -> Result<Vec<ast::Instruction>, io::Error> {
+    self::ast::Instruction::decode_expression(
+        &parsed_unit::FunctionType {
+            // TODO: confirm this is the right signature for these: [0,n]=>[x]
+            parameters: vec![parsed_unit::ValueType::I32, parsed_unit::ValueType::I32],
+            return_types: vec![parsed_unit::ValueType::I32],
+        },
+        bytes,
+    )
 }

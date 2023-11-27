@@ -197,6 +197,15 @@ impl ParsableBytes {
         String::from_utf8(v)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid utf-8 sequence"))
     }
+
+    pub fn read_u8vec(&mut self) -> Result<Vec<u8>, io::Error> {
+        let len = self.read_vu64()?;
+        let mut vec: Vec<u8> = vec![];
+        for _ in 0..len {
+            vec.push(self.read_vu1()?);
+        }
+        Ok(vec)
+    }
 }
 
 impl Iterator for ParsableBytes {

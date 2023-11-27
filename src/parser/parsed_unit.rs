@@ -10,16 +10,18 @@ pub struct ParsedUnit {
     pub name: String,
     pub magic: u32,
     pub version: u32,
+
     pub function_types: Vec<FunctionType>,
     pub imports: Vec<Import>,
     pub functions: Vec<Function>,
-    pub memory: Option<Memory>,
-    pub exports: Vec<Export>,
-    pub function_bodies: Vec<FunctionBody>,
-    pub data: Vec<Data>,
     pub table: Vec<TableType>,
+    pub memory: Vec<Memory>,
+    pub globals: Vec<Global>,
+    pub exports: Vec<Export>,
     pub start: u64,
     pub elements: Vec<Element>,
+    pub code: Vec<FunctionBody>,
+    pub data: Vec<Data>,
 }
 
 #[derive(Debug)]
@@ -44,9 +46,7 @@ pub struct Function {
 
 #[derive(Debug)]
 pub struct Memory {
-    pub min: u64,
-    pub max: u64,
-    pub exported: bool,
+    pub memory_type: Limits,
 }
 
 #[derive(Debug)]
@@ -67,12 +67,6 @@ pub struct Export {
 pub struct FunctionBody {
     pub locals: Vec<ValueType>,
     pub instructions: Vec<ast::Instruction>,
-}
-
-#[derive(Debug)]
-pub struct Data {
-    pub address: u64,
-    pub data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -99,6 +93,12 @@ pub struct Limits {
 impl Limits {
     pub fn new(min: u32, max: u32) -> Limits {
         Limits { min, max }
+    }
+}
+
+impl fmt::Display for Limits {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "min = {}, max = {}", self.min, self.max)
     }
 }
 
@@ -181,6 +181,83 @@ impl fmt::Display for Element {
     }
 }
 
+#[derive(Debug)]
+pub enum DataMode {
+    Passive,
+    Active {
+        memory_index: u32,
+        offset: Vec<ast::Instruction>,
+    },
+}
+
+impl fmt::Display for DataMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &DataMode::Passive => write!(f, "Passive"),
+            &DataMode::Active {
+                memory_index,
+                ref offset,
+            } => {
+                write!(f, "Active {{ memory_index = {}, offset =", memory_index).unwrap();
+                for instruction in offset {
+                    write!(f, "{} ", instruction)?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Data {
+    pub init: Vec<u8>,
+    pub mode: DataMode,
+}
+
+impl fmt::Display for Data {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Data init = [")?;
+        for byte in &self.init {
+            write!(f, "{:02x} ", byte)?;
+        }
+        write!(f, "] mode = {}", self.mode)
+    }
+}
+
+#[derive(Debug)]
+pub struct GlobalType {
+    pub value_type: ValueType,
+    pub mutable: bool, // const or var
+}
+
+impl fmt::Display for GlobalType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "GlobalType({}) {}",
+            self.value_type,
+            if self.mutable { "var" } else { "const" }
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct Global {
+    pub global_type: GlobalType,
+    pub init: Vec<ast::Instruction>,
+}
+
+impl fmt::Display for Global {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Global global_type = {}", self.global_type)?;
+        write!(f, " init = [")?;
+        for instruction in &self.init {
+            write!(f, "{} ", instruction)?;
+        }
+        write!(f, "]")
+    }
+}
+
 pub enum ExternalKind {
     Function,
     Table,
@@ -207,78 +284,58 @@ impl ParsedUnit {
             name: name.to_string(),
             magic: 0,
             version: 0,
+
             function_types: vec![],
             imports: vec![],
             functions: vec![],
-            memory: None,
-            exports: vec![],
-            function_bodies: vec![],
-            data: vec![],
             table: vec![],
+            memory: vec![],
+            globals: vec![],
+            exports: vec![],
             start: 0,
             elements: vec![],
+            code: vec![],
+            data: vec![],
         }
     }
 }
 
 impl fmt::Display for ParsedUnit {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ParsedUnit('{}') {{", self.name).unwrap();
-        write!(f, "\n  magic number = {}", self.magic).unwrap();
-        write!(f, "\n  version = {}", self.version).unwrap();
-        write!(f, "\n  function_types").unwrap();
-        let mut i = 0;
-        for t in &self.function_types {
-            write!(f, "\n    {} {}", i, t).unwrap();
-            i += 1;
-        }
-        write!(f, "\n  imports").unwrap();
-        i = 0;
-        for imp in &self.imports {
-            write!(f, "\n    {} {}", i, imp).unwrap();
-            i += 1;
-        }
-        write!(f, "\n  functions").unwrap();
-        i = 0;
-        for func in &self.functions {
-            write!(f, "\n    {} {}", i, func).unwrap();
-            i += 1;
-        }
-        write!(f, "\n  memory: ").unwrap();
-        match &self.memory.as_ref() {
-            &Some(v) => {
-                write!(f, "{}", v).unwrap();
-            }
-            &None => {
-                write!(f, "None").unwrap();
-            }
-        }
-        write!(f, "\n  exports").unwrap();
-        i = 0;
-        for imp in &self.exports {
-            write!(f, "\n    {} {}", i, imp).unwrap();
-            i += 1;
-        }
-        write!(f, "\n  function_bodies").unwrap();
-        i = 0;
-        for imp in &self.function_bodies {
-            write!(f, "\n    {} {}", i, imp).unwrap();
-            i += 1;
-        }
-        write!(f, "\n  data").unwrap();
-        i = 0;
-        for d in &self.data {
-            write!(f, "\n    {} {}", i, d).unwrap();
-            i += 1;
-        }
-        write!(f, "\n  table").unwrap();
-        i = 0;
-        for fi in &self.table {
-            write!(f, "\n    {} function = {}", i, fi).unwrap();
-            i += 1;
-        }
-        write!(f, "\n  start function = {}", &self.start).unwrap();
-        write!(f, "\n}}")
+        write!(f, "ParsedUnit name = {}", self.name)?;
+        write!(f, " magic = 0x{:08x}", self.magic)?;
+        write!(f, " version = {}", self.version)?;
+        write!(f, " function_types = ").unwrap();
+        f.debug_set()
+            .entries(self.function_types.iter())
+            .finish()
+            .unwrap();
+        write!(f, " imports = ").unwrap();
+        f.debug_set().entries(self.imports.iter()).finish().unwrap();
+        write!(f, " functions = ").unwrap();
+        f.debug_set()
+            .entries(self.functions.iter())
+            .finish()
+            .unwrap();
+        write!(f, " table = ").unwrap();
+        f.debug_set().entries(self.table.iter()).finish().unwrap();
+        write!(f, " memory = ").unwrap();
+        f.debug_set().entries(self.memory.iter()).finish().unwrap();
+        write!(f, " globals = ").unwrap();
+        f.debug_set().entries(self.globals.iter()).finish().unwrap();
+        write!(f, " exports = ").unwrap();
+        f.debug_set().entries(self.exports.iter()).finish().unwrap();
+        write!(f, " start = {}", self.start)?;
+        write!(f, " elements = ").unwrap();
+        f.debug_set()
+            .entries(self.elements.iter())
+            .finish()
+            .unwrap();
+        write!(f, " code = ").unwrap();
+        f.debug_set().entries(self.code.iter()).finish().unwrap();
+        write!(f, " data = ").unwrap();
+        f.debug_set().entries(self.data.iter()).finish().unwrap();
+        Ok(())
     }
 }
 
@@ -319,11 +376,7 @@ impl fmt::Display for Function {
 
 impl fmt::Display for Memory {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "min = {}, max = {}, exported = {}",
-            self.min, self.max, self.exported
-        )
+        write!(f, "Memory({})", self.memory_type)
     }
 }
 
@@ -358,13 +411,6 @@ impl fmt::Display for FunctionBody {
             write!(f, "{} ", instruction)?;
         }
         Ok(())
-    }
-}
-
-impl fmt::Display for Data {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "address = {} data = ", self.address).unwrap();
-        f.debug_set().entries(self.data.iter()).finish()
     }
 }
 

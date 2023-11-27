@@ -819,7 +819,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::ValueTypeInstruction {
-                            value_types: consume_u8vec(bytes)?, // TODO: type vector?
+                            value_types: bytes.read_u8vec()?, // TODO: type vector?
                         })
                     },
                 ),
@@ -2009,7 +2009,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LanesInstruction {
-                            lane_indices: consume_u8vec(bytes)?,
+                            lane_indices: bytes.read_u8vec()?,
                         })
                     },
                 ),
@@ -2850,15 +2850,6 @@ fn consume_blocktype(
             Ok(BlockType::TypeIndex(type_index))
         }
     }
-}
-
-fn consume_u8vec(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<Vec<u8>, io::Error> {
-    let len = bytes.read_vu64()?;
-    let mut vec: Vec<u8> = vec![];
-    for _ in 0..len {
-        vec.push(bytes.read_vu1()?);
-    }
-    Ok(vec)
 }
 
 fn consume_vu32vec(
