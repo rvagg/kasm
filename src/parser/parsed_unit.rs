@@ -1,8 +1,6 @@
 use std::fmt;
 use std::io;
 
-use base64::write;
-
 use crate::parser::ast;
 
 #[derive(Debug)]
@@ -11,17 +9,549 @@ pub struct ParsedUnit {
     pub magic: u32,
     pub version: u32,
 
-    pub function_types: Vec<FunctionType>,
+    pub types: TypeSection,
+    pub imports: ImportSection,
+    pub functions: FunctionSection,
+    pub table: TableSection,
+    pub memory: MemorySection,
+    pub globals: GlobalSection,
+    pub exports: ExportSection,
+    pub start: StartSection,
+    pub elements: ElementSection,
+    pub code: CodeSection,
+    pub data: DataSection,
+}
+
+impl fmt::Display for ParsedUnit {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ParsedUnit name = {}", self.name)?;
+        write!(f, " magic = 0x{:08x}", self.magic)?;
+        write!(f, " version = {}", self.version)?;
+        write!(f, " types = ").unwrap();
+        f.debug_set()
+            .entries(self.types.types.iter())
+            .finish()
+            .unwrap();
+        write!(f, " imports = ").unwrap();
+        f.debug_set()
+            .entries(self.imports.imports.iter())
+            .finish()
+            .unwrap();
+        write!(f, " functions = ").unwrap();
+        f.debug_set()
+            .entries(self.functions.functions.iter())
+            .finish()
+            .unwrap();
+        write!(f, " table = ").unwrap();
+        f.debug_set()
+            .entries(self.table.table.iter())
+            .finish()
+            .unwrap();
+        write!(f, " memory = ").unwrap();
+        f.debug_set()
+            .entries(self.memory.memory.iter())
+            .finish()
+            .unwrap();
+        write!(f, " globals = ").unwrap();
+        f.debug_set()
+            .entries(self.globals.globals.iter())
+            .finish()
+            .unwrap();
+        write!(f, " exports = ").unwrap();
+        f.debug_set()
+            .entries(self.exports.exports.iter())
+            .finish()
+            .unwrap();
+        write!(f, " start = {}", self.start.start)?;
+        write!(f, " elements = ").unwrap();
+        f.debug_set()
+            .entries(self.elements.elements.iter())
+            .finish()
+            .unwrap();
+        write!(f, " code = ").unwrap();
+        f.debug_set()
+            .entries(self.code.code.iter())
+            .finish()
+            .unwrap();
+        write!(f, " data = ").unwrap();
+        f.debug_set()
+            .entries(self.data.data.iter())
+            .finish()
+            .unwrap();
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct SectionPosition {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl SectionPosition {
+    pub fn new(start: u32, end: u32) -> SectionPosition {
+        SectionPosition { start, end }
+    }
+
+    pub fn len(&self) -> u32 {
+        self.end - self.start
+    }
+}
+
+impl ToString for SectionPosition {
+    fn to_string(&self) -> String {
+        format!(
+            "start=0x{:08x} end=0x{:08x} (size=0x{:08x})",
+            self.start,
+            self.end,
+            self.len()
+        )
+    }
+}
+
+pub trait Positional {
+    fn set_position(&mut self, start: u32, end: u32);
+    fn has_position(&self) -> bool;
+}
+
+macro_rules! impl_positional {
+    ($($t:ty),*) => {
+        $(
+            impl Positional for $t {
+                fn set_position(&mut self, start: u32, end: u32) {
+                    self.position.start = start;
+                    self.position.end = end;
+                }
+
+                fn has_position(&self) -> bool {
+                    self.position.start != 0 || self.position.end != 0
+                }
+            }
+        )*
+    }
+}
+
+impl_positional!(
+    TypeSection,
+    ImportSection,
+    FunctionSection,
+    TableSection,
+    MemorySection,
+    GlobalSection,
+    ExportSection,
+    StartSection,
+    ElementSection,
+    CodeSection,
+    DataSection
+);
+
+pub trait SectionToString {
+    fn to_header_string(&self) -> String;
+    fn to_details_string(&self, unit: &ParsedUnit) -> String;
+}
+
+#[derive(Debug)]
+pub struct TypeSection {
+    pub types: Vec<FunctionType>,
+    pub position: SectionPosition,
+}
+
+impl TypeSection {
+    pub fn new() -> TypeSection {
+        TypeSection {
+            types: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, function_type: FunctionType) {
+        self.types.push(function_type);
+    }
+
+    pub fn len(&self) -> usize {
+        self.types.len()
+    }
+
+    pub fn get(&self, index: u8) -> Option<&FunctionType> {
+        self.types.get(index as usize)
+    }
+}
+
+impl SectionToString for TypeSection {
+    fn to_header_string(&self) -> String {
+        format!("{} count: {}", self.position.to_string(), self.types.len())
+    }
+
+    fn to_details_string(&self, _: &ParsedUnit) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Type[{}]:\n", self.types.len()));
+        for (i, function_type) in self.types.iter().enumerate() {
+            result.push_str(&format!(" - type[{}] {}\n", i, function_type));
+        }
+        result
+    }
+}
+
+#[derive(Debug)]
+pub struct ImportSection {
     pub imports: Vec<Import>,
+    pub position: SectionPosition,
+}
+
+impl ImportSection {
+    pub fn new() -> ImportSection {
+        ImportSection {
+            imports: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, import: Import) {
+        self.imports.push(import);
+    }
+
+    pub fn len(&self) -> usize {
+        self.imports.len()
+    }
+}
+
+#[derive(Debug)]
+pub struct FunctionSection {
     pub functions: Vec<Function>,
+    pub position: SectionPosition,
+}
+
+impl FunctionSection {
+    pub fn new() -> FunctionSection {
+        FunctionSection {
+            functions: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, function: Function) {
+        self.functions.push(function);
+    }
+
+    pub fn len(&self) -> usize {
+        self.functions.len()
+    }
+
+    pub fn get(&self, index: u8) -> Option<&Function> {
+        self.functions.get(index as usize)
+    }
+}
+
+impl SectionToString for FunctionSection {
+    fn to_header_string(&self) -> String {
+        format!(
+            "{} count: {}",
+            self.position.to_string(),
+            self.functions.len()
+        )
+    }
+
+    fn to_details_string(&self, unit: &ParsedUnit) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Function[{}]:\n", self.functions.len()));
+        for (i, function) in self.functions.iter().enumerate() {
+            let mut exp = String::new();
+            for export in &unit.exports.exports {
+                match export.index {
+                    ExportIndex::Function(idx) => {
+                        if idx == i as u64 {
+                            exp = format!(" <{}>", export.name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            result.push_str(&format!(
+                " - func[{}] sig={}{}\n",
+                i, function.ftype_index, exp
+            ));
+        }
+        result
+    }
+}
+
+#[derive(Debug)]
+pub struct TableSection {
     pub table: Vec<TableType>,
+    pub position: SectionPosition,
+}
+
+impl TableSection {
+    pub fn new() -> TableSection {
+        TableSection {
+            table: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, table_type: TableType) {
+        self.table.push(table_type);
+    }
+
+    pub fn len(&self) -> usize {
+        self.table.len()
+    }
+}
+
+#[derive(Debug)]
+pub struct MemorySection {
     pub memory: Vec<Memory>,
+    pub position: SectionPosition,
+}
+
+impl MemorySection {
+    pub fn new() -> MemorySection {
+        MemorySection {
+            memory: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, memory: Memory) {
+        self.memory.push(memory);
+    }
+
+    pub fn len(&self) -> usize {
+        self.memory.len()
+    }
+}
+
+#[derive(Debug)]
+pub struct GlobalSection {
     pub globals: Vec<Global>,
+    pub position: SectionPosition,
+}
+
+impl GlobalSection {
+    pub fn new() -> GlobalSection {
+        GlobalSection {
+            globals: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, global: Global) {
+        self.globals.push(global);
+    }
+
+    pub fn len(&self) -> usize {
+        self.globals.len()
+    }
+}
+
+#[derive(Debug)]
+pub struct ExportSection {
     pub exports: Vec<Export>,
+    pub position: SectionPosition,
+}
+
+impl ExportSection {
+    pub fn new() -> ExportSection {
+        ExportSection {
+            exports: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, export: Export) {
+        self.exports.push(export);
+    }
+
+    pub fn len(&self) -> usize {
+        self.exports.len()
+    }
+}
+
+impl SectionToString for ExportSection {
+    fn to_header_string(&self) -> String {
+        format!(
+            "{} count: {}",
+            self.position.to_string(),
+            self.exports.len()
+        )
+    }
+
+    fn to_details_string(&self, _: &ParsedUnit) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Export[{}]:\n", self.exports.len()));
+        for (i, export) in self.exports.iter().enumerate() {
+            let typ = match export.index {
+                ExportIndex::Function(_) => "func",
+                ExportIndex::Table(_) => "table",
+                ExportIndex::Memory(_) => "mem",
+                ExportIndex::Global(_) => "global",
+            };
+            result.push_str(&format!(
+                " - {}[{}] <{}> -> \"{}\"\n",
+                typ, i, export.name, export.name
+            ));
+        }
+        result
+    }
+}
+
+#[derive(Debug)]
+pub struct StartSection {
     pub start: u64,
+    pub position: SectionPosition,
+}
+
+impl StartSection {
+    pub fn new() -> StartSection {
+        StartSection {
+            start: 0,
+            position: SectionPosition::new(0, 0),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ElementSection {
     pub elements: Vec<Element>,
+    pub position: SectionPosition,
+}
+
+impl ElementSection {
+    pub fn new() -> ElementSection {
+        ElementSection {
+            elements: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, element: Element) {
+        self.elements.push(element);
+    }
+
+    pub fn len(&self) -> usize {
+        self.elements.len()
+    }
+}
+
+#[derive(Debug)]
+pub struct CodeSection {
     pub code: Vec<FunctionBody>,
+    pub position: SectionPosition,
+}
+
+impl CodeSection {
+    pub fn new() -> CodeSection {
+        CodeSection {
+            code: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, function_body: FunctionBody) {
+        self.code.push(function_body);
+    }
+
+    pub fn len(&self) -> usize {
+        self.code.len()
+    }
+}
+
+impl SectionToString for CodeSection {
+    fn to_header_string(&self) -> String {
+        format!("{} count: {}", self.position.to_string(), self.code.len())
+    }
+
+    fn to_details_string(&self, unit: &ParsedUnit) -> String {
+        let mut result: String = String::new();
+        result.push_str(&format!("Code[{}]:\n", self.code.len()));
+        for (i, function_body) in self.code.iter().enumerate() {
+            let mut exp = String::new();
+            for export in &unit.exports.exports {
+                match export.index {
+                    ExportIndex::Function(idx) => {
+                        if idx == i as u64 {
+                            exp = format!(" <{}>", export.name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            result.push_str(&format!(
+                " - func[{}] size={}{}\n",
+                i,
+                function_body.position.len(),
+                exp
+            ));
+        }
+        result
+    }
+}
+
+impl CodeSection {
+    fn to_disassemble_string(&self, unit: &ParsedUnit) -> String {
+        let mut result: String = String::new();
+        for (i, function_body) in self.code.iter().enumerate() {
+            let mut exp = String::new();
+            for export in &unit.exports.exports {
+                match export.index {
+                    ExportIndex::Function(idx) => {
+                        if idx == i as u64 {
+                            exp = format!(" <{}>", export.name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut pos = function_body.position.start as usize;
+            result.push_str(&format!("{:06x} func[{}]{}:\n", pos, i, exp));
+            pos +=1; // TODO: do we need more bytes to represent a function start?
+            // for each instruction, ignoring the opcodes for now
+            //  00011f: 20 00                      | local.get 0
+            function_body.instructions.iter().for_each(|instruction| {
+                let coding = ast::get_codings_by_type()
+                    .get(instruction.get_type())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "failed to get codings for instruction type: {:?}",
+                            instruction.get_type()
+                        )
+                    });
+                result.push_str(&format!(" {:06x}: ", pos));
+                let mut byte_string = String::new();
+                let coding_bytes = (coding.emit_bytes)(instruction.get_data());
+                for byte in &coding_bytes {
+                    byte_string.push_str(&format!("{:02x} ", byte));
+                }
+                pos += &coding_bytes.len();
+                let coding_string = (coding.emit_str)(instruction.get_data());
+                result.push_str(&format!("{:26} | {}\n", byte_string, coding_string));
+            });
+        }
+        result
+    }
+}
+
+#[derive(Debug)]
+pub struct DataSection {
     pub data: Vec<Data>,
+    pub position: SectionPosition,
+}
+
+impl DataSection {
+    pub fn new() -> DataSection {
+        DataSection {
+            data: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+
+    pub fn push(&mut self, data: Data) {
+        self.data.push(data);
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 #[derive(Debug)]
@@ -30,8 +560,28 @@ pub struct FunctionType {
     pub return_types: Vec<ValueType>,
 }
 
+impl fmt::Display for FunctionType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "({}) -> {}", // assumes a single return type
+            self.parameters
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+                .join(", "),
+            self.return_types
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct Import {
+    // TODO: this is no longer correct
     pub external_kind: ExternalKind,
     pub module: String,
     pub name: String,
@@ -39,9 +589,25 @@ pub struct Import {
     pub memory_type: Option<MemoryType>,
 }
 
+impl fmt::Display for Import {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}::{} kind = {}",
+            self.module, self.name, self.external_kind
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct Function {
     pub ftype_index: u8,
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Type({})", self.ftype_index)
+    }
 }
 
 #[derive(Debug)]
@@ -67,6 +633,7 @@ pub struct Export {
 pub struct FunctionBody {
     pub locals: Vec<ValueType>,
     pub instructions: Vec<ast::Instruction>,
+    pub position: SectionPosition, // sub-section position
 }
 
 #[derive(Debug)]
@@ -265,8 +832,30 @@ pub enum ExternalKind {
     Global,
 }
 
+impl fmt::Debug for ExternalKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self, f)
+    }
+}
+
+impl fmt::Display for ExternalKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                &ExternalKind::Function => "Function",
+                &ExternalKind::Table => "Table",
+                &ExternalKind::Memory => "Memory",
+                &ExternalKind::Global => "Global",
+            }
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct MemoryType {
+    // TODO: fix this, no longer correct
     // limits : ResizableLimits
 }
 
@@ -285,92 +874,83 @@ impl ParsedUnit {
             magic: 0,
             version: 0,
 
-            function_types: vec![],
-            imports: vec![],
-            functions: vec![],
-            table: vec![],
-            memory: vec![],
-            globals: vec![],
-            exports: vec![],
-            start: 0,
-            elements: vec![],
-            code: vec![],
-            data: vec![],
+            types: TypeSection::new(),
+            imports: ImportSection::new(),
+            functions: FunctionSection::new(),
+            table: TableSection::new(),
+            memory: MemorySection::new(),
+            globals: GlobalSection::new(),
+            exports: ExportSection::new(),
+            start: StartSection::new(),
+            elements: ElementSection::new(),
+            code: CodeSection::new(),
+            data: DataSection::new(),
         }
     }
 }
 
-impl fmt::Display for ParsedUnit {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ParsedUnit name = {}", self.name)?;
-        write!(f, " magic = 0x{:08x}", self.magic)?;
-        write!(f, " version = {}", self.version)?;
-        write!(f, " function_types = ").unwrap();
-        f.debug_set()
-            .entries(self.function_types.iter())
-            .finish()
-            .unwrap();
-        write!(f, " imports = ").unwrap();
-        f.debug_set().entries(self.imports.iter()).finish().unwrap();
-        write!(f, " functions = ").unwrap();
-        f.debug_set()
-            .entries(self.functions.iter())
-            .finish()
-            .unwrap();
-        write!(f, " table = ").unwrap();
-        f.debug_set().entries(self.table.iter()).finish().unwrap();
-        write!(f, " memory = ").unwrap();
-        f.debug_set().entries(self.memory.iter()).finish().unwrap();
-        write!(f, " globals = ").unwrap();
-        f.debug_set().entries(self.globals.iter()).finish().unwrap();
-        write!(f, " exports = ").unwrap();
-        f.debug_set().entries(self.exports.iter()).finish().unwrap();
-        write!(f, " start = {}", self.start)?;
-        write!(f, " elements = ").unwrap();
-        f.debug_set()
-            .entries(self.elements.iter())
-            .finish()
-            .unwrap();
-        write!(f, " code = ").unwrap();
-        f.debug_set().entries(self.code.iter()).finish().unwrap();
-        write!(f, " data = ").unwrap();
-        f.debug_set().entries(self.data.iter()).finish().unwrap();
-        Ok(())
-    }
+pub enum ParsedUnitFormat {
+    Header,
+    Details,
+    Disassemble,
 }
 
-impl fmt::Display for FunctionType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "({}) : ({})",
-            self.parameters
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<String>>()
-                .join(", "),
-            self.return_types
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<String>>()
-                .join(", ")
-        )
+impl ParsedUnit {
+    pub fn to_string(&self, format: ParsedUnitFormat) -> String {
+        match format {
+            ParsedUnitFormat::Header => self.to_header_string(),
+            ParsedUnitFormat::Details => self.to_details_string(),
+            ParsedUnitFormat::Disassemble => self.to_disassemble_string(),
+        }
     }
-}
 
-impl fmt::Display for Import {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}::{} kind = {}",
-            self.module, self.name, self.external_kind
-        )
+    fn to_header_string(&self) -> String {
+        let mut result = String::new();
+
+        if self.types.has_position() {
+            result.push_str(&format!("     Type {}\n", self.types.to_header_string()));
+        }
+        if self.functions.has_position() {
+            result.push_str(&format!(
+                " Function {}\n",
+                self.functions.to_header_string()
+            ));
+        }
+        if self.exports.has_position() {
+            result.push_str(&format!("   Export {}\n", self.exports.to_header_string()));
+        }
+        if self.code.has_position() {
+            result.push_str(&format!("     Code {}\n", self.code.to_header_string()));
+        }
+
+        result
     }
-}
 
-impl fmt::Display for Function {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Type({})", self.ftype_index)
+    fn to_details_string(&self) -> String {
+        let mut result = String::new();
+
+        if self.types.has_position() {
+            result.push_str(self.types.to_details_string(&self).as_str());
+        }
+        if self.functions.has_position() {
+            result.push_str(self.functions.to_details_string(&self).as_str());
+        }
+        if self.exports.has_position() {
+            result.push_str(self.exports.to_details_string(&self).as_str());
+        }
+        if self.code.has_position() {
+            result.push_str(self.code.to_details_string(&self).as_str());
+        }
+
+        result
+    }
+
+    fn to_disassemble_string(&self) -> String {
+        if self.code.has_position() {
+            self.code.to_disassemble_string(&self)
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -429,7 +1009,7 @@ impl ExportIndex {
     }
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ValueType {
     // Number types
     I32,
@@ -466,6 +1046,36 @@ impl ValueType {
             _ => Err(format!("invalid value type: {}", byte)),
         }
     }
+
+    pub fn emit_bytes(&self) -> Vec<u8> {
+        match self {
+            &ValueType::I32 => vec![0x7f],
+            &ValueType::I64 => vec![0x7e],
+            &ValueType::F32 => vec![0x7d],
+            &ValueType::F64 => vec![0x7c],
+            &ValueType::V128 => vec![0x7b],
+            &ValueType::FuncRef => vec![0x70],
+            &ValueType::ExternRef => vec![0x6f],
+        }
+    }
+}
+
+impl fmt::Display for ValueType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                &ValueType::I32 => "i32",
+                &ValueType::I64 => "i64",
+                &ValueType::F64 => "f64",
+                &ValueType::F32 => "f32",
+                &ValueType::V128 => "v128",
+                &ValueType::FuncRef => "FuncRef",
+                &ValueType::ExternRef => "ExternRef",
+            }
+        )
+    }
 }
 
 impl ExternalKind {
@@ -480,50 +1090,5 @@ impl ExternalKind {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
             }
         }
-    }
-}
-
-impl fmt::Display for ValueType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                &ValueType::I32 => "I32",
-                &ValueType::I64 => "I64",
-                &ValueType::F64 => "F64",
-                &ValueType::F32 => "F32",
-                &ValueType::V128 => "V128",
-                &ValueType::FuncRef => "FuncRef",
-                &ValueType::ExternRef => "ExternRef",
-            }
-        )
-    }
-}
-
-impl fmt::Debug for ValueType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self, f)
-    }
-}
-
-impl fmt::Display for ExternalKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                &ExternalKind::Function => "Function",
-                &ExternalKind::Table => "Table",
-                &ExternalKind::Memory => "Memory",
-                &ExternalKind::Global => "Global",
-            }
-        )
-    }
-}
-
-impl fmt::Debug for ExternalKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self, f)
     }
 }

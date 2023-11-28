@@ -270,11 +270,11 @@ impl<'a> Validator<'a> {
                 .push_val(MaybeValue::Val(I64_VALUE))
                 .ok_or("type mismatch"),
 
-            // iunop (i64):i32
+            // iunop (i64):i64
             ast::InstructionType::I64Clz
             | ast::InstructionType::I64Ctz
             | ast::InstructionType::I64Popcnt => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I32_VALUE))
+                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I64_VALUE))
             }
 
             // ibinop (i64,i64):i64
@@ -323,7 +323,7 @@ impl<'a> Validator<'a> {
             ast::InstructionType::I64Extend8S
             | ast::InstructionType::I64Extend16S
             | ast::InstructionType::I64Extend32S => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I32_VALUE))
+                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I64_VALUE))
             }
 
             // cvtop (i32):i64

@@ -1,11 +1,20 @@
 #[cfg(test)]
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
+    use kasm::parser::parsed_unit;
     use serde::de::{self, Deserializer};
     use serde::Deserialize;
     use std::collections::HashMap;
 
     use kasm;
+
+    #[derive(Deserialize)]
+    struct TestData {
+        bin: Bin,
+        spec: Spec,
+        code: Vec<String>,
+        dump: Dump,
+    }
 
     pub type Bin = HashMap<String, Base64DecodedBytes>;
 
@@ -23,13 +32,6 @@ mod tests {
                 .map_err(de::Error::custom)?;
             Ok(Base64DecodedBytes(decoded))
         }
-    }
-
-    #[derive(Deserialize)]
-    struct TestData {
-        bin: Bin,
-        spec: Spec,
-        code: Vec<String>,
     }
 
     #[derive(Deserialize)]
@@ -97,6 +99,13 @@ mod tests {
         #[serde(rename = "type")]
         value_type: String,
         value: String,
+    }
+
+    #[derive(Deserialize)]
+    struct Dump {
+        header: String,
+        details: String,
+        disassemble: String,
     }
 
     #[test]
@@ -167,6 +176,61 @@ mod tests {
                     Err(e) => assert_eq!(e.to_string(), icab.command.text),
                 }
             }
+
+            let s = test_data.dump.header;
+            let mut parts = s.splitn(3, ':');
+            let filename = parts.next().unwrap_or("");
+            let filename = filename.trim_start_matches(|c| c == '\n' || c == '\t');
+            parts.next();
+            let rest = parts.next().unwrap_or("").trim_start_matches('\n');
+
+            println!("filename: {}", filename);
+            println!("rest:\n{}", rest);
+
+            let parsed = kasm::parser::parse(
+                format!("{}", filename).as_str(),
+                &mut kasm::parser::parsable_bytes::ParsableBytes::new(
+                    test_data.bin[filename].0.clone(),
+                ),
+            );
+
+            match parsed {
+                Ok(_) => {}
+                Err(e) => panic!("failed to parse {}: {}", filename, e),
+            }
+
+            let parsed_string = parsed
+                .as_ref()
+                .unwrap()
+                .to_string(parsed_unit::ParsedUnitFormat::Header);
+            println!("parsed:\n{}", parsed_string);
+            assert_eq!(parsed_string, rest);
+
+            // same but for details string
+
+            let s = test_data.dump.details;
+            let mut parts = s.splitn(3, ':');
+            let rest = parts.nth(2).unwrap_or("").trim_start_matches('\n');
+
+            let parsed_string = parsed
+                .as_ref()
+                .unwrap()
+                .to_string(parsed_unit::ParsedUnitFormat::Details);
+            println!("parsed:\n{}", parsed_string);
+            assert_eq!(parsed_string, rest);
+
+            // same but for disassemble string
+
+            let s = test_data.dump.disassemble;
+            let mut parts = s.splitn(3, ':');
+            let rest = parts.nth(2).unwrap_or("").trim_start_matches('\n');
+
+            let parsed_string = parsed
+                .as_ref()
+                .unwrap()
+                .to_string(parsed_unit::ParsedUnitFormat::Disassemble);
+            println!("disassemble:\n{}", parsed_string);
+            assert_eq!(parsed_string, rest);
 
             /*
             test_data

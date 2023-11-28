@@ -377,6 +377,17 @@ where
     Ok(result)
 }
 
+fn emit_vu(v: u64) -> Vec<u8> {
+    let mut result: Vec<u8> = vec![];
+    let mut value = v;
+    while value >= 0x80 {
+        result.push(((value & 0x7F) | 0x80) as u8);
+        value >>= 7;
+    }
+    result.push(value as u8);
+    result
+}
+
 pub fn read_vu64<F>(reader: &mut F) -> Result<u64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -408,12 +419,20 @@ fn test_read_vu64() {
     assert_eq!(read(vec![128, 128, 128, 128, 120]), 0x80000000);
 }
 
+
+
 pub fn read_vu32<F>(reader: &mut F) -> Result<u32, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
 {
     read_vu(reader, 32).map(|v| v as u32)
 }
+
+
+pub fn emit_vu32(v: u32) -> Vec<u8> {
+    emit_vu(v as u64)
+}
+
 
 #[test]
 fn test_read_vu32() {
@@ -427,8 +446,25 @@ fn test_read_vu32() {
     assert_eq!(read(vec![0xb4, 0x07]), 0x3b4);
     assert_eq!(read(vec![0x8c, 0x08]), 0x40c);
     assert_eq!(read(vec![0xff, 0xff, 0xff, 0xff, 0xf]), 0xffffffff);
-    assert_eq!(read(vec![128, 128, 128, 128, 120]), 0x80000000);
+    assert_eq!(read(vec![128, 128, 128, 128, 8]), 0x80000000);
 }
+
+#[test]
+fn test_emit_vu32() {
+    let emit = |v: u32| emit_vu32(v);
+
+    assert_eq!(emit(0), vec![0]);
+    assert_eq!(emit(1), vec![1]);
+    assert_eq!(emit(624485), vec![0b11100101, 0b10001110, 0b00100110]);
+    assert_eq!(emit(127), vec![0x7f]);
+    assert_eq!(emit(16256), vec![0x80, 0x7f]);
+    assert_eq!(emit(0x3b4), vec![0xb4, 0x07]);
+    assert_eq!(emit(0x40c), vec![0x8c, 0x08]);
+    assert_eq!(emit(0xffffffff), vec![0xff, 0xff, 0xff, 0xff, 0xf]);
+    assert_eq!(emit(0x80000000), vec![128, 128, 128, 128, 8]);
+
+}
+
 
 pub fn read_vu1<F>(reader: &mut F) -> Result<u8, io::Error>
 where
@@ -467,6 +503,23 @@ where
     Ok(result)
 }
 
+fn emit_vs(v: i64) -> Vec<u8> {
+    let mut result: Vec<u8> = vec![];
+    let mut value = v;
+    let mut more = true;
+    while more {
+        let mut byte = (value & 0x7f) as u8;
+        value = value >> 7;
+        if (value == 0 && (byte & 0x40) == 0) || (value == -1 && (byte & 0x40) != 0) {
+            more = false;
+        } else {
+            byte = byte | 0x80;
+        }
+        result.push(byte);
+    }
+    result
+}
+
 pub fn read_vs64<F>(reader: &mut F) -> Result<i64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -479,6 +532,10 @@ where
     F: FnMut() -> Result<u8, io::Error>,
 {
     read_vs(reader, 32).map(|v| v as i32)
+}
+
+pub fn emit_vs32(v: i32) -> Vec<u8> {
+    emit_vs(v as i64)
 }
 
 #[test]
@@ -518,6 +575,22 @@ fn test_read_vs32() {
     // this is different as a 32 than a 64
     assert_eq!(read(vec![128, 128, 128, 128, 120]), 0x80000000u32 as i32);
 }
+
+#[test]
+fn test_emit_vs32() {
+    let emit = |v: i32| emit_vs32(v);
+
+    assert_eq!(emit(0), vec![0]);
+    assert_eq!(emit(1), vec![1]);
+    assert_eq!(emit(624485), vec![0b11100101, 0b10001110, 0b00100110]);
+    assert_eq!(emit(0x3b4), vec![0xb4, 0x07]);
+    assert_eq!(emit(0x40c), vec![0x8c, 0x08]);
+    assert_eq!(emit(-1), vec![0x7f]);
+    assert_eq!(emit(-128), vec![0x80, 0x7f]);
+    assert_eq!(emit(-624485), vec![0b10011011, 0b11110001, 0b01011001]);
+    assert_eq!(emit(0x80000000u32 as i32), vec![128, 128, 128, 128, 120]);
+}
+
 
 pub fn read_f32<F>(reader: &mut F) -> Result<f32, io::Error>
 where

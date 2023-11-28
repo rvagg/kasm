@@ -5,6 +5,8 @@ use std::io;
 use std::slice::Iter;
 use std::sync::Arc;
 
+use crate::parser::parsable_bytes;
+
 #[derive(PartialEq, Clone, Copy, Debug, Hash, Eq)]
 pub enum InstructionType {
     // Control instructions¶ ---------------------------------------------------
@@ -626,6 +628,8 @@ pub struct InstructionCoding {
             + Send
             + Sync,
     >,
+    pub emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
+    pub emit_str: Arc<dyn Fn(&InstructionData) -> String + Send + Sync>,
 }
 
 impl InstructionCoding {
@@ -641,10 +645,19 @@ impl InstructionCoding {
             subopcode,
             name,
             parse_bytes: Arc::new(move |_| Ok(InstructionData::SimpleInstruction.clone())),
+            // default should emit the opcode byte; and if opcode is 0xfc or 0xfd, emit the subopcode byte too
+            emit_bytes: Arc::new(move |_| {
+                let mut bytes = vec![opcode];
+                if opcode == 0xfc || opcode == 0xfd {
+                    bytes.push(subopcode as u8);
+                }
+                bytes
+            }),
+            emit_str: Arc::new(move |_| name.to_string()),
         }
     }
 
-    pub fn new_with_data(
+    pub fn new_with_parse(
         typ: InstructionType,
         opcode: u8,
         subopcode: u32,
@@ -661,6 +674,38 @@ impl InstructionCoding {
             subopcode,
             name,
             parse_bytes,
+            emit_bytes: Arc::new(move |data: &InstructionData| {
+                let mut bytes = vec![opcode];
+                if opcode == 0xfc || opcode == 0xfd {
+                    bytes.push(subopcode as u8);
+                }
+                bytes
+            }),
+            emit_str: Arc::new(move |_| name.to_string()),
+        }
+    }
+
+    pub fn new_with_options(
+        typ: InstructionType,
+        opcode: u8,
+        subopcode: u32,
+        name: &'static str,
+        parse_bytes: Arc<
+            dyn Fn(&mut super::parsable_bytes::ParsableBytes) -> Result<InstructionData, io::Error>
+                + Send
+                + Sync,
+        >,
+        emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
+        emit_str: Arc<dyn Fn(&InstructionData) -> String + Send + Sync>,
+    ) -> Self {
+        Self {
+            typ,
+            opcode,
+            subopcode,
+            name,
+            parse_bytes,
+            emit_bytes,
+            emit_str,
         }
     }
 }
@@ -672,7 +717,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             // Control instructions¶ -------------------------------------------
             InstructionCoding::new_simple(InstructionType::Unreachable, 0x00, 0, "unreachable"),
             InstructionCoding::new_simple(InstructionType::Nop, 0x01, 0, "nop"),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_options(
                 InstructionType::Block,
                 0x02,
                 0,
@@ -680,12 +725,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::BlockInstruction {
-                            blocktype: consume_blocktype(bytes)?,
+                            blocktype: BlockType::parse_bytes(bytes)?,
                         })
                     },
                 ),
+                Arc::new(|data: &InstructionData| {
+                    let mut bytes = vec![0x02];
+                    if let InstructionData::BlockInstruction{blocktype} = &data {
+                        let mut block_bytes = blocktype.emit_bytes();
+                        bytes.append(&mut block_bytes);
+                    } else {
+                        panic!("expected block instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data: &InstructionData| {
+                    String::from("block") // TODO:
+                }),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::Loop,
                 0x03,
                 0,
@@ -693,12 +751,12 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::BlockInstruction {
-                            blocktype: consume_blocktype(bytes)?,
+                            blocktype: BlockType::parse_bytes(bytes)?,
                         })
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::If,
                 0x04,
                 0,
@@ -706,13 +764,13 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::BlockInstruction {
-                            blocktype: consume_blocktype(bytes)?,
+                            blocktype: BlockType::parse_bytes(bytes)?,
                         })
                     },
                 ),
             ),
             InstructionCoding::new_simple(InstructionType::Else, 0x05, 0, "else"),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::Br,
                 0x0c,
                 0,
@@ -725,7 +783,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::BrIf,
                 0x0d,
                 0,
@@ -738,7 +796,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::BrTable,
                 0x0e,
                 0,
@@ -753,7 +811,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
             ),
             InstructionCoding::new_simple(InstructionType::Return, 0x0f, 0, "return"),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::Call,
                 0x10,
                 0,
@@ -766,7 +824,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::CallIndirect,
                 0x11,
                 0,
@@ -781,7 +839,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
             ),
             // Reference instructions¶ -----------------------------------------
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::RefNull,
                 0xd0,
                 0,
@@ -795,7 +853,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
             ),
             InstructionCoding::new_simple(InstructionType::RefIsNull, 0xd1, 0, "ref.is_null"),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::RefFunc,
                 0xd2,
                 0,
@@ -811,7 +869,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             // Parametric instructions¶ ----------------------------------------
             InstructionCoding::new_simple(InstructionType::Drop, 0x1a, 0, "drop"),
             InstructionCoding::new_simple(InstructionType::Select, 0x1b, 0, "select"),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::SelectT,
                 0x1c,
                 0,
@@ -825,7 +883,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
             ),
             // Variable instructions¶ ------------------------------------------
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_options(
                 InstructionType::LocalGet,
                 0x20,
                 0,
@@ -837,8 +895,26 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data: &InstructionData| {
+                    let mut bytes = vec![0x20];
+                    if let InstructionData::LocalInstruction{local_index} = &data {
+                        let mut local_bytes = parsable_bytes::emit_vu32(*local_index);
+                        bytes.append(&mut local_bytes);
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data: &InstructionData| {
+                    // return "local.get X", where X is local_index
+                    if let InstructionData::LocalInstruction{local_index} = &data {
+                        format!("local.get {}", local_index)
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::LocalSet,
                 0x21,
                 0,
@@ -851,7 +927,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::LocalTee,
                 0x22,
                 0,
@@ -864,7 +940,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::GlobalGet,
                 0x23,
                 0,
@@ -877,7 +953,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::GlobalSet,
                 0x24,
                 0,
@@ -891,7 +967,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
             ),
             // Table instructions¶ ---------------------------------------------
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::TableGet,
                 0x25,
                 0,
@@ -904,7 +980,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::TableSet,
                 0x26,
                 0,
@@ -917,7 +993,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::TableInit,
                 0xfc,
                 12,
@@ -931,7 +1007,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::ElemDrop,
                 0xfc,
                 13,
@@ -944,7 +1020,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::TableCopy,
                 0xfc,
                 14,
@@ -958,7 +1034,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::TableGrow,
                 0xfc,
                 15,
@@ -971,7 +1047,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::TableSize,
                 0xfc,
                 16,
@@ -984,7 +1060,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::TableFill,
                 0xfc,
                 17,
@@ -998,7 +1074,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
             ),
             // Memory instructions¶ --------------------------------------------
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Load,
                 0x28,
                 0,
@@ -1011,7 +1087,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Load,
                 0x29,
                 0,
@@ -1024,7 +1100,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F32Load,
                 0x2a,
                 0,
@@ -1037,7 +1113,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F64Load,
                 0x2b,
                 0,
@@ -1050,7 +1126,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Load8S,
                 0x2c,
                 0,
@@ -1063,7 +1139,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Load8U,
                 0x2d,
                 0,
@@ -1076,7 +1152,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Load16S,
                 0x2e,
                 0,
@@ -1089,7 +1165,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Load16U,
                 0x2f,
                 0,
@@ -1102,7 +1178,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Load8S,
                 0x30,
                 0,
@@ -1115,7 +1191,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Load8U,
                 0x31,
                 0,
@@ -1128,7 +1204,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Load16S,
                 0x32,
                 0,
@@ -1141,7 +1217,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Load16U,
                 0x33,
                 0,
@@ -1154,7 +1230,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Load32S,
                 0x34,
                 0,
@@ -1167,7 +1243,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Load32U,
                 0x35,
                 0,
@@ -1180,7 +1256,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Store,
                 0x36,
                 0,
@@ -1193,7 +1269,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Store,
                 0x37,
                 0,
@@ -1206,7 +1282,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F32Store,
                 0x38,
                 0,
@@ -1219,7 +1295,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F64Store,
                 0x39,
                 0,
@@ -1232,7 +1308,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Store8,
                 0x3a,
                 0,
@@ -1245,7 +1321,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Store16,
                 0x3b,
                 0,
@@ -1258,7 +1334,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Store8,
                 0x3c,
                 0,
@@ -1271,7 +1347,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Store16,
                 0x3d,
                 0,
@@ -1284,7 +1360,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Store32,
                 0x3e,
                 0,
@@ -1299,7 +1375,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             ),
             InstructionCoding::new_simple(InstructionType::MemorySize, 0x3f, 0, "memory.size"),
             InstructionCoding::new_simple(InstructionType::MemoryGrow, 0x40, 0, "memory.grow"),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::MemoryInit,
                 0xfc,
                 8,
@@ -1318,7 +1394,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::DataDrop,
                 0xfc,
                 9,
@@ -1331,7 +1407,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::MemoryCopy,
                 0xfc,
                 10,
@@ -1350,7 +1426,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             ),
             InstructionCoding::new_simple(InstructionType::MemoryFill, 0xfc, 11, "memory.fill"),
             // Numeric instructions¶ -------------------------------------------
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32Const,
                 0x41,
                 0,
@@ -1363,7 +1439,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64Const,
                 0x42,
                 0,
@@ -1376,7 +1452,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F32Const,
                 0x43,
                 0,
@@ -1389,7 +1465,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F64Const,
                 0x44,
                 0,
@@ -1450,10 +1526,10 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple(InstructionType::I32Or, 0x72, 0, "i32.or"),
             InstructionCoding::new_simple(InstructionType::I32Xor, 0x73, 0, "i32.xor"),
             InstructionCoding::new_simple(InstructionType::I32Shl, 0x74, 0, "i32.shl"),
-            InstructionCoding::new_simple(InstructionType::I32ShrU, 0x75, 0, "i32.shr_u"),
-            InstructionCoding::new_simple(InstructionType::I32ShrS, 0x76, 0, "i32.shr_s"),
-            InstructionCoding::new_simple(InstructionType::I32Rotr, 0x77, 0, "i32.rotr"),
-            InstructionCoding::new_simple(InstructionType::I32Rotl, 0x78, 0, "i32.rotl"),
+            InstructionCoding::new_simple(InstructionType::I32ShrS, 0x75, 0, "i32.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I32ShrU, 0x76, 0, "i32.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I32Rotl, 0x77, 0, "i32.rotl"),
+            InstructionCoding::new_simple(InstructionType::I32Rotr, 0x78, 0, "i32.rotr"),
             InstructionCoding::new_simple(InstructionType::I64Clz, 0x79, 0, "i64.clz"),
             InstructionCoding::new_simple(InstructionType::I64Ctz, 0x7a, 0, "i64.ctz"),
             InstructionCoding::new_simple(InstructionType::I64Popcnt, 0x7b, 0, "i64.popcnt"),
@@ -1468,10 +1544,10 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple(InstructionType::I64Or, 0x84, 0, "i64.or"),
             InstructionCoding::new_simple(InstructionType::I64Xor, 0x85, 0, "i64.xor"),
             InstructionCoding::new_simple(InstructionType::I64Shl, 0x86, 0, "i64.shl"),
-            InstructionCoding::new_simple(InstructionType::I64ShrU, 0x87, 0, "i64.shr_u"),
-            InstructionCoding::new_simple(InstructionType::I64ShrS, 0x88, 0, "i64.shr_s"),
-            InstructionCoding::new_simple(InstructionType::I64Rotr, 0x89, 0, "i64.rotr"),
-            InstructionCoding::new_simple(InstructionType::I64Rotl, 0x8a, 0, "i64.rotl"),
+            InstructionCoding::new_simple(InstructionType::I64ShrS, 0x87, 0, "i64.shr_s"),
+            InstructionCoding::new_simple(InstructionType::I64ShrU, 0x88, 0, "i64.shr_u"),
+            InstructionCoding::new_simple(InstructionType::I64Rotl, 0x89, 0, "i64.rotl"),
+            InstructionCoding::new_simple(InstructionType::I64Rotr, 0x8a, 0, "i64.rotr"),
             InstructionCoding::new_simple(InstructionType::F32Abs, 0x8b, 0, "f32.abs"),
             InstructionCoding::new_simple(InstructionType::F32Neg, 0x8c, 0, "f32.neg"),
             InstructionCoding::new_simple(InstructionType::F32Ceil, 0x8d, 0, "f32.ceil"),
@@ -1694,7 +1770,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.trunc_sat_f64_u",
             ),
             // Vector instructions¶ --------------------------------------------
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load,
                 0xfd,
                 0,
@@ -1707,7 +1783,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load8x8S,
                 0xfd,
                 1,
@@ -1720,7 +1796,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load8x8U,
                 0xfd,
                 2,
@@ -1733,7 +1809,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load16x4S,
                 0xfd,
                 3,
@@ -1746,7 +1822,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load16x4U,
                 0xfd,
                 4,
@@ -1759,7 +1835,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load32x2S,
                 0xfd,
                 5,
@@ -1772,7 +1848,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load32x2U,
                 0xfd,
                 6,
@@ -1785,7 +1861,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load8Splat,
                 0xfd,
                 7,
@@ -1798,7 +1874,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load16Splat,
                 0xfd,
                 8,
@@ -1811,7 +1887,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load32Splat,
                 0xfd,
                 9,
@@ -1824,7 +1900,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load64Splat,
                 0xfd,
                 10,
@@ -1837,7 +1913,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load32Zero,
                 0xfd,
                 92,
@@ -1850,7 +1926,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load64Zero,
                 0xfd,
                 93,
@@ -1863,7 +1939,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Store,
                 0xfd,
                 11,
@@ -1876,7 +1952,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load8Lane,
                 0xfd,
                 84,
@@ -1890,7 +1966,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load16Lane,
                 0xfd,
                 85,
@@ -1904,7 +1980,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load32Lane,
                 0xfd,
                 86,
@@ -1918,7 +1994,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Load64Lane,
                 0xfd,
                 87,
@@ -1932,7 +2008,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Store8Lane,
                 0xfd,
                 88,
@@ -1946,7 +2022,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Store16Lane,
                 0xfd,
                 89,
@@ -1960,7 +2036,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Store32Lane,
                 0xfd,
                 90,
@@ -1974,7 +2050,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Store64Lane,
                 0xfd,
                 91,
@@ -1988,7 +2064,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::V128Const,
                 0xfd,
                 12,
@@ -2001,7 +2077,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I8x16Shuffle,
                 0xfd,
                 13,
@@ -2014,7 +2090,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I8x16ExtractLaneS,
                 0xfd,
                 21,
@@ -2027,7 +2103,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I8x16ExtractLaneU,
                 0xfd,
                 22,
@@ -2040,7 +2116,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I8x16ReplaceLane,
                 0xfd,
                 23,
@@ -2053,7 +2129,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I16x8ExtractLaneS,
                 0xfd,
                 24,
@@ -2066,7 +2142,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I16x8ExtractLaneU,
                 0xfd,
                 25,
@@ -2079,7 +2155,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I16x8ReplaceLane,
                 0xfd,
                 26,
@@ -2092,7 +2168,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32x4ExtractLane,
                 0xfd,
                 27,
@@ -2105,7 +2181,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I32x4ReplaceLane,
                 0xfd,
                 28,
@@ -2118,7 +2194,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64x2ExtractLane,
                 0xfd,
                 29,
@@ -2131,7 +2207,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::I64x2ReplaceLane,
                 0xfd,
                 30,
@@ -2144,7 +2220,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F32x4ExtractLane,
                 0xfd,
                 31,
@@ -2157,7 +2233,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F32x4ReplaceLane,
                 0xfd,
                 32,
@@ -2170,7 +2246,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F64x2ExtractLane,
                 0xfd,
                 33,
@@ -2183,7 +2259,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_data(
+            InstructionCoding::new_with_parse(
                 InstructionType::F64x2ReplaceLane,
                 0xfd,
                 34,
@@ -2819,35 +2895,45 @@ pub enum BlockType {
     TypeIndex(i32),
 }
 
-fn consume_blocktype(
-    bytes: &mut super::parsable_bytes::ParsableBytes,
-) -> Result<BlockType, io::Error> {
-    // if first byte is 0x40, it's an empty type
-    // if it's one of the value type bytes, it's a value type
-    // otherwise, interpret the first byte and following bytes as a signed
-    // LEB128 integer using read_vs32, and use that as the type index _if_ it's
-    // positive, otherwise it's an error
-    let b = bytes.read_byte()?;
-    if b == 0x40 {
-        Ok(BlockType::Empty)
-    } else if super::parsed_unit::ValueType::is_value_type_byte(b) {
-        Ok(BlockType::Type(
-            super::parsed_unit::ValueType::decode(b)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-        ))
-    } else {
-        let mut first_byte = Some(b);
-        let type_index = super::parsable_bytes::read_vs32(&mut || match first_byte.take() {
-            Some(byte) => Ok(byte),
-            None => bytes.read_byte(),
-        })?;
-        if type_index < 0 {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid block type index",
+impl BlockType {
+    fn emit_bytes(&self) -> Vec<u8> {
+        match self {
+            BlockType::Empty => vec![0x40],
+            BlockType::Type(value_type) => value_type.emit_bytes(),
+            BlockType::TypeIndex(type_index) => super::parsable_bytes::emit_vs32(*type_index),
+        }
+    }
+
+    fn parse_bytes(
+        bytes: &mut super::parsable_bytes::ParsableBytes,
+    ) -> Result<BlockType, io::Error> {
+        // if first byte is 0x40, it's an empty type
+        // if it's one of the value type bytes, it's a value type
+        // otherwise, interpret the first byte and following bytes as a signed
+        // LEB128 integer using read_vs32, and use that as the type index _if_ it's
+        // positive, otherwise it's an error
+        let b = bytes.read_byte()?;
+        if b == 0x40 {
+            Ok(BlockType::Empty)
+        } else if super::parsed_unit::ValueType::is_value_type_byte(b) {
+            Ok(BlockType::Type(
+                super::parsed_unit::ValueType::decode(b)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
             ))
         } else {
-            Ok(BlockType::TypeIndex(type_index))
+            let mut first_byte = Some(b);
+            let type_index = super::parsable_bytes::read_vs32(&mut || match first_byte.take() {
+                Some(byte) => Ok(byte),
+                None => bytes.read_byte(),
+            })?;
+            if type_index < 0 {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid block type index",
+                ))
+            } else {
+                Ok(BlockType::TypeIndex(type_index))
+            }
         }
     }
 }

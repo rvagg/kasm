@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 
 // const wast2wasm = new URL('../webassembly/wabt/build/wat2wasm', import.meta.url).pathname
 const wast2json = new URL('../webassembly/wabt/build/wast2json', `file://${process.cwd()}/`).pathname
+const wasmObjdump = new URL('../webassembly/wabt/build/wasm-objdump', `file://${process.cwd()}/`).pathname
 
 const input = new URL(process.argv[2], `file://${process.cwd()}/`)
 console.log(`compiling ${input}...`)
@@ -21,6 +22,11 @@ await writeFile(output, compiled)
 async function compileWast (parsed, wastPath) {
   const dir = await mkdtemp(join(tmpdir(), 'wast-'));
   await execSync(`${wast2json} ${wastPath.pathname}`, { cwd: dir })
+  const dumpPath = join(dir, basename(wastPath.pathname).replace(/\.wast$/, '') + '.0.wasm')
+  const headerDump = await dump(dumpPath, 'h')
+  const detailsDump = await dump(dumpPath, 'x')
+  const disassembleDump = await dump(dumpPath, 'd')
+
   let spec = ''
   const bins = []
   for (const file of await readdir(dir)) {
@@ -45,13 +51,27 @@ async function compileWast (parsed, wastPath) {
   compiled += `\n  },\n  "spec": ${spec.replace(/\n$/, '')}`
   compiled += ',\n  "code": [\n'
   for (const { word, block } of parsed) {
-    compiled += `    "(${word} ${block.replace(/"/g, '\\"').replace(/\n/g, '\\n')})",\n`
+    compiled += `    "(${word} ${cleanJsonString(block)})",\n`
   }
   compiled = compiled.slice(0, -2)
-  compiled += '\n  ]\n'
+  compiled += '\n  ],\n'
+  compiled += '  "dump": {\n'
+  compiled += `    "header": ${JSON.stringify(headerDump)},\n`
+  compiled += `    "details": ${JSON.stringify(detailsDump)},\n`
+  compiled += `    "disassemble": ${JSON.stringify(disassembleDump)}\n`
+  compiled += '  }\n'
   compiled += '}\n'
   await rm(dir, { recursive: true })
   return compiled
+}
+
+async function dump (wasmPath, opt) {
+  const stdout = await execSync(`${wasmObjdump} -${opt} ${wasmPath}`)
+  return stdout.toString('utf8')
+}
+
+function cleanJsonString (str) {
+  return str.replace(/\n/g, '\\n').replace(/"/g, '\\"')
 }
 
 async function parseWast (wastPath) {
