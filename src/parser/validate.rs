@@ -2,18 +2,19 @@ use crate::parser::ast;
 
 #[derive(PartialEq, Debug, Clone)]
 enum MaybeValue {
-    Val(super::parsed_unit::ValueType),
+    Val(super::module::ValueType),
     Unknown,
 }
 
+#[allow(dead_code)]
 impl MaybeValue {
     fn is_num(self) -> bool {
         match self {
             MaybeValue::Val(v) => {
-                v == super::parsed_unit::ValueType::I32
-                    || v == super::parsed_unit::ValueType::I64
-                    || v == super::parsed_unit::ValueType::F32
-                    || v == super::parsed_unit::ValueType::F64
+                v == super::module::ValueType::I32
+                    || v == super::module::ValueType::I64
+                    || v == super::module::ValueType::F32
+                    || v == super::module::ValueType::F64
             }
             MaybeValue::Unknown => true,
         }
@@ -21,7 +22,7 @@ impl MaybeValue {
 
     fn is_vec(self) -> bool {
         match self {
-            MaybeValue::Val(v) => v == super::parsed_unit::ValueType::V128,
+            MaybeValue::Val(v) => v == super::module::ValueType::V128,
             MaybeValue::Unknown => true,
         }
     }
@@ -29,19 +30,19 @@ impl MaybeValue {
     fn is_ref(self) -> bool {
         match self {
             MaybeValue::Val(v) => {
-                v == super::parsed_unit::ValueType::FuncRef
-                    || v == super::parsed_unit::ValueType::ExternRef
+                v == super::module::ValueType::FuncRef || v == super::module::ValueType::ExternRef
             }
             MaybeValue::Unknown => true,
         }
     }
 }
 
-const I32_VALUE: super::parsed_unit::ValueType = super::parsed_unit::ValueType::I32;
-const I64_VALUE: super::parsed_unit::ValueType = super::parsed_unit::ValueType::I64;
-const F32_VALUE: super::parsed_unit::ValueType = super::parsed_unit::ValueType::F32;
-const F64_VALUE: super::parsed_unit::ValueType = super::parsed_unit::ValueType::F64;
-const V128_VALUE: super::parsed_unit::ValueType = super::parsed_unit::ValueType::V128;
+const I32_VALUE: super::module::ValueType = super::module::ValueType::I32;
+const I64_VALUE: super::module::ValueType = super::module::ValueType::I64;
+const F32_VALUE: super::module::ValueType = super::module::ValueType::F32;
+const F64_VALUE: super::module::ValueType = super::module::ValueType::F64;
+#[allow(dead_code)]
+const V128_VALUE: super::module::ValueType = super::module::ValueType::V128;
 
 struct CtrlFrame {
     instruction: ast::InstructionType,
@@ -52,13 +53,13 @@ struct CtrlFrame {
 }
 
 pub struct Validator<'a> {
-    ftype: &'a super::parsed_unit::FunctionType,
+    ftype: &'a super::module::FunctionType,
     vals: Vec<MaybeValue>,
     ctrls: Vec<CtrlFrame>,
 }
 
 impl<'a> Validator<'a> {
-    pub fn new(ftype: &super::parsed_unit::FunctionType) -> Validator {
+    pub fn new(ftype: &super::module::FunctionType) -> Validator {
         let mut v = Validator {
             ftype: ftype,
             vals: Vec::new(),
@@ -478,7 +479,7 @@ impl<'a> Validator<'a> {
             ast::InstructionType::Block | ast::InstructionType::Loop | ast::InstructionType::If => {
                 // special case for If we need to pop an i32
                 if inst.get_type() == &ast::InstructionType::If {
-                    self.pop_expected(MaybeValue::Val(super::parsed_unit::ValueType::I32))
+                    self.pop_expected(MaybeValue::Val(super::module::ValueType::I32))
                         .ok_or("type mismatch")?;
                 }
 
@@ -491,7 +492,7 @@ impl<'a> Validator<'a> {
                         }
                         ast::BlockType::Empty => {}
                         // TODO: TypeIndex form with start_types too
-                        ast::BlockType::TypeIndex(ti) => {}
+                        ast::BlockType::TypeIndex(_) => {}
                     }
                     self.push_ctrl(*inst.get_type(), Vec::new(), end_types);
                     Ok(())

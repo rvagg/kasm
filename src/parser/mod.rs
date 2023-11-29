@@ -1,16 +1,13 @@
 pub mod ast;
-pub mod parsable_bytes;
-pub mod parsed_unit;
+pub mod module;
+pub mod reader;
 mod validate;
 
 use std::io;
 use std::u32;
 
-pub fn parse(
-    name: &str,
-    bytes: &mut parsable_bytes::ParsableBytes,
-) -> Result<parsed_unit::ParsedUnit, io::Error> {
-    let mut unit = parsed_unit::ParsedUnit::new(name);
+pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, io::Error> {
+    let mut unit = module::Module::new(name);
 
     read_header(bytes, &mut unit.magic, &mut unit.version)?;
 
@@ -74,60 +71,58 @@ pub fn parse(
 
 fn read_sections(
     sec_id: u8,
-    bytes: &mut parsable_bytes::ParsableBytes,
-    unit: &mut parsed_unit::ParsedUnit,
+    bytes: &mut reader::Reader,
+    unit: &mut module::Module,
 ) -> Result<(), io::Error> {
     let start = bytes.pos();
-    let mut positional: Option<&mut dyn parsed_unit::Positional> = None;
-
-    match sec_id {
+    let positional: &mut dyn module::Positional = match sec_id {
         1 => {
             read_section_type(bytes, &mut unit.types)?;
-            positional = Some(&mut unit.types);
+            &mut unit.types as &mut dyn module::Positional
         }
         2 => {
             read_section_import(bytes, &mut unit.imports)?;
-            positional = Some(&mut unit.imports);
+            &mut unit.imports as &mut dyn module::Positional
         }
         3 => {
             read_section_function(bytes, &mut unit.functions, &unit.types)?;
-            positional = Some(&mut unit.functions);
+            &mut unit.functions as &mut dyn module::Positional
         }
         4 => {
             read_section_table(bytes, &mut unit.table)?;
-            positional = Some(&mut unit.table);
+            &mut unit.table as &mut dyn module::Positional
         }
         5 => {
             read_section_memory(bytes, &mut unit.memory)?;
-            positional = Some(&mut unit.memory);
+            &mut unit.memory as &mut dyn module::Positional
         }
         6 => {
             read_section_global(bytes, &mut unit.globals)?;
-            positional = Some(&mut unit.globals);
+            &mut unit.globals as &mut dyn module::Positional
         }
         7 => {
             read_section_export(bytes, &mut unit.exports)?;
-            positional = Some(&mut unit.exports);
+            &mut unit.exports as &mut dyn module::Positional
         }
         8 => {
             read_section_start(bytes, &mut unit.start)?;
-            positional = Some(&mut unit.start);
+            &mut unit.start as &mut dyn module::Positional
         }
         9 => {
             read_section_elements(bytes, &mut unit.elements)?;
-            positional = Some(&mut unit.elements);
+            &mut unit.elements as &mut dyn module::Positional
         }
         10 => {
             read_section_code(bytes, &mut unit.code, &unit.types, &unit.functions)?;
-            positional = Some(&mut unit.code);
+            &mut unit.code as &mut dyn module::Positional
         }
         11 => {
             read_section_data(bytes, &mut unit.data)?;
-            positional = Some(&mut unit.data);
+            &mut unit.data as &mut dyn module::Positional
         }
         12 => {
             read_section_datacount(bytes, &mut unit.data)?;
-            positional = Some(&mut unit.data);
+            &mut unit.data as &mut dyn module::Positional
         }
         _ => {
             return Err(io::Error::new(
@@ -137,16 +132,13 @@ fn read_sections(
         }
     };
     let end = bytes.pos();
-
-    if let Some(pos) = positional {
-        pos.set_position(start as u32, end as u32);
-    }
+    positional.set_position(start as u32, end as u32);
 
     Ok(())
 }
 
 fn read_header(
-    bytes: &mut parsable_bytes::ParsableBytes,
+    bytes: &mut reader::Reader,
     magic: &mut u32,
     version: &mut u32,
 ) -> Result<(), io::Error> {
@@ -160,13 +152,11 @@ fn read_header(
 
 /* SECTION READERS ************************************************/
 
-fn read_result_types(
-    bytes: &mut parsable_bytes::ParsableBytes,
-) -> Result<Vec<parsed_unit::ValueType>, io::Error> {
-    let mut rt: Vec<parsed_unit::ValueType> = vec![];
+fn read_result_types(bytes: &mut reader::Reader) -> Result<Vec<module::ValueType>, io::Error> {
+    let mut rt: Vec<module::ValueType> = vec![];
     let count = bytes.read_vu64()?;
     for _ in 0..count {
-        let value = parsed_unit::ValueType::decode(bytes.read_byte()?)
+        let value = module::ValueType::decode(bytes.read_byte()?)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         rt.push(value);
     }
@@ -174,8 +164,8 @@ fn read_result_types(
 }
 
 fn read_section_type(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    types: &mut parsed_unit::TypeSection,
+    bytes: &mut reader::Reader,
+    types: &mut module::TypeSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
@@ -193,7 +183,7 @@ fn read_section_type(
         let parameters = read_result_types(bytes)?;
         let return_types = read_result_types(bytes)?;
 
-        types.push(parsed_unit::FunctionType {
+        types.push(module::FunctionType {
             parameters: parameters,
             return_types: return_types,
         })
@@ -203,22 +193,22 @@ fn read_section_type(
 }
 
 fn read_section_import(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    imports: &mut parsed_unit::ImportSection,
+    bytes: &mut reader::Reader,
+    imports: &mut module::ImportSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
         let module = bytes.read_string()?;
         let name = bytes.read_string()?;
-        let external_kind = parsed_unit::ExternalKind::decode(bytes.read_byte()?)?;
+        let external_kind = module::ExternalKind::decode(bytes.read_byte()?)?;
 
         println!(
             "module = {}, name = {}, kind = {}",
             module, name, external_kind
         );
 
-        let import = parsed_unit::Import {
+        let import = module::Import {
             external_kind: external_kind,
             module: module,
             name: name,
@@ -236,9 +226,9 @@ fn read_section_import(
 }
 
 fn read_section_function(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    functions: &mut parsed_unit::FunctionSection,
-    types: &parsed_unit::TypeSection,
+    bytes: &mut reader::Reader,
+    functions: &mut module::FunctionSection,
+    types: &module::TypeSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
@@ -255,7 +245,7 @@ fn read_section_function(
             ));
         }
 
-        functions.push(parsed_unit::Function {
+        functions.push(module::Function {
             ftype_index: ftype_index,
         })
     }
@@ -264,14 +254,14 @@ fn read_section_function(
 }
 
 fn read_section_memory(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    memory: &mut parsed_unit::MemorySection,
+    bytes: &mut reader::Reader,
+    memory: &mut module::MemorySection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
-        let limits = parsed_unit::Limits::decode(bytes)?;
-        memory.push(parsed_unit::Memory {
+        let limits = module::Limits::decode(bytes)?;
+        memory.push(module::Memory {
             memory_type: limits,
         })
     }
@@ -280,8 +270,8 @@ fn read_section_memory(
 }
 
 fn read_section_export(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    exports: &mut parsed_unit::ExportSection,
+    bytes: &mut reader::Reader,
+    exports: &mut module::ExportSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
@@ -289,8 +279,8 @@ fn read_section_export(
         let name = bytes.read_string()?;
         let typ = bytes.read_byte()?;
         let idx = bytes.read_vu32()?;
-        let index = parsed_unit::ExportIndex::decode(typ, idx)?;
-        exports.push(parsed_unit::Export {
+        let index = module::ExportIndex::decode(typ, idx)?;
+        exports.push(module::Export {
             index: index,
             name: name,
         })
@@ -300,10 +290,10 @@ fn read_section_export(
 }
 
 fn read_section_code(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    code: &mut parsed_unit::CodeSection,
-    types: &parsed_unit::TypeSection,
-    functions: &parsed_unit::FunctionSection,
+    bytes: &mut reader::Reader,
+    code: &mut module::CodeSection,
+    types: &module::TypeSection,
+    functions: &module::FunctionSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
     if count != functions.functions.len() as u64 {
@@ -318,7 +308,7 @@ fn read_section_code(
     }
 
     for _ in 0..count {
-        let mut locals: Vec<parsed_unit::ValueType> = vec![];
+        let mut locals: Vec<module::ValueType> = vec![];
         let size = bytes.read_vu64()? as usize;
         let spos = bytes.pos();
         let locals_count = bytes.read_vu64()?;
@@ -327,15 +317,14 @@ fn read_section_code(
             let local_n = bytes.read_vu64()?;
             let b = bytes.read_byte()?;
             for _ in 0..local_n {
-                let value = parsed_unit::ValueType::decode(b)
+                let value = module::ValueType::decode(b)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                 locals.push(value);
             }
         }
         let lpos = bytes.pos();
-        let len = size - (bytes.pos() - spos);
         let body = bytes.read_bytes(size - (lpos - spos))?;
-        let mut reader = parsable_bytes::ParsableBytes::new(body.clone());
+        let mut reader = reader::Reader::new(body.clone());
 
         let ftype = match functions
             .get(code.len() as u8)
@@ -353,11 +342,11 @@ fn read_section_code(
 
         let instructions: Vec<ast::Instruction> =
             self::ast::Instruction::decode_expression(&ftype, &mut reader)?;
-        let function_body = parsed_unit::FunctionBody {
+        let function_body = module::FunctionBody {
             locals: locals,
             // body: body,
             instructions: instructions,
-            position: parsed_unit::SectionPosition {
+            position: module::SectionPosition {
                 start: spos as u32,
                 end: (spos + size) as u32,
             },
@@ -370,23 +359,23 @@ fn read_section_code(
     Ok(())
 }
 
-impl parsed_unit::Data {
-    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
-        let mut mode = parsed_unit::DataMode::Passive;
+impl module::Data {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
+        let mut mode = module::DataMode::Passive;
         // let mem_index: u32 = 0;
         // let expr : Vec<ast::Instruction> = vec![];
 
         let typ = bytes.read_vu32()?;
         match typ {
             0 => {
-                mode = parsed_unit::DataMode::Active {
+                mode = module::DataMode::Active {
                     memory_index: 0,
                     offset: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
                 };
             }
             1 => {} // nothing else needed
             2 => {
-                mode = parsed_unit::DataMode::Active {
+                mode = module::DataMode::Active {
                     memory_index: bytes.read_vu32()?,
                     offset: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
                 };
@@ -397,7 +386,7 @@ impl parsed_unit::Data {
             ))?,
         };
 
-        Ok(parsed_unit::Data {
+        Ok(module::Data {
             init: bytes.read_u8vec()?,
             mode: mode,
         })
@@ -405,13 +394,13 @@ impl parsed_unit::Data {
 }
 
 fn read_section_data(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    datas: &mut parsed_unit::DataSection,
+    bytes: &mut reader::Reader,
+    datas: &mut module::DataSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
-        let data = parsed_unit::Data::decode(bytes)?;
+        let data = module::Data::decode(bytes)?;
         println!("data type: {:?}", data);
         datas.data.push(data);
     }
@@ -420,8 +409,8 @@ fn read_section_data(
 }
 
 fn read_section_datacount(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    datas: &mut parsed_unit::DataSection,
+    bytes: &mut reader::Reader,
+    datas: &mut module::DataSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
     if count != datas.data.len() as u32 {
@@ -437,9 +426,9 @@ fn read_section_datacount(
     Ok(())
 }
 
-impl parsed_unit::GlobalType {
-    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
-        let value_type = parsed_unit::ValueType::decode(bytes.read_byte()?)
+impl module::GlobalType {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
+        let value_type = module::ValueType::decode(bytes.read_byte()?)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let mut_byte = bytes.read_byte()?;
         let mutable = match mut_byte {
@@ -450,30 +439,30 @@ impl parsed_unit::GlobalType {
                 format!("unknown global type: 0x{:02x}", mut_byte),
             ))?,
         };
-        Ok(parsed_unit::GlobalType {
+        Ok(module::GlobalType {
             value_type: value_type,
             mutable: mutable,
         })
     }
 }
 
-impl parsed_unit::Global {
-    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
-        Ok(parsed_unit::Global {
-            global_type: parsed_unit::GlobalType::decode(bytes)?,
+impl module::Global {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
+        Ok(module::Global {
+            global_type: module::GlobalType::decode(bytes)?,
             init: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
         })
     }
 }
 
 fn read_section_global(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    globals: &mut parsed_unit::GlobalSection,
+    bytes: &mut reader::Reader,
+    globals: &mut module::GlobalSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
-        let data = parsed_unit::Global::decode(bytes)?;
+        let data = module::Global::decode(bytes)?;
         println!("global: {:?}", data);
         globals.globals.push(data);
     }
@@ -481,12 +470,12 @@ fn read_section_global(
     Ok(())
 }
 
-impl parsed_unit::RefType {
-    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
+impl module::RefType {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
         let byte = bytes.read_byte()?;
         match byte {
-            0x70 => Ok(parsed_unit::RefType::FuncRef),
-            0x6f => Ok(parsed_unit::RefType::ExternRef),
+            0x70 => Ok(module::RefType::FuncRef),
+            0x6f => Ok(module::RefType::ExternRef),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("unknown ref type: 0x{:02x}", byte),
@@ -495,8 +484,8 @@ impl parsed_unit::RefType {
     }
 }
 
-impl parsed_unit::Limits {
-    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
+impl module::Limits {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
         // if first byte is 0x00 then it's [0,0], if it's 0x01 then the next 2 u32's are [from,to]
         let typ = bytes.read_byte()?;
         let min = bytes.read_vu32()?;
@@ -511,16 +500,16 @@ impl parsed_unit::Limits {
                 format!("unknown limits type: 0x{:02x}", typ),
             ))?,
         };
-        Ok(parsed_unit::Limits { min, max })
+        Ok(module::Limits { min, max })
     }
 }
 
-impl parsed_unit::TableType {
-    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
+impl module::TableType {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
         // reftype then limits
-        let ref_type = parsed_unit::RefType::decode(bytes)?;
-        let limits = parsed_unit::Limits::decode(bytes)?;
-        Ok(parsed_unit::TableType {
+        let ref_type = module::RefType::decode(bytes)?;
+        let limits = module::Limits::decode(bytes)?;
+        Ok(module::TableType {
             ref_type: ref_type,
             limits: limits,
         })
@@ -528,13 +517,13 @@ impl parsed_unit::TableType {
 }
 
 fn read_section_table(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    table: &mut parsed_unit::TableSection,
+    bytes: &mut reader::Reader,
+    table: &mut module::TableSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
-        let table_type = parsed_unit::TableType::decode(bytes)?;
+        let table_type = module::TableType::decode(bytes)?;
         println!("table type: {:?}", table_type);
         table.table.push(table_type);
     }
@@ -543,90 +532,86 @@ fn read_section_table(
 }
 
 fn read_section_start(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    start: &mut parsed_unit::StartSection,
+    bytes: &mut reader::Reader,
+    start: &mut module::StartSection,
 ) -> Result<(), io::Error> {
     start.start = bytes.read_vu64()?;
     Ok(())
 }
 
-impl parsed_unit::Element {
-    pub fn decode(bytes: &mut parsable_bytes::ParsableBytes) -> Result<Self, io::Error> {
-        let mut read_type =
-            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<parsed_unit::RefType, io::Error> {
-                let byte = bytes.read_byte()?;
-                match byte {
-                    0x70 => Ok(parsed_unit::RefType::FuncRef),
-                    0x6f => Ok(parsed_unit::RefType::ExternRef),
-                    _ => Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("unknown element ref type: 0x{:02x}", byte),
-                    )),
-                }
-            };
-        let mut read_element_kind =
-            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<parsed_unit::RefType, io::Error> {
-                let byte = bytes.read_byte()?;
-                match byte {
-                    0x00 => Ok(parsed_unit::RefType::FuncRef),
-                    _ => Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("unknown element element kind: 0x{:02x}", byte),
-                    )),
-                }
-            };
-        let mut read_table_index =
-            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<u32, io::Error> {
-                bytes.read_vu32()
-            };
-        let mut read_init = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
-            let count = bytes.read_vu32()?;
-            let mut init: Vec<Vec<ast::Instruction>> = vec![];
-            for _ in 0..count {
-                // TODO: does this need to be a constant expression? probably, also confirm signautre
-                init.push(consume_constant_expr(bytes)?);
+impl module::Element {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
+        let read_type = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
+            let byte = bytes.read_byte()?;
+            match byte {
+                0x70 => Ok(module::RefType::FuncRef),
+                0x6f => Ok(module::RefType::ExternRef),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown element ref type: 0x{:02x}", byte),
+                )),
             }
-            Ok(init)
         };
-        let mut read_func_indexes =
-            |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<u32>, io::Error> {
+        let read_element_kind = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
+            let byte = bytes.read_byte()?;
+            match byte {
+                0x00 => Ok(module::RefType::FuncRef),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown element element kind: 0x{:02x}", byte),
+                )),
+            }
+        };
+        let read_table_index =
+            |bytes: &mut reader::Reader| -> Result<u32, io::Error> { bytes.read_vu32() };
+        let read_init =
+            |bytes: &mut reader::Reader| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
                 let count = bytes.read_vu32()?;
-                let mut func_indexes: Vec<u32> = vec![];
+                let mut init: Vec<Vec<ast::Instruction>> = vec![];
                 for _ in 0..count {
-                    let func_index = bytes.read_vu32()?;
-                    func_indexes.push(func_index);
+                    // TODO: does this need to be a constant expression? probably, also confirm signautre
+                    init.push(consume_constant_expr(bytes)?);
                 }
-                Ok(func_indexes)
+                Ok(init)
             };
-        let mut read_func_index_init = |bytes: &mut parsable_bytes::ParsableBytes| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
-            let fi = read_func_indexes(bytes)?;
-            let mut init: Vec<Vec<ast::Instruction>> = vec![];
-            Ok(fi
-                .into_iter()
-                .map(|func_index| {
-                    vec![
-                        ast::Instruction::new(
-                            ast::InstructionType::RefFunc,
-                            ast::InstructionData::FunctionInstruction {
-                                function_index: func_index,
-                            },
-                        ),
-                        ast::Instruction::new(
-                            ast::InstructionType::End,
-                            ast::InstructionData::SimpleInstruction,
-                        ),
-                    ]
-                })
-                .collect())
+        let read_func_indexes = |bytes: &mut reader::Reader| -> Result<Vec<u32>, io::Error> {
+            let count = bytes.read_vu32()?;
+            let mut func_indexes: Vec<u32> = vec![];
+            for _ in 0..count {
+                let func_index = bytes.read_vu32()?;
+                func_indexes.push(func_index);
+            }
+            Ok(func_indexes)
         };
+        let read_func_index_init =
+            |bytes: &mut reader::Reader| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
+                let fi = read_func_indexes(bytes)?;
+                Ok(fi
+                    .into_iter()
+                    .map(|func_index| {
+                        vec![
+                            ast::Instruction::new(
+                                ast::InstructionType::RefFunc,
+                                ast::InstructionData::FunctionInstruction {
+                                    function_index: func_index,
+                                },
+                            ),
+                            ast::Instruction::new(
+                                ast::InstructionType::End,
+                                ast::InstructionData::SimpleInstruction,
+                            ),
+                        ]
+                    })
+                    .collect())
+            };
 
         let typ = bytes.read_vu32()?;
         match typ {
             0 => {
                 // 0:u32 𝑒:expr 𝑦*:vec(funcidx) => {type funcref, init ((ref.func 𝑦) end)*, mode active {table 0, offset 𝑒}}
-                Ok(parsed_unit::Element {
-                    ref_type: parsed_unit::RefType::FuncRef,
-                    mode: parsed_unit::ElementMode::Active {
+                Ok(module::Element {
+                    ref_type: module::RefType::FuncRef,
+                    mode: module::ElementMode::Active {
                         table_index: 0,
                         offset: consume_constant_expr(bytes)?,
                     },
@@ -635,16 +620,16 @@ impl parsed_unit::Element {
             }
             1 => {
                 // 1:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode passive}
-                Ok(parsed_unit::Element {
+                Ok(module::Element {
                     ref_type: read_element_kind(bytes)?,
-                    mode: parsed_unit::ElementMode::Passive,
+                    mode: module::ElementMode::Passive,
                     init: read_func_index_init(bytes)?,
                 })
             }
             2 => {
                 // 2:u32 𝑥:tableidx 𝑒:expr et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode active {table 𝑥, offset 𝑒}}
-                Ok(parsed_unit::Element {
-                    mode: parsed_unit::ElementMode::Active {
+                Ok(module::Element {
+                    mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
                         offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
                     },
@@ -654,17 +639,17 @@ impl parsed_unit::Element {
             }
             3 => {
                 // 3:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode declarative}
-                Ok(parsed_unit::Element {
+                Ok(module::Element {
                     ref_type: read_element_kind(bytes)?,
-                    mode: parsed_unit::ElementMode::Declarative,
+                    mode: module::ElementMode::Declarative,
                     init: read_func_index_init(bytes)?,
                 })
             }
             4 => {
                 // 4:u32 𝑒:expr el *:vec(expr) => {type funcref, init el *, mode active {table 0, offset 𝑒}}
-                Ok(parsed_unit::Element {
-                    ref_type: parsed_unit::RefType::FuncRef,
-                    mode: parsed_unit::ElementMode::Active {
+                Ok(module::Element {
+                    ref_type: module::RefType::FuncRef,
+                    mode: module::ElementMode::Active {
                         table_index: 0,
                         offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
                     },
@@ -673,16 +658,16 @@ impl parsed_unit::Element {
             }
             5 => {
                 // 5:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode passive}
-                Ok(parsed_unit::Element {
+                Ok(module::Element {
                     ref_type: read_type(bytes)?,
-                    mode: parsed_unit::ElementMode::Passive,
+                    mode: module::ElementMode::Passive,
                     init: read_init(bytes)?,
                 })
             }
             6 => {
                 // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
-                Ok(parsed_unit::Element {
-                    mode: parsed_unit::ElementMode::Active {
+                Ok(module::Element {
+                    mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
                         offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
                     },
@@ -692,9 +677,9 @@ impl parsed_unit::Element {
             }
             7 => {
                 // 7:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode declarative}
-                Ok(parsed_unit::Element {
+                Ok(module::Element {
                     ref_type: read_type(bytes)?,
-                    mode: parsed_unit::ElementMode::Declarative,
+                    mode: module::ElementMode::Declarative,
                     init: read_init(bytes)?,
                 })
             }
@@ -707,13 +692,13 @@ impl parsed_unit::Element {
 }
 
 fn read_section_elements(
-    bytes: &mut parsable_bytes::ParsableBytes,
-    elements: &mut parsed_unit::ElementSection,
+    bytes: &mut reader::Reader,
+    elements: &mut module::ElementSection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu64()?;
 
     for _ in 0..count {
-        let element = parsed_unit::Element::decode(bytes)?;
+        let element = module::Element::decode(bytes)?;
         println!("table type: {:?}", element);
         elements.push(element);
     }
@@ -721,14 +706,12 @@ fn read_section_elements(
     Ok(())
 }
 
-fn consume_constant_expr(
-    bytes: &mut parsable_bytes::ParsableBytes,
-) -> Result<Vec<ast::Instruction>, io::Error> {
+fn consume_constant_expr(bytes: &mut reader::Reader) -> Result<Vec<ast::Instruction>, io::Error> {
     self::ast::Instruction::decode_expression(
-        &parsed_unit::FunctionType {
+        &module::FunctionType {
             // TODO: confirm this is the right signature for these: [0,n]=>[x]
-            parameters: vec![parsed_unit::ValueType::I32, parsed_unit::ValueType::I32],
-            return_types: vec![parsed_unit::ValueType::I32],
+            parameters: vec![module::ValueType::I32, module::ValueType::I32],
+            return_types: vec![module::ValueType::I32],
         },
         bytes,
     )

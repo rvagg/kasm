@@ -10,10 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bytes = fs::read(&path)?;
 
-    let unit = parser::parse(
-        &source_file_path,
-        &mut parser::parsable_bytes::ParsableBytes::new(bytes),
-    )?;
+    let unit = parser::parse(&source_file_path, &mut parser::reader::Reader::new(bytes))?;
 
     println!("{}", unit);
 

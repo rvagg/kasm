@@ -4,7 +4,7 @@ use std::io;
 use crate::parser::ast;
 
 #[derive(Debug)]
-pub struct ParsedUnit {
+pub struct Module {
     pub name: String,
     pub magic: u32,
     pub version: u32,
@@ -22,7 +22,7 @@ pub struct ParsedUnit {
     pub data: DataSection,
 }
 
-impl fmt::Display for ParsedUnit {
+impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ParsedUnit name = {}", self.name)?;
         write!(f, " magic = 0x{:08x}", self.magic)?;
@@ -147,7 +147,7 @@ impl_positional!(
 
 pub trait SectionToString {
     fn to_header_string(&self) -> String;
-    fn to_details_string(&self, unit: &ParsedUnit) -> String;
+    fn to_details_string(&self, unit: &Module) -> String;
 }
 
 #[derive(Debug)]
@@ -182,7 +182,7 @@ impl SectionToString for TypeSection {
         format!("{} count: {}", self.position.to_string(), self.types.len())
     }
 
-    fn to_details_string(&self, _: &ParsedUnit) -> String {
+    fn to_details_string(&self, _: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Type[{}]:\n", self.types.len()));
         for (i, function_type) in self.types.iter().enumerate() {
@@ -209,10 +209,6 @@ impl ImportSection {
     pub fn push(&mut self, import: Import) {
         self.imports.push(import);
     }
-
-    pub fn len(&self) -> usize {
-        self.imports.len()
-    }
 }
 
 #[derive(Debug)]
@@ -233,10 +229,6 @@ impl FunctionSection {
         self.functions.push(function);
     }
 
-    pub fn len(&self) -> usize {
-        self.functions.len()
-    }
-
     pub fn get(&self, index: u8) -> Option<&Function> {
         self.functions.get(index as usize)
     }
@@ -251,7 +243,7 @@ impl SectionToString for FunctionSection {
         )
     }
 
-    fn to_details_string(&self, unit: &ParsedUnit) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Function[{}]:\n", self.functions.len()));
         for (i, function) in self.functions.iter().enumerate() {
@@ -288,14 +280,6 @@ impl TableSection {
             position: SectionPosition::new(0, 0),
         }
     }
-
-    pub fn push(&mut self, table_type: TableType) {
-        self.table.push(table_type);
-    }
-
-    pub fn len(&self) -> usize {
-        self.table.len()
-    }
 }
 
 #[derive(Debug)]
@@ -315,10 +299,6 @@ impl MemorySection {
     pub fn push(&mut self, memory: Memory) {
         self.memory.push(memory);
     }
-
-    pub fn len(&self) -> usize {
-        self.memory.len()
-    }
 }
 
 #[derive(Debug)]
@@ -333,14 +313,6 @@ impl GlobalSection {
             globals: Vec::new(),
             position: SectionPosition::new(0, 0),
         }
-    }
-
-    pub fn push(&mut self, global: Global) {
-        self.globals.push(global);
-    }
-
-    pub fn len(&self) -> usize {
-        self.globals.len()
     }
 }
 
@@ -361,10 +333,6 @@ impl ExportSection {
     pub fn push(&mut self, export: Export) {
         self.exports.push(export);
     }
-
-    pub fn len(&self) -> usize {
-        self.exports.len()
-    }
 }
 
 impl SectionToString for ExportSection {
@@ -376,7 +344,7 @@ impl SectionToString for ExportSection {
         )
     }
 
-    fn to_details_string(&self, _: &ParsedUnit) -> String {
+    fn to_details_string(&self, _: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Export[{}]:\n", self.exports.len()));
         for (i, export) in self.exports.iter().enumerate() {
@@ -427,10 +395,6 @@ impl ElementSection {
     pub fn push(&mut self, element: Element) {
         self.elements.push(element);
     }
-
-    pub fn len(&self) -> usize {
-        self.elements.len()
-    }
 }
 
 #[derive(Debug)]
@@ -447,10 +411,6 @@ impl CodeSection {
         }
     }
 
-    pub fn push(&mut self, function_body: FunctionBody) {
-        self.code.push(function_body);
-    }
-
     pub fn len(&self) -> usize {
         self.code.len()
     }
@@ -461,7 +421,7 @@ impl SectionToString for CodeSection {
         format!("{} count: {}", self.position.to_string(), self.code.len())
     }
 
-    fn to_details_string(&self, unit: &ParsedUnit) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result: String = String::new();
         result.push_str(&format!("Code[{}]:\n", self.code.len()));
         for (i, function_body) in self.code.iter().enumerate() {
@@ -488,7 +448,7 @@ impl SectionToString for CodeSection {
 }
 
 impl CodeSection {
-    fn to_disassemble_string(&self, unit: &ParsedUnit) -> String {
+    fn to_disassemble_string(&self, unit: &Module) -> String {
         let mut result: String = String::new();
         for (i, function_body) in self.code.iter().enumerate() {
             let mut exp = String::new();
@@ -543,14 +503,6 @@ impl DataSection {
             data: Vec::new(),
             position: SectionPosition::new(0, 0),
         }
-    }
-
-    pub fn push(&mut self, data: Data) {
-        self.data.push(data);
-    }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
     }
 }
 
@@ -655,12 +607,6 @@ impl From<RefType> for ValueType {
 pub struct Limits {
     pub min: u32,
     pub max: u32, // TODO: is u32::MAX ok for unlimited?
-}
-
-impl Limits {
-    pub fn new(min: u32, max: u32) -> Limits {
-        Limits { min, max }
-    }
 }
 
 impl fmt::Display for Limits {
@@ -867,9 +813,9 @@ pub struct ResizableLimits {
 }
 */
 
-impl ParsedUnit {
-    pub fn new(name: &str) -> ParsedUnit {
-        ParsedUnit {
+impl Module {
+    pub fn new(name: &str) -> Module {
+        Module {
             name: name.to_string(),
             magic: 0,
             version: 0,
@@ -889,13 +835,15 @@ impl ParsedUnit {
     }
 }
 
+#[allow(dead_code)] // used in tests so far
 pub enum ParsedUnitFormat {
     Header,
     Details,
     Disassemble,
 }
 
-impl ParsedUnit {
+impl Module {
+    #[allow(dead_code)] // used in tests
     pub fn to_string(&self, format: ParsedUnitFormat) -> String {
         match format {
             ParsedUnitFormat::Header => self.to_header_string(),

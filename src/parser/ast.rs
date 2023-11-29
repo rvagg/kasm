@@ -2,10 +2,9 @@ use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
-use std::slice::Iter;
 use std::sync::Arc;
 
-use crate::parser::parsable_bytes;
+use crate::parser::reader;
 
 #[derive(PartialEq, Clone, Copy, Debug, Hash, Eq)]
 pub enum InstructionType {
@@ -623,11 +622,8 @@ pub struct InstructionCoding {
     pub opcode: u8,
     pub subopcode: u32,
     pub name: &'static str,
-    pub parse_bytes: Arc<
-        dyn Fn(&mut super::parsable_bytes::ParsableBytes) -> Result<InstructionData, io::Error>
-            + Send
-            + Sync,
-    >,
+    pub parse_bytes:
+        Arc<dyn Fn(&mut super::reader::Reader) -> Result<InstructionData, io::Error> + Send + Sync>,
     pub emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
     pub emit_str: Arc<dyn Fn(&InstructionData) -> String + Send + Sync>,
 }
@@ -663,9 +659,7 @@ impl InstructionCoding {
         subopcode: u32,
         name: &'static str,
         parse_bytes: Arc<
-            dyn Fn(&mut super::parsable_bytes::ParsableBytes) -> Result<InstructionData, io::Error>
-                + Send
-                + Sync,
+            dyn Fn(&mut super::reader::Reader) -> Result<InstructionData, io::Error> + Send + Sync,
         >,
     ) -> Self {
         Self {
@@ -674,7 +668,7 @@ impl InstructionCoding {
             subopcode,
             name,
             parse_bytes,
-            emit_bytes: Arc::new(move |data: &InstructionData| {
+            emit_bytes: Arc::new(move |_: &InstructionData| {
                 let mut bytes = vec![opcode];
                 if opcode == 0xfc || opcode == 0xfd {
                     bytes.push(subopcode as u8);
@@ -691,9 +685,7 @@ impl InstructionCoding {
         subopcode: u32,
         name: &'static str,
         parse_bytes: Arc<
-            dyn Fn(&mut super::parsable_bytes::ParsableBytes) -> Result<InstructionData, io::Error>
-                + Send
-                + Sync,
+            dyn Fn(&mut super::reader::Reader) -> Result<InstructionData, io::Error> + Send + Sync,
         >,
         emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
         emit_str: Arc<dyn Fn(&InstructionData) -> String + Send + Sync>,
@@ -723,7 +715,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "block",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::BlockInstruction {
                             blocktype: BlockType::parse_bytes(bytes)?,
                         })
@@ -731,7 +723,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data: &InstructionData| {
                     let mut bytes = vec![0x02];
-                    if let InstructionData::BlockInstruction{blocktype} = &data {
+                    if let InstructionData::BlockInstruction { blocktype } = &data {
                         let mut block_bytes = blocktype.emit_bytes();
                         bytes.append(&mut block_bytes);
                     } else {
@@ -739,7 +731,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|_: &InstructionData| {
                     String::from("block") // TODO:
                 }),
             ),
@@ -749,7 +741,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "loop",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::BlockInstruction {
                             blocktype: BlockType::parse_bytes(bytes)?,
                         })
@@ -762,7 +754,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "if",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::BlockInstruction {
                             blocktype: BlockType::parse_bytes(bytes)?,
                         })
@@ -776,7 +768,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "br",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::LabelledInstruction {
                             label_index: bytes.read_vu32()?,
                         })
@@ -789,7 +781,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "br_if",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::LabelledInstruction {
                             label_index: bytes.read_vu32()?,
                         })
@@ -802,7 +794,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "br_table",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableLabelledInstruction {
                             labels: consume_vu32vec(bytes)?,
                             label_index: bytes.read_vu32()?,
@@ -817,7 +809,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "call",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::FunctionInstruction {
                             function_index: bytes.read_vu32()?,
                         })
@@ -830,7 +822,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "call_indirect",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::IndirectInstruction {
                             type_index: bytes.read_vu32()?,
                             table_index: bytes.read_vu32()?,
@@ -845,7 +837,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "ref.null",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::RefTypeInstruction {
                             ref_type: bytes.read_byte()?, // TODO: implement reference types
                         })
@@ -859,7 +851,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "ref.func",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::FunctionInstruction {
                             function_index: bytes.read_vu32()?,
                         })
@@ -875,7 +867,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "selectt", // TODO: name is just "select?
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::ValueTypeInstruction {
                             value_types: bytes.read_u8vec()?, // TODO: type vector?
                         })
@@ -889,7 +881,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "local.get",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::LocalInstruction {
                             local_index: bytes.read_vu32()?,
                         })
@@ -897,8 +889,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data: &InstructionData| {
                     let mut bytes = vec![0x20];
-                    if let InstructionData::LocalInstruction{local_index} = &data {
-                        let mut local_bytes = parsable_bytes::emit_vu32(*local_index);
+                    if let InstructionData::LocalInstruction { local_index } = &data {
+                        let mut local_bytes = reader::emit_vu32(*local_index);
                         bytes.append(&mut local_bytes);
                     } else {
                         panic!("expected local instruction");
@@ -907,7 +899,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data: &InstructionData| {
                     // return "local.get X", where X is local_index
-                    if let InstructionData::LocalInstruction{local_index} = &data {
+                    if let InstructionData::LocalInstruction { local_index } = &data {
                         format!("local.get {}", local_index)
                     } else {
                         panic!("expected local instruction");
@@ -920,7 +912,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "local.set",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::LocalInstruction {
                             local_index: bytes.read_vu32()?,
                         })
@@ -933,7 +925,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "local.tee",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::LocalInstruction {
                             local_index: bytes.read_vu32()?,
                         })
@@ -946,7 +938,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "global.get",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::GlobalInstruction {
                             global_index: bytes.read_vu32()?,
                         })
@@ -959,7 +951,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "global.set",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::GlobalInstruction {
                             global_index: bytes.read_vu32()?,
                         })
@@ -973,7 +965,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "table.get",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableInstruction {
                             table_index: bytes.read_vu32()?,
                         })
@@ -986,7 +978,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "table.set",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableInstruction {
                             table_index: bytes.read_vu32()?,
                         })
@@ -999,7 +991,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 12,
                 "table.init",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableInitInstruction {
                             elem_index: bytes.read_vu32()?,
                             table_index: bytes.read_vu32()?,
@@ -1013,7 +1005,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 13,
                 "elem.drop",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::ElemInstruction {
                             elem_index: bytes.read_vu32()?,
                         })
@@ -1026,7 +1018,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 14,
                 "table.copy",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableCopyInstruction {
                             src_table_index: bytes.read_vu32()?,
                             dst_table_index: bytes.read_vu32()?,
@@ -1040,7 +1032,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 15,
                 "table.grow",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableInstruction {
                             table_index: bytes.read_vu32()?,
                         })
@@ -1053,7 +1045,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 16,
                 "table.size",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableInstruction {
                             table_index: bytes.read_vu32()?,
                         })
@@ -1066,7 +1058,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 17,
                 "table.fill",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::TableInstruction {
                             table_index: bytes.read_vu32()?,
                         })
@@ -1080,7 +1072,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.load",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1093,7 +1085,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.load",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1106,7 +1098,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "f32.load",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1119,7 +1111,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "f64.load",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1132,7 +1124,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.load8s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1145,7 +1137,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.load8u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1158,7 +1150,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.load16s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1171,7 +1163,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.load16u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1184,7 +1176,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.load8s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1197,7 +1189,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.load8u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1210,7 +1202,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.load16s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1223,7 +1215,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.load16u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1236,7 +1228,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.load32s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1249,7 +1241,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.load32u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1262,7 +1254,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.store",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1275,7 +1267,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.store",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1288,7 +1280,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "f32.store",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1301,7 +1293,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "f64.store",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1314,7 +1306,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.store8",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1327,7 +1319,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.store16",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1340,7 +1332,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.store8",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1353,7 +1345,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.store16",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1366,7 +1358,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.store32",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1381,7 +1373,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 8,
                 "memory.init",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         if bytes.read_byte()? != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
@@ -1400,7 +1392,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 9,
                 "data.drop",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::DataInstruction {
                             data_index: bytes.read_vu32()?,
                         })
@@ -1413,7 +1405,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 10,
                 "memory.copy",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         if bytes.read_byte()? != 0x0 || bytes.read_byte()? != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
@@ -1432,7 +1424,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i32.const",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::I32Instruction {
                             value: bytes.read_vs32()?,
                         })
@@ -1445,7 +1437,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "i64.const",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::I64Instruction {
                             value: bytes.read_vs64()?,
                         })
@@ -1458,7 +1450,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "f32.const",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::F32Instruction {
                             value: bytes.read_f32()?,
                         })
@@ -1471,7 +1463,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "f64.const",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::F64Instruction {
                             value: bytes.read_f64()?,
                         })
@@ -1776,7 +1768,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 0,
                 "v128.load",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1789,7 +1781,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 1,
                 "v128.load8x8_s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1802,7 +1794,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 2,
                 "v128.load8x8_u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1815,7 +1807,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 3,
                 "v128.load16x4_s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1828,7 +1820,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 4,
                 "v128.load16x4_u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1841,7 +1833,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 5,
                 "v128.load32x2_s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1854,7 +1846,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 6,
                 "v128.load32x2_u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1867,7 +1859,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 7,
                 "v128.load8_splat",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1880,7 +1872,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 8,
                 "v128.load16_splat",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1893,7 +1885,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 9,
                 "v128.load32_splat",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1906,7 +1898,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 10,
                 "v128.load64_splat",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1919,7 +1911,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 92,
                 "v128.load32zero",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1932,7 +1924,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 93,
                 "v128.load64zero",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1945,7 +1937,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 11,
                 "v128.store",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1958,7 +1950,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 84,
                 "v128.load8_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -1972,7 +1964,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 85,
                 "v128.load16_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -1986,7 +1978,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 86,
                 "v128.load32_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -2000,7 +1992,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 87,
                 "v128.load64_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -2014,7 +2006,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 88,
                 "v128.store8_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -2028,7 +2020,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 89,
                 "v128.store16_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -2042,7 +2034,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 90,
                 "v128.store32_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -2056,7 +2048,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 91,
                 "v128.store64_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128MemoryLaneInstruction {
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -2070,9 +2062,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 12,
                 "v128.const",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128Instruction {
-                            value: consume_v128(bytes)?,
+                            value: bytes.read_v128()?,
                         })
                     },
                 ),
@@ -2083,7 +2075,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 13,
                 "i8x16shuffle",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LanesInstruction {
                             lane_indices: bytes.read_u8vec()?,
                         })
@@ -2096,7 +2088,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 21,
                 "i8x16.extract_lane_s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2109,7 +2101,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 22,
                 "i8x16.extract_lane_u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2122,7 +2114,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 23,
                 "i8x16.replace_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2135,7 +2127,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 24,
                 "i16x8.extract_lane_s",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2148,7 +2140,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 25,
                 "i16x8.extract_lane_u",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2161,7 +2153,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 26,
                 "i16x8.replace_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2174,7 +2166,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 27,
                 "i32x4.extract_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2187,7 +2179,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 28,
                 "i32x4.replace_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2200,7 +2192,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 29,
                 "i64x2.extract_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2213,7 +2205,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 30,
                 "i64x2.replace_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2226,7 +2218,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 31,
                 "f32x4.extract_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2239,7 +2231,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 32,
                 "f32x4.replace_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2252,7 +2244,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 33,
                 "f64x2.extract_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2265,7 +2257,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 34,
                 "f64x2.replace_lane",
                 Arc::new(
-                    |bytes: &mut super::parsable_bytes::ParsableBytes| -> Result<InstructionData, io::Error> {
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::V128LaneInstruction {
                             lane_index: bytes.read_byte()?,
                         })
@@ -2813,7 +2805,7 @@ pub fn get_codings_by_type() -> &'static HashMap<InstructionType, InstructionCod
 }
 
 struct InstructionIterator<'a> {
-    bytes: &'a mut super::parsable_bytes::ParsableBytes,
+    bytes: &'a mut super::reader::Reader,
     ended: bool,
 }
 
@@ -2860,8 +2852,8 @@ impl Instruction {
     // TODO: need locals too so we can pick up local loads beyond function params, globals too for the same reason
     // TODO: implement an option for constant expressions, restricting the instructions allowable (*.const, ref.null, ref.func, global.get [for const globals])
     pub fn decode_expression(
-        ftype: &super::parsed_unit::FunctionType,
-        bytes: &mut super::parsable_bytes::ParsableBytes,
+        ftype: &super::module::FunctionType,
+        bytes: &mut super::reader::Reader,
     ) -> Result<Vec<Instruction>, io::Error> {
         let instruction_iter = InstructionIterator {
             bytes: bytes,
@@ -2891,7 +2883,7 @@ impl Instruction {
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum BlockType {
     Empty,
-    Type(super::parsed_unit::ValueType),
+    Type(super::module::ValueType),
     TypeIndex(i32),
 }
 
@@ -2900,13 +2892,11 @@ impl BlockType {
         match self {
             BlockType::Empty => vec![0x40],
             BlockType::Type(value_type) => value_type.emit_bytes(),
-            BlockType::TypeIndex(type_index) => super::parsable_bytes::emit_vs32(*type_index),
+            BlockType::TypeIndex(type_index) => super::reader::emit_vs32(*type_index),
         }
     }
 
-    fn parse_bytes(
-        bytes: &mut super::parsable_bytes::ParsableBytes,
-    ) -> Result<BlockType, io::Error> {
+    fn parse_bytes(bytes: &mut super::reader::Reader) -> Result<BlockType, io::Error> {
         // if first byte is 0x40, it's an empty type
         // if it's one of the value type bytes, it's a value type
         // otherwise, interpret the first byte and following bytes as a signed
@@ -2915,14 +2905,14 @@ impl BlockType {
         let b = bytes.read_byte()?;
         if b == 0x40 {
             Ok(BlockType::Empty)
-        } else if super::parsed_unit::ValueType::is_value_type_byte(b) {
+        } else if super::module::ValueType::is_value_type_byte(b) {
             Ok(BlockType::Type(
-                super::parsed_unit::ValueType::decode(b)
+                super::module::ValueType::decode(b)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
             ))
         } else {
             let mut first_byte = Some(b);
-            let type_index = super::parsable_bytes::read_vs32(&mut || match first_byte.take() {
+            let type_index = super::reader::read_vs32(&mut || match first_byte.take() {
                 Some(byte) => Ok(byte),
                 None => bytes.read_byte(),
             })?;
@@ -2938,45 +2928,11 @@ impl BlockType {
     }
 }
 
-fn consume_vu32vec(
-    bytes: &mut super::parsable_bytes::ParsableBytes,
-) -> Result<Vec<u32>, io::Error> {
+fn consume_vu32vec(bytes: &mut super::reader::Reader) -> Result<Vec<u32>, io::Error> {
     let len: u64 = bytes.read_vu64()?;
     let mut vec: Vec<u32> = vec![];
     for _ in 0..len {
         vec.push(bytes.read_vu32()?);
     }
     Ok(vec)
-}
-
-fn consume_vu64(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<u64, io::Error> {
-    super::parsable_bytes::read_vu64(&mut || bytes.read_byte())
-}
-
-fn consume_vu32(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<u32, io::Error> {
-    super::parsable_bytes::read_vu32(&mut || bytes.read_byte())
-}
-
-fn consume_vu1(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<u8, io::Error> {
-    super::parsable_bytes::read_vu1(&mut || bytes.read_byte())
-}
-
-fn consume_vs32(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<i32, io::Error> {
-    super::parsable_bytes::read_vs32(&mut || bytes.read_byte())
-}
-
-fn consume_vs64(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<i64, io::Error> {
-    super::parsable_bytes::read_vs64(&mut || bytes.read_byte())
-}
-
-fn consume_f32(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<f32, io::Error> {
-    super::parsable_bytes::read_f32(&mut || bytes.read_byte())
-}
-
-fn consume_f64(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<f64, io::Error> {
-    super::parsable_bytes::read_f64(&mut || bytes.read_byte())
-}
-
-fn consume_v128(bytes: &mut super::parsable_bytes::ParsableBytes) -> Result<[u8; 16], io::Error> {
-    super::parsable_bytes::read_v128(&mut || bytes.read_byte())
 }

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
-    use kasm::parser::parsed_unit;
+    use kasm::parser::module;
     use serde::de::{self, Deserializer};
     use serde::Deserialize;
     use std::collections::HashMap;
@@ -35,6 +35,7 @@ mod tests {
     }
 
     #[derive(Deserialize)]
+    #[allow(unused)]
     struct Spec {
         source_filename: String,
         commands: Vec<Command>,
@@ -51,6 +52,7 @@ mod tests {
 
     // ModuleCommand is simple enough that's a catch-all; so it must be listed last
     #[derive(Deserialize, Debug)]
+    #[allow(unused)]
     struct ModuleCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -59,6 +61,7 @@ mod tests {
     }
 
     #[derive(Deserialize, Debug)]
+    #[allow(unused)]
     struct AssertReturnCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -68,6 +71,7 @@ mod tests {
     }
 
     #[derive(Deserialize, Debug)]
+    #[allow(unused)]
     struct AssertInvalidCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -78,6 +82,7 @@ mod tests {
     }
 
     #[derive(Deserialize, Debug)]
+    #[allow(unused)]
     struct AssertTrapCommand {
         #[serde(rename = "type")]
         command_type: String,
@@ -87,6 +92,7 @@ mod tests {
     }
 
     #[derive(Deserialize, Debug)]
+    #[allow(unused)]
     struct Action {
         #[serde(rename = "type")]
         action_type: String,
@@ -95,6 +101,7 @@ mod tests {
     }
 
     #[derive(Deserialize, Debug)]
+    #[allow(unused)]
     struct TypedValue {
         #[serde(rename = "type")]
         value_type: String,
@@ -170,7 +177,7 @@ mod tests {
                 );
                 match kasm::parser::parse(
                     format!("{}/{}", icab.command.filename, icab.command.line).as_str(),
-                    &mut kasm::parser::parsable_bytes::ParsableBytes::new(icab.bin.clone()),
+                    &mut kasm::parser::reader::Reader::new(icab.bin.clone()),
                 ) {
                     Ok(_) => panic!("should not succeed"),
                     Err(e) => assert_eq!(e.to_string(), icab.command.text),
@@ -189,9 +196,7 @@ mod tests {
 
             let parsed = kasm::parser::parse(
                 format!("{}", filename).as_str(),
-                &mut kasm::parser::parsable_bytes::ParsableBytes::new(
-                    test_data.bin[filename].0.clone(),
-                ),
+                &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone()),
             );
 
             match parsed {
@@ -202,7 +207,7 @@ mod tests {
             let parsed_string = parsed
                 .as_ref()
                 .unwrap()
-                .to_string(parsed_unit::ParsedUnitFormat::Header);
+                .to_string(module::ParsedUnitFormat::Header);
             println!("parsed:\n{}", parsed_string);
             assert_eq!(parsed_string, rest);
 
@@ -215,7 +220,7 @@ mod tests {
             let parsed_string = parsed
                 .as_ref()
                 .unwrap()
-                .to_string(parsed_unit::ParsedUnitFormat::Details);
+                .to_string(module::ParsedUnitFormat::Details);
             println!("parsed:\n{}", parsed_string);
             assert_eq!(parsed_string, rest);
 
@@ -228,7 +233,7 @@ mod tests {
             let parsed_string = parsed
                 .as_ref()
                 .unwrap()
-                .to_string(parsed_unit::ParsedUnitFormat::Disassemble);
+                .to_string(module::ParsedUnitFormat::Disassemble);
             println!("disassemble:\n{}", parsed_string);
             assert_eq!(parsed_string, rest);
 
