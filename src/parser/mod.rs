@@ -2,6 +2,7 @@ pub mod ast;
 pub mod module;
 pub mod reader;
 mod validate;
+mod fhex;
 
 use std::io;
 use std::u32;

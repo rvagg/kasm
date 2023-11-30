@@ -19,13 +19,17 @@ const parsed = await parseWast(input)
 const compiled = await compileWast(parsed, input)
 await writeFile(output, compiled)
 
+async function dumpWasm (wasmPath) {
+  return {
+    header: await dump(wasmPath, 'h'),
+    details: await dump(wasmPath, 'x'),
+    disassemble: await dump(wasmPath, 'd')
+  }
+}
+
 async function compileWast (parsed, wastPath) {
   const dir = await mkdtemp(join(tmpdir(), 'wast-'));
   await execSync(`${wast2json} ${wastPath.pathname}`, { cwd: dir })
-  const dumpPath = join(dir, basename(wastPath.pathname).replace(/\.wast$/, '') + '.0.wasm')
-  const headerDump = await dump(dumpPath, 'h')
-  const detailsDump = await dump(dumpPath, 'x')
-  const disassembleDump = await dump(dumpPath, 'd')
 
   let spec = ''
   const bins = []
@@ -53,13 +57,22 @@ async function compileWast (parsed, wastPath) {
   for (const { word, block } of parsed) {
     compiled += `    "(${word} ${cleanJsonString(block)})",\n`
   }
+
   compiled = compiled.slice(0, -2)
   compiled += '\n  ],\n'
   compiled += '  "dump": {\n'
-  compiled += `    "header": ${JSON.stringify(headerDump)},\n`
-  compiled += `    "details": ${JSON.stringify(detailsDump)},\n`
-  compiled += `    "disassemble": ${JSON.stringify(disassembleDump)}\n`
-  compiled += '  }\n'
+
+  for (const cmd of specParsed.commands.filter(({ type }) => type === 'module')) {
+    const dump = await dumpWasm(join(dir, cmd.filename))
+
+    compiled += `    "${cmd.filename}": {\n`;
+    compiled += `      "header": ${JSON.stringify(dump.header)},\n`;
+    compiled += `      "details": ${JSON.stringify(dump.details)},\n`;
+    compiled += `      "disassemble": ${JSON.stringify(dump.disassemble)}\n`;
+    compiled += `    },\n`;
+  }
+  compiled = compiled.slice(0, -2)
+  compiled += '\n  }\n'
   compiled += '}\n'
   await rm(dir, { recursive: true })
   return compiled

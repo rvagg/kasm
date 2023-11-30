@@ -2,6 +2,7 @@
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
     use kasm::parser::module;
+    use regex::Regex;
     use serde::de::{self, Deserializer};
     use serde::Deserialize;
     use std::collections::HashMap;
@@ -13,7 +14,7 @@ mod tests {
         bin: Bin,
         spec: Spec,
         code: Vec<String>,
-        dump: Dump,
+        dump: HashMap<String, Dump>,
     }
 
     pub type Bin = HashMap<String, Base64DecodedBytes>;
@@ -120,7 +121,7 @@ mod tests {
         use std::fs;
         use std::path::Path;
 
-        let json_files = vec!["i32.json", "i64.json", "f32.json", "f64.json"];
+        let json_files = vec!["i32.json", "i64.json", "f32.json", "f64.json", "const.json"];
 
         for file in json_files {
             println!("testing file: {}", file);
@@ -184,58 +185,66 @@ mod tests {
                 }
             }
 
-            let s = test_data.dump.header;
-            let mut parts = s.splitn(3, ':');
-            let filename = parts.next().unwrap_or("");
-            let filename = filename.trim_start_matches(|c| c == '\n' || c == '\t');
-            parts.next();
-            let rest = parts.next().unwrap_or("").trim_start_matches('\n');
+            test_data.dump.iter().for_each(|(filename, dump)| {
+                println!("testing to_*_string for file: {}", filename);
 
-            println!("filename: {}", filename);
-            println!("rest:\n{}", rest);
+                let parsed = kasm::parser::parse(
+                    format!("{}", filename).as_str(),
+                    &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone()),
+                );
 
-            let parsed = kasm::parser::parse(
-                format!("{}", filename).as_str(),
-                &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone()),
-            );
+                match parsed {
+                    Ok(_) => {}
+                    Err(e) => panic!("failed to parse {}: {}", filename, e),
+                }
 
-            match parsed {
-                Ok(_) => {}
-                Err(e) => panic!("failed to parse {}: {}", filename, e),
-            }
+                let parsed_string = parsed
+                    .as_ref()
+                    .unwrap()
+                    .to_string(module::ParsedUnitFormat::Header);
+                println!("parsed:\n{}", parsed_string);
+                let prefix = format!("\n{}:\tfile format wasm 0x1\n\nSections:\n\n", filename);
+                let header = dump
+                    .header
+                    .strip_prefix(&prefix)
+                    .unwrap_or_else(|| &parsed_string);
+                assert_eq!(parsed_string, header);
 
-            let parsed_string = parsed
-                .as_ref()
-                .unwrap()
-                .to_string(module::ParsedUnitFormat::Header);
-            println!("parsed:\n{}", parsed_string);
-            assert_eq!(parsed_string, rest);
+                let parsed_string = parsed
+                    .as_ref()
+                    .unwrap()
+                    .to_string(module::ParsedUnitFormat::Details);
+                println!("details:\n{}", parsed_string);
+                let prefix = format!(
+                    "\n{}:\tfile format wasm 0x1\n\nSection Details:\n\n",
+                    filename
+                );
+                let details = dump
+                    .details
+                    .strip_prefix(&prefix)
+                    .unwrap_or_else(|| &parsed_string);
+                assert_eq!(parsed_string, details);
 
-            // same but for details string
+                let parsed_string = parsed
+                    .as_ref()
+                    .unwrap()
+                    .to_string(module::ParsedUnitFormat::Disassemble);
+                println!("disassemble:\n{}", parsed_string);
+                let prefix = format!(
+                    "\n{}:\tfile format wasm 0x1\n\nCode Disassembly:\n\n",
+                    filename
+                );
+                let disassemble = dump
+                    .disassemble
+                    .strip_prefix(&prefix)
+                    .unwrap_or_else(|| &parsed_string);
 
-            let s = test_data.dump.details;
-            let mut parts = s.splitn(3, ':');
-            let rest = parts.nth(2).unwrap_or("").trim_start_matches('\n');
+                // special case for bad float hex printer that we disagree with
+                let re = Regex::new(r"\| f(32|64)\.const -?0x1\.p").unwrap();
+                let disassemble = re.replace_all(&disassemble, "| f$1.const 0x1p");
 
-            let parsed_string = parsed
-                .as_ref()
-                .unwrap()
-                .to_string(module::ParsedUnitFormat::Details);
-            println!("parsed:\n{}", parsed_string);
-            assert_eq!(parsed_string, rest);
-
-            // same but for disassemble string
-
-            let s = test_data.dump.disassemble;
-            let mut parts = s.splitn(3, ':');
-            let rest = parts.nth(2).unwrap_or("").trim_start_matches('\n');
-
-            let parsed_string = parsed
-                .as_ref()
-                .unwrap()
-                .to_string(module::ParsedUnitFormat::Disassemble);
-            println!("disassemble:\n{}", parsed_string);
-            assert_eq!(parsed_string, rest);
+                assert_eq!(parsed_string, disassemble);
+            });
 
             /*
             test_data

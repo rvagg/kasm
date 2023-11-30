@@ -1,6 +1,8 @@
 extern crate byteorder;
 extern crate hex;
 
+use byteorder::WriteBytesExt;
+
 use self::byteorder::{LittleEndian, ReadBytesExt};
 use std::io;
 
@@ -475,12 +477,16 @@ where
     let mut result: i64 = 0;
     let mut shift = 0;
     let max_bytes = ((size as f64) / 7_f64).ceil() as usize;
+    let mut all_bytes_have_msb_set = true;
 
     for _ in 0..max_bytes {
         let b = reader()? as u32;
+        if (b & 0x80) == 0 {
+            all_bytes_have_msb_set = false;
+        }
         result = result | (((b & 0x7f) as i64) << shift) as i64;
         shift = shift + 7;
-        if (b & 0x80) == 0 {
+        if !all_bytes_have_msb_set {
             if (shift < size) && (b & 0x40) != 0 {
                 result = result | -((1 as i64) << shift) as i64;
             }
@@ -550,9 +556,13 @@ fn test_read_vs64() {
     );
 }
 
+pub fn emit_vs64(v: i64) -> Vec<u8> {
+    emit_vs(v)
+}
+
 #[test]
 fn test_emit_vs64() {
-    let emit = |v: i64| emit_vs(v);
+    let emit = |v: i64| emit_vs64(v);
 
     assert_eq!(emit(0), vec![0]);
     assert_eq!(emit(1), vec![1]);
@@ -572,6 +582,7 @@ fn test_emit_vs64() {
     );
 }
 
+#[test]
 #[test]
 fn test_read_vs32() {
     let read = |v: Vec<u8>| {
@@ -637,6 +648,13 @@ fn test_read_f32() {
     assert_eq!(read(vec![249, 2, 21, 80]), 1.0e10);
 }
 
+pub fn emit_f32(v: f32) -> Vec<u8> {
+    let mut buf = [0u8; 4];
+    let mut wtr = io::Cursor::new(&mut buf[..]);
+    wtr.write_f32::<LittleEndian>(v).unwrap();
+    buf.to_vec()
+}
+
 pub fn read_f64<F>(reader: &mut F) -> Result<f64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -647,17 +665,6 @@ where
     }
     let mut rdr = io::Cursor::new(buf);
     rdr.read_f64::<LittleEndian>()
-}
-
-pub fn read_v128<F>(reader: &mut F) -> Result<[u8; 16], io::Error>
-where
-    F: FnMut() -> Result<u8, io::Error>,
-{
-    let mut buf = [0u8; 16];
-    for i in 0..16 {
-        buf[i] = reader()?;
-    }
-    Ok(buf)
 }
 
 #[test]
@@ -687,4 +694,67 @@ fn test_read_f64() {
         1.7976931348623157e+308
     );
     assert_eq!(read(vec![125, 195, 148, 37, 173, 73, 178, 84]), 1.0e100);
+}
+
+pub fn emit_f64(v: f64) -> Vec<u8> {
+    let mut buf = [0u8; 8];
+    let mut wtr = io::Cursor::new(&mut buf[..]);
+    wtr.write_f64::<LittleEndian>(v).unwrap();
+    buf.to_vec()
+}
+
+pub fn read_v128<F>(reader: &mut F) -> Result<[u8; 16], io::Error>
+where
+    F: FnMut() -> Result<u8, io::Error>,
+{
+    let mut buf = [0u8; 16];
+    for i in 0..16 {
+        buf[i] = reader()?;
+    }
+    Ok(buf)
+}
+
+#[test]
+fn test_read_v128() {
+    let read = |v: Vec<u8>| {
+        let mut reader = Reader::new(v);
+        reader.read_v128().expect("Failed to read v128")
+    };
+
+    assert_eq!(
+        read(vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+
+    assert_eq!(
+        read(vec![
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff
+        ]),
+        [
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff
+        ]
+    );
+
+    assert_eq!(
+        read(vec![
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa
+        ]),
+        [
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa
+        ]
+    );
+
+    assert_eq!(
+        read(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    );
+
+    assert_eq!(
+        read(vec![0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x7f, 0, 0, 0, 0, 0, 0]),
+        [0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x7f, 0, 0, 0, 0, 0, 0]
+    );
 }

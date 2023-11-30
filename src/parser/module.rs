@@ -464,9 +464,9 @@ impl CodeSection {
             }
             let mut pos = function_body.position.start as usize;
             result.push_str(&format!("{:06x} func[{}]{}:\n", pos, i, exp));
-            pos +=1; // TODO: do we need more bytes to represent a function start?
-            // for each instruction, ignoring the opcodes for now
-            //  00011f: 20 00                      | local.get 0
+            pos += 1; // TODO: do we need more bytes to represent a function start?
+                      // for each instruction, ignoring the opcodes for now
+                      //  00011f: 20 00                      | local.get 0
             function_body.instructions.iter().for_each(|instruction| {
                 let coding = ast::get_codings_by_type()
                     .get(instruction.get_type())
@@ -476,15 +476,44 @@ impl CodeSection {
                             instruction.get_type()
                         )
                     });
+
+                // all of the complexity here is to get nice wrapping when we overflow 26 chars in
+                // the instruction hex, so we end up with something like this:
+                //  000017: 42 80 80 80 80 80 80 80 80 | i64.const -9223372036854775808
+                //  000020: 80 7f                      |
                 result.push_str(&format!(" {:06x}: ", pos));
                 let mut byte_string = String::new();
                 let coding_bytes = (coding.emit_bytes)(instruction.get_data());
-                for byte in &coding_bytes {
-                    byte_string.push_str(&format!("{:02x} ", byte));
-                }
-                pos += &coding_bytes.len();
                 let coding_string = (coding.emit_str)(instruction.get_data());
-                result.push_str(&format!("{:26} | {}\n", byte_string, coding_string));
+                let mut coding_string_added = false;
+                for byte in &coding_bytes {
+                    let new_byte_string = format!("{:02x} ", byte);
+                    if byte_string.len() + new_byte_string.len() > 27 {
+                        result.push_str(&format!(
+                            "{:27}| {}\n {:06x}: ",
+                            byte_string,
+                            if coding_string_added {
+                                ""
+                            } else {
+                                coding_string.as_str()
+                            },
+                            pos
+                        ));
+                        byte_string.clear();
+                        coding_string_added = true;
+                    }
+                    byte_string.push_str(&new_byte_string);
+                    pos += 1;
+                }
+                result.push_str(&format!(
+                    "{:27}| {}\n",
+                    byte_string,
+                    if coding_string_added {
+                        ""
+                    } else {
+                        coding_string.as_str()
+                    }
+                ));
             });
         }
         result
@@ -522,11 +551,15 @@ impl fmt::Display for FunctionType {
                 .map(ToString::to_string)
                 .collect::<Vec<String>>()
                 .join(", "),
-            self.return_types
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<String>>()
-                .join(", ")
+            if self.return_types.is_empty() {
+                "nil".to_string()
+            } else {
+                self.return_types
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            }
         )
     }
 }

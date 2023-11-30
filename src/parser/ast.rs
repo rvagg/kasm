@@ -1,3 +1,4 @@
+use fhex::ToHex;
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
 use std::fmt;
@@ -898,7 +899,6 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data: &InstructionData| {
-                    // return "local.get X", where X is local_index
                     if let InstructionData::LocalInstruction { local_index } = &data {
                         format!("local.get {}", local_index)
                     } else {
@@ -1418,7 +1418,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             ),
             InstructionCoding::new_simple(InstructionType::MemoryFill, 0xfc, 11, "memory.fill"),
             // Numeric instructions¶ -------------------------------------------
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Const,
                 0x41,
                 0,
@@ -1430,8 +1430,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data: &InstructionData| {
+                    let mut bytes = vec![0x41];
+                    if let InstructionData::I32Instruction { value } = &data {
+                        let mut i32_bytes = reader::emit_vs32(*value);
+                        bytes.append(&mut i32_bytes);
+                    } else {
+                        panic!("expected i32 instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data: &InstructionData| {
+                    if let InstructionData::I32Instruction { value } = &data {
+                        format!("i32.const {}", value)
+                    } else {
+                        panic!("expected i32 instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Const,
                 0x42,
                 0,
@@ -1443,8 +1460,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data: &InstructionData| {
+                    let mut bytes = vec![0x42];
+                    if let InstructionData::I64Instruction { value } = &data {
+                        let mut i64_bytes = reader::emit_vs64(*value);
+                        bytes.append(&mut i64_bytes);
+                    } else {
+                        panic!("expected i64 instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data: &InstructionData| {
+                    if let InstructionData::I64Instruction { value } = &data {
+                        format!("i64.const {}", value)
+                    } else {
+                        panic!("expected i64 instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::F32Const,
                 0x43,
                 0,
@@ -1456,8 +1490,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data: &InstructionData| {
+                    let mut bytes = vec![0x43];
+                    if let InstructionData::F32Instruction { value } = &data {
+                        let mut f32_bytes = reader::emit_f32(*value);
+                        bytes.append(&mut f32_bytes);
+                    } else {
+                        panic!("expected f32 instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data: &InstructionData| {
+                    if let InstructionData::F32Instruction { value } = &data {
+                        format!("f32.const {}", value.to_hex())
+                    } else {
+                        panic!("expected f32 instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::F64Const,
                 0x44,
                 0,
@@ -1469,6 +1520,23 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data: &InstructionData| {
+                    let mut bytes = vec![0x44];
+                    if let InstructionData::F64Instruction { value } = &data {
+                        let mut f64_bytes = reader::emit_f64(*value);
+                        bytes.append(&mut f64_bytes);
+                    } else {
+                        panic!("expected f64 instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data: &InstructionData| {
+                    if let InstructionData::F64Instruction { value } = &data {
+                        format!("f64.const {}", value.to_hex())
+                    } else {
+                        panic!("expected f64 instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_simple(InstructionType::I32Eqz, 0x45, 0, "i32.eqz"),
             InstructionCoding::new_simple(InstructionType::I32Eq, 0x46, 0, "i32.eq"),
