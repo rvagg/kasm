@@ -2,7 +2,6 @@
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
     use kasm::parser::module;
-    use regex::Regex;
     use serde::de::{self, Deserializer};
     use serde::Deserialize;
     use std::collections::HashMap;
@@ -238,10 +237,6 @@ mod tests {
                     .disassemble
                     .strip_prefix(&prefix)
                     .unwrap_or_else(|| &parsed_string);
-
-                // special case for bad float hex printer that we disagree with
-                let re = Regex::new(r"\| f(32|64)\.const -?0x1\.p").unwrap();
-                let disassemble = re.replace_all(&disassemble, "| f$1.const 0x1p");
 
                 assert_eq!(parsed_string, disassemble);
             });

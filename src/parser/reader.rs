@@ -351,14 +351,8 @@ where
     let max_bytes = ((size as f64) / 7_f64).ceil() as usize;
 
     for i in 0..max_bytes {
-        let b = reader()? as u32;
+        let b = reader()? as u64;
         let value = (b & 0x7f) << (7 * i);
-        if value > (u64::MAX - result) as u32 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "integer overflow",
-            ));
-        }
         result |= value as u64;
         if (b & 0x80) == 0 {
             break;
@@ -369,7 +363,7 @@ where
 }
 
 fn emit_vu(v: u64) -> Vec<u8> {
-    // signed leb128
+    // unsigned leb128
     let mut result: Vec<u8> = vec![];
     let mut value = v;
     let mut more = true;
@@ -477,22 +471,21 @@ where
     let mut result: i64 = 0;
     let mut shift = 0;
     let max_bytes = ((size as f64) / 7_f64).ceil() as usize;
-    let mut all_bytes_have_msb_set = true;
+    let mut b = 0;
 
     for _ in 0..max_bytes {
-        let b = reader()? as u32;
+        b = reader()? as u32;
+        result |= ((b & !0x80) as i64) << shift;
+        shift += 7;
         if (b & 0x80) == 0 {
-            all_bytes_have_msb_set = false;
-        }
-        result = result | (((b & 0x7f) as i64) << shift) as i64;
-        shift = shift + 7;
-        if !all_bytes_have_msb_set {
-            if (shift < size) && (b & 0x40) != 0 {
-                result = result | -((1 as i64) << shift) as i64;
-            }
             break;
         }
     }
+
+    if (b & 0x40) == 0x40 && shift < size {
+        result |= !0 << shift;
+    }
+
     Ok(result)
 }
 
@@ -582,7 +575,6 @@ fn test_emit_vs64() {
     );
 }
 
-#[test]
 #[test]
 fn test_read_vs32() {
     let read = |v: Vec<u8>| {

@@ -587,10 +587,10 @@ pub enum InstructionData {
 
     // Numeric instructions¶ ----------------------------------------------------
     I32Instruction {
-        value: i32,
+        value: u32,
     },
     I64Instruction {
-        value: i64,
+        value: u64,
     },
     F64Instruction {
         value: f64,
@@ -1426,15 +1426,15 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::I32Instruction {
-                            value: bytes.read_vs32()?,
+                            value: bytes.read_vs32()? as u32,
                         })
                     },
                 ),
                 Arc::new(|data: &InstructionData| {
                     let mut bytes = vec![0x41];
                     if let InstructionData::I32Instruction { value } = &data {
-                        let mut i32_bytes = reader::emit_vs32(*value);
-                        bytes.append(&mut i32_bytes);
+                        let mut u32_bytes = reader::emit_vs32(*value as i32);
+                        bytes.append(&mut u32_bytes);
                     } else {
                         panic!("expected i32 instruction");
                     }
@@ -1456,15 +1456,15 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::I64Instruction {
-                            value: bytes.read_vs64()?,
+                            value: bytes.read_vs64()? as u64,
                         })
                     },
                 ),
                 Arc::new(|data: &InstructionData| {
                     let mut bytes = vec![0x42];
                     if let InstructionData::I64Instruction { value } = &data {
-                        let mut i64_bytes = reader::emit_vs64(*value);
-                        bytes.append(&mut i64_bytes);
+                        let mut u64_bytes = reader::emit_vs64(*value as i64);
+                        bytes.append(&mut u64_bytes);
                     } else {
                         panic!("expected i64 instruction");
                     }
