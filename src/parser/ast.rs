@@ -768,7 +768,11 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data| {
                     if let InstructionData::BlockInstruction { blocktype } = &data {
-                        format!("loop {}", blocktype)
+                        if blocktype == &BlockType::Empty {
+                            "loop".to_string()
+                        } else {
+                            format!("loop {}", blocktype)
+                        }
                     } else {
                         panic!("expected block instruction");
                     }
@@ -798,7 +802,11 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data| {
                     if let InstructionData::BlockInstruction { blocktype } = &data {
-                        format!("if {}", blocktype)
+                        if blocktype == &BlockType::Empty {
+                            "if".to_string()
+                        } else {
+                            format!("if {}", blocktype)
+                        }
                     } else {
                         panic!("expected block instruction");
                     }

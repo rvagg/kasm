@@ -344,7 +344,7 @@ impl<'a> Validator<'a> {
             LocalGet => {
                 if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
                     let local = self.local(li)?.clone();
-                    self.push_val(Val(local));
+                    self.push_val(Val(local)).ok_or("type mismatch")?;
                     Ok(())
                 } else {
                     Err("invalid instruction")
@@ -354,7 +354,7 @@ impl<'a> Validator<'a> {
             LocalSet => {
                 if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
                     let local = self.local(li)?.clone();
-                    self.pop_expected(Val(local));
+                    self.pop_expected(Val(local)).ok_or("type mismatch")?;
                     Ok(())
                 } else {
                     Err("invalid instruction")
@@ -492,6 +492,8 @@ impl<'a> Validator<'a> {
                 self.pop_val().ok_or("type mismatch")?;
                 Ok(())
             }
+
+            Nop => Ok(()),
 
             _ => {
                 println!("validate: unimplemented instruction {:?}", inst.to_string());
