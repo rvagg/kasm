@@ -341,7 +341,7 @@ fn read_section_code(
         };
 
         let instructions: Vec<ast::Instruction> =
-            self::ast::Instruction::decode_expression(&ftype, &mut reader)?;
+            self::ast::Instruction::decode_function(&types, &locals, &ftype, &mut reader)?;
         let function_body = module::FunctionBody {
             locals: locals,
             // body: body,
@@ -707,12 +707,5 @@ fn read_section_elements(
 }
 
 fn consume_constant_expr(bytes: &mut reader::Reader) -> Result<Vec<ast::Instruction>, io::Error> {
-    self::ast::Instruction::decode_expression(
-        &module::FunctionType {
-            // TODO: confirm this is the right signature for these: [0,n]=>[x]
-            parameters: vec![module::ValueType::I32, module::ValueType::I32],
-            return_types: vec![module::ValueType::I32],
-        },
-        bytes,
-    )
+    self::ast::Instruction::decode_expression(bytes)
 }

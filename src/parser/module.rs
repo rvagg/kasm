@@ -467,6 +467,37 @@ impl CodeSection {
             pos += 1; // TODO: do we need more bytes to represent a function start?
                       // for each instruction, ignoring the opcodes for now
                       //  00011f: 20 00                      | local.get 0
+            let mut i = 0;
+            while i < function_body.locals.len() {
+                let start = i;
+                let val_type = &function_body.locals[i];
+                while i < function_body.locals.len() && &function_body.locals[i] == val_type {
+                    i += 1;
+                }
+                let end = i;
+
+                let mut byts = super::reader::emit_vu64((end - start) as u64).iter().fold(
+                    String::new(),
+                    |mut acc, byte| {
+                        acc.push_str(&format!("{:02x} ", byte));
+                        acc
+                    },
+                );
+                byts.push_str(&format!("{:02x}", val_type.emit_bytes()[0]));
+
+                let range = if start == end - 1 {
+                    format!("{}", start)
+                } else {
+                    format!("{}..{}", start, end - 1)
+                };
+
+                result.push_str(&format!(
+                    " {:06x}: {:27}| local[{}] type={}\n",
+                    pos, byts, range, val_type
+                ));
+                pos += 2;
+            }
+            let mut indent: usize = 0;
             function_body.instructions.iter().for_each(|instruction| {
                 let coding = ast::get_codings_by_type()
                     .get(instruction.get_type())
@@ -476,6 +507,11 @@ impl CodeSection {
                             instruction.get_type()
                         )
                     });
+
+                match instruction.get_type() {
+                    ast::InstructionType::Else | ast::InstructionType::End => indent = indent.saturating_sub(1),
+                    _ => {}
+                }
 
                 // all of the complexity here is to get nice wrapping when we overflow 26 chars in
                 // the instruction hex, so we end up with something like this:
@@ -506,14 +542,23 @@ impl CodeSection {
                     pos += 1;
                 }
                 result.push_str(&format!(
-                    "{:27}| {}\n",
+                    "{:27}| {}{}\n",
                     byte_string,
+                    "  ".repeat(indent),
                     if coding_string_added {
                         ""
                     } else {
                         coding_string.as_str()
                     }
                 ));
+
+                match instruction.get_type() {
+                    ast::InstructionType::Block
+                    | ast::InstructionType::Loop
+                    | ast::InstructionType::If
+                    | ast::InstructionType::Else => indent += 1,
+                    _ => {}
+                }
             });
         }
         result

@@ -405,9 +405,13 @@ fn test_read_vu64() {
     assert_eq!(read(vec![128, 128, 128, 128, 8]), 0x80000000);
 }
 
+pub fn emit_vu64(v: u64) -> Vec<u8> {
+    emit_vu(v)
+}
+
 #[test]
 fn test_emit_vu64() {
-    let emit = |v: u64| emit_vu(v);
+    let emit = |v: u64| emit_vu64(v);
 
     assert_eq!(emit(0), vec![0]);
     assert_eq!(emit(1), vec![1]);

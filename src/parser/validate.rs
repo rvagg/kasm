@@ -1,8 +1,13 @@
+use super::module::ValueType;
+use super::module::ValueType::*;
 use crate::parser::ast;
+use ast::InstructionType::*;
+use ast::{BlockType, Instruction, InstructionData, InstructionType};
+use MaybeValue::{Unknown, Val};
 
 #[derive(PartialEq, Debug, Clone)]
 enum MaybeValue {
-    Val(super::module::ValueType),
+    Val(ValueType),
     Unknown,
 }
 
@@ -10,42 +15,36 @@ enum MaybeValue {
 impl MaybeValue {
     fn is_num(self) -> bool {
         match self {
-            MaybeValue::Val(v) => {
-                v == super::module::ValueType::I32
-                    || v == super::module::ValueType::I64
-                    || v == super::module::ValueType::F32
-                    || v == super::module::ValueType::F64
-            }
-            MaybeValue::Unknown => true,
+            Val(v) => v == I32 || v == I64 || v == F32 || v == F64,
+            Unknown => true,
         }
     }
 
     fn is_vec(self) -> bool {
         match self {
-            MaybeValue::Val(v) => v == super::module::ValueType::V128,
-            MaybeValue::Unknown => true,
+            Val(v) => v == V128,
+            Unknown => true,
         }
     }
 
     fn is_ref(self) -> bool {
         match self {
-            MaybeValue::Val(v) => {
-                v == super::module::ValueType::FuncRef || v == super::module::ValueType::ExternRef
-            }
-            MaybeValue::Unknown => true,
+            Val(v) => v == FuncRef || v == ExternRef,
+            Unknown => true,
         }
     }
 }
 
-const I32_VALUE: super::module::ValueType = super::module::ValueType::I32;
-const I64_VALUE: super::module::ValueType = super::module::ValueType::I64;
-const F32_VALUE: super::module::ValueType = super::module::ValueType::F32;
-const F64_VALUE: super::module::ValueType = super::module::ValueType::F64;
+const I32_VALUE: ValueType = I32;
+const I64_VALUE: ValueType = I64;
+const F32_VALUE: ValueType = F32;
+const F64_VALUE: ValueType = F64;
 #[allow(dead_code)]
-const V128_VALUE: super::module::ValueType = super::module::ValueType::V128;
+const V128_VALUE: ValueType = V128;
 
+#[derive(Clone)]
 struct CtrlFrame {
-    instruction: ast::InstructionType,
+    instruction: InstructionType,
     start_types: Vec<MaybeValue>,
     end_types: Vec<MaybeValue>,
     height: u32,
@@ -53,29 +52,29 @@ struct CtrlFrame {
 }
 
 pub struct Validator<'a> {
-    ftype: &'a super::module::FunctionType,
+    types: &'a super::module::TypeSection,
+    params: &'a Vec<ValueType>,
+    locals: &'a Vec<ValueType>,
     vals: Vec<MaybeValue>,
     ctrls: Vec<CtrlFrame>,
 }
 
 impl<'a> Validator<'a> {
-    pub fn new(ftype: &super::module::FunctionType) -> Validator {
+    pub fn new<'b>(
+        types: &'b super::module::TypeSection,
+        locals: &'b Vec<ValueType>,
+        ftype: &'b super::module::FunctionType,
+    ) -> Validator<'b> {
         let mut v = Validator {
-            ftype: ftype,
-            vals: Vec::new(),
-            ctrls: Vec::new(),
+            types,
+            params: &ftype.parameters,
+            locals,
+            vals: vec![],
+            ctrls: vec![],
         };
-        let start_types = ftype
-            .parameters
-            .iter()
-            .map(|v| MaybeValue::Val(*v))
-            .collect();
-        let end_types = ftype
-            .return_types
-            .iter()
-            .map(|v| MaybeValue::Val(*v))
-            .collect();
-        v.push_ctrl(ast::InstructionType::Block, start_types, end_types);
+        let start_types = ftype.parameters.iter().map(|v| Val(*v)).collect();
+        let end_types = ftype.return_types.iter().map(|v| Val(*v)).collect();
+        v.push_ctrl(Block, start_types, end_types);
 
         v
     }
@@ -93,18 +92,11 @@ impl<'a> Validator<'a> {
     }
 
     fn pop_val(&mut self) -> Option<MaybeValue> {
-        if self.vals.len() == 0 {
-            println!("pop_val: empty val stack");
-            None
-        } else if self.ctrls.len() == 0 {
-            println!("pop_val: empty ctrl stack");
-            None
-        } else if self.vals.len() as u32 == self.ctrls.last()?.height
-            && self.ctrls.last()?.unreachable
-        {
-            Some(MaybeValue::Unknown)
+        if self.vals.len() as u32 == self.ctrls.last()?.height && self.ctrls.last()?.unreachable {
+            Some(Unknown)
         } else if self.vals.len() as u32 == self.ctrls.last()?.height {
-            println!("pop_val: height = {}", self.ctrls.last()?.height);
+            None
+        } else if self.vals.len() == 0 {
             None
         } else {
             self.vals.pop()
@@ -113,8 +105,7 @@ impl<'a> Validator<'a> {
 
     fn pop_expected(&mut self, val_type: MaybeValue) -> Option<MaybeValue> {
         let popped = self.pop_val()?;
-        if popped != val_type && popped != MaybeValue::Unknown && val_type != MaybeValue::Unknown {
-            println!("pop_expected {:?}, got {:?}", val_type, popped);
+        if popped != val_type && popped != Unknown && val_type != Unknown {
             None
         } else {
             Some(popped)
@@ -132,41 +123,59 @@ impl<'a> Validator<'a> {
 
     fn push_ctrl(
         &mut self,
-        instruction: ast::InstructionType,
+        instruction: InstructionType,
         start_types: Vec<MaybeValue>,
         end_types: Vec<MaybeValue>,
     ) {
-        self.push_vals(start_types.clone());
         self.ctrls.push(CtrlFrame {
             instruction: instruction,
-            start_types: start_types,
+            start_types: start_types.clone(),
             end_types: end_types,
             height: self.vals.len() as u32,
             unreachable: false,
         });
+        // TODO: turns out we don't need to push the start types on, they're for locals, but we
+        // do probably need to validate that the end type is right somehow?
+        // self.push_vals(start_types);
     }
 
     fn pop_ctrl(&mut self) -> Result<CtrlFrame, &'static str> {
         if self.ctrls.is_empty() {
-            println!("pop_ctrl: empty ctrl stack");
             Err("unexpected token")
         } else {
             let end_types_clone = self.ctrls.last().unwrap().end_types.clone();
             if self.pop_expecteds(end_types_clone).is_none() {
-                println!("pop_ctrl: invalid end types");
                 Err("type mismatch")
             } else {
                 if self.vals.len() != self.ctrls.last().unwrap().height as usize {
-                    println!(
-                        "pop_ctrl: invalid height {} != {}",
-                        self.vals.len(),
-                        self.ctrls.last().unwrap().height
-                    );
-                    Err("unexpected token")
+                    Err("type mismatch")
                 } else {
                     Ok(self.ctrls.pop().unwrap())
                 }
             }
+        }
+    }
+
+    fn frame_types(&mut self, frame: CtrlFrame) -> Vec<MaybeValue> {
+        if frame.instruction == Loop {
+            frame.start_types
+        } else {
+            frame.end_types
+        }
+    }
+
+    fn unreachable(&mut self) -> Option<()> {
+        if let Some(ctrl) = self.ctrls.last_mut() {
+            let h = ctrl.height as usize;
+            if self.vals.len() <= h {
+                self.vals.truncate(h);
+                ctrl.unreachable = true;
+                Some(())
+            } else {
+                None
+            }
+        } else {
+            None
         }
     }
 
@@ -186,347 +195,300 @@ impl<'a> Validator<'a> {
         self.push_val(out_type).ok_or("type mismatch")
     }
 
-    pub fn validate(&mut self, inst: &ast::Instruction) -> Result<(), &'static str> {
+    fn local(&mut self, local_index: u32) -> Result<&ValueType, &'static str> {
+        let li = local_index as usize;
+        let local: Option<&ValueType> = if li < self.params.len() {
+            self.params.get(li)
+        } else {
+            let li = li - self.params.len();
+            self.locals.get(li)
+        };
+
+        local.ok_or("unknown local")
+    }
+
+    fn label_types_at(&mut self, li: u32) -> Result<Vec<MaybeValue>, &'static str> {
+        let index = self.ctrls.len() - li as usize - 1;
+        let frame = self.ctrls.get(index).ok_or("invalid label index")?.clone();
+        Ok(self.frame_types(frame))
+    }
+
+    pub fn validate(&mut self, inst: &Instruction) -> Result<(), &'static str> {
         match inst.get_type() {
-            ast::InstructionType::I32Const => self
-                .push_val(MaybeValue::Val(I32_VALUE))
-                .ok_or("type mismatch"),
+            I32Const => self.push_val(Val(I32_VALUE)).ok_or("type mismatch"),
 
             // iunop (i32):i32
-            ast::InstructionType::I32Clz
-            | ast::InstructionType::I32Ctz
-            | ast::InstructionType::I32Popcnt => {
-                self.sig_unary(MaybeValue::Val(I32_VALUE), MaybeValue::Val(I32_VALUE))
-            }
+            I32Clz | I32Ctz | I32Popcnt => self.sig_unary(Val(I32_VALUE), Val(I32_VALUE)),
 
             // ibinop (i32,i32):i32
-            ast::InstructionType::I32Add
-            | ast::InstructionType::I32Sub
-            | ast::InstructionType::I32Mul
-            | ast::InstructionType::I32DivS
-            | ast::InstructionType::I32DivU
-            | ast::InstructionType::I32RemS
-            | ast::InstructionType::I32RemU
-            | ast::InstructionType::I32And
-            | ast::InstructionType::I32Or
-            | ast::InstructionType::I32Xor
-            | ast::InstructionType::I32Shl
-            | ast::InstructionType::I32ShrS
-            | ast::InstructionType::I32ShrU
-            | ast::InstructionType::I32Rotr
-            | ast::InstructionType::I32Rotl => self.sig_binary(
-                MaybeValue::Val(I32_VALUE),
-                MaybeValue::Val(I32_VALUE),
-                MaybeValue::Val(I32_VALUE),
-            ),
+            I32Add | I32Sub | I32Mul | I32DivS | I32DivU | I32RemS | I32RemU | I32And | I32Or
+            | I32Xor | I32Shl | I32ShrS | I32ShrU | I32Rotr | I32Rotl => {
+                self.sig_binary(Val(I32_VALUE), Val(I32_VALUE), Val(I32_VALUE))
+            }
 
             // itestop (i32):i32
-            ast::InstructionType::I32Eqz => {
-                self.sig_unary(MaybeValue::Val(I32_VALUE), MaybeValue::Val(I32_VALUE))
-            }
+            I32Eqz => self.sig_unary(Val(I32_VALUE), Val(I32_VALUE)),
 
             // irelop (i32,i32):i32
-            ast::InstructionType::I32Eq
-            | ast::InstructionType::I32Ne
-            | ast::InstructionType::I32LtS
-            | ast::InstructionType::I32LtU
-            | ast::InstructionType::I32GtS
-            | ast::InstructionType::I32GtU
-            | ast::InstructionType::I32LeS
-            | ast::InstructionType::I32LeU
-            | ast::InstructionType::I32GeS
-            | ast::InstructionType::I32GeU => self.sig_binary(
-                MaybeValue::Val(I32_VALUE),
-                MaybeValue::Val(I32_VALUE),
-                MaybeValue::Val(I32_VALUE),
-            ),
+            I32Eq | I32Ne | I32LtS | I32LtU | I32GtS | I32GtU | I32LeS | I32LeU | I32GeS
+            | I32GeU => self.sig_binary(Val(I32_VALUE), Val(I32_VALUE), Val(I32_VALUE)),
 
             // cvtop (i32):i32
-            ast::InstructionType::I32Extend8S | ast::InstructionType::I32Extend16S => {
-                self.sig_unary(MaybeValue::Val(I32_VALUE), MaybeValue::Val(I32_VALUE))
-            }
+            I32Extend8S | I32Extend16S => self.sig_unary(Val(I32_VALUE), Val(I32_VALUE)),
 
             // cvtop (i64):i32
-            ast::InstructionType::I32WrapI64 => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I32_VALUE))
-            }
+            I32WrapI64 => self.sig_unary(Val(I64_VALUE), Val(I32_VALUE)),
 
             // cvtop (f32):i32
-            ast::InstructionType::I32TruncF32S
-            | ast::InstructionType::I32TruncF32U
-            | ast::InstructionType::I32TruncSatF32S
-            | ast::InstructionType::I32TruncSatF32U => {
-                self.sig_unary(MaybeValue::Val(F32_VALUE), MaybeValue::Val(I32_VALUE))
+            I32TruncF32S | I32TruncF32U | I32TruncSatF32S | I32TruncSatF32U => {
+                self.sig_unary(Val(F32_VALUE), Val(I32_VALUE))
             }
 
             // cvtop (f64):i32
-            ast::InstructionType::I32TruncF64S
-            | ast::InstructionType::I32TruncF64U
-            | ast::InstructionType::I32TruncSatF64S
-            | ast::InstructionType::I32TruncSatF64U => {
-                self.sig_unary(MaybeValue::Val(F64_VALUE), MaybeValue::Val(I32_VALUE))
+            I32TruncF64S | I32TruncF64U | I32TruncSatF64S | I32TruncSatF64U => {
+                self.sig_unary(Val(F64_VALUE), Val(I32_VALUE))
             }
 
-            ast::InstructionType::I64Const => self
-                .push_val(MaybeValue::Val(I64_VALUE))
-                .ok_or("type mismatch"),
+            I64Const => self.push_val(Val(I64_VALUE)).ok_or("type mismatch"),
 
             // iunop (i64):i64
-            ast::InstructionType::I64Clz
-            | ast::InstructionType::I64Ctz
-            | ast::InstructionType::I64Popcnt => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I64_VALUE))
-            }
+            I64Clz | I64Ctz | I64Popcnt => self.sig_unary(Val(I64_VALUE), Val(I64_VALUE)),
 
             // ibinop (i64,i64):i64
-            ast::InstructionType::I64Add
-            | ast::InstructionType::I64Sub
-            | ast::InstructionType::I64Mul
-            | ast::InstructionType::I64DivS
-            | ast::InstructionType::I64DivU
-            | ast::InstructionType::I64RemS
-            | ast::InstructionType::I64RemU
-            | ast::InstructionType::I64And
-            | ast::InstructionType::I64Or
-            | ast::InstructionType::I64Xor
-            | ast::InstructionType::I64Shl
-            | ast::InstructionType::I64ShrS
-            | ast::InstructionType::I64ShrU
-            | ast::InstructionType::I64Rotr
-            | ast::InstructionType::I64Rotl => self.sig_binary(
-                MaybeValue::Val(I64_VALUE),
-                MaybeValue::Val(I64_VALUE),
-                MaybeValue::Val(I64_VALUE),
-            ),
-
-            // itestop (i64):i32
-            ast::InstructionType::I64Eqz => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I32_VALUE))
+            I64Add | I64Sub | I64Mul | I64DivS | I64DivU | I64RemS | I64RemU | I64And | I64Or
+            | I64Xor | I64Shl | I64ShrS | I64ShrU | I64Rotr | I64Rotl => {
+                self.sig_binary(Val(I64_VALUE), Val(I64_VALUE), Val(I64_VALUE))
             }
 
+            // itestop (i64):i32
+            I64Eqz => self.sig_unary(Val(I64_VALUE), Val(I32_VALUE)),
+
             // irelop (i64,i64):i32
-            ast::InstructionType::I64Eq
-            | ast::InstructionType::I64Ne
-            | ast::InstructionType::I64LtS
-            | ast::InstructionType::I64LtU
-            | ast::InstructionType::I64GtS
-            | ast::InstructionType::I64GtU
-            | ast::InstructionType::I64LeS
-            | ast::InstructionType::I64LeU
-            | ast::InstructionType::I64GeS
-            | ast::InstructionType::I64GeU => self.sig_binary(
-                MaybeValue::Val(I64_VALUE),
-                MaybeValue::Val(I64_VALUE),
-                MaybeValue::Val(I32_VALUE),
-            ),
+            I64Eq | I64Ne | I64LtS | I64LtU | I64GtS | I64GtU | I64LeS | I64LeU | I64GeS
+            | I64GeU => self.sig_binary(Val(I64_VALUE), Val(I64_VALUE), Val(I32_VALUE)),
 
             // cvtop (i64):i64
-            ast::InstructionType::I64Extend8S
-            | ast::InstructionType::I64Extend16S
-            | ast::InstructionType::I64Extend32S => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(I64_VALUE))
+            I64Extend8S | I64Extend16S | I64Extend32S => {
+                self.sig_unary(Val(I64_VALUE), Val(I64_VALUE))
             }
 
             // cvtop (i32):i64
-            ast::InstructionType::I64ExtendI32S | ast::InstructionType::I64ExtendI32U => {
-                self.sig_unary(MaybeValue::Val(I32_VALUE), MaybeValue::Val(I64_VALUE))
-            }
+            I64ExtendI32S | I64ExtendI32U => self.sig_unary(Val(I32_VALUE), Val(I64_VALUE)),
 
             // cvtop (f32):i64
-            ast::InstructionType::I64TruncF32S
-            | ast::InstructionType::I64TruncF32U
-            | ast::InstructionType::I64TruncSatF32S
-            | ast::InstructionType::I64TruncSatF32U => {
-                self.sig_unary(MaybeValue::Val(F32_VALUE), MaybeValue::Val(I64_VALUE))
+            I64TruncF32S | I64TruncF32U | I64TruncSatF32S | I64TruncSatF32U => {
+                self.sig_unary(Val(F32_VALUE), Val(I64_VALUE))
             }
 
             // cvtop (f64):i64
-            ast::InstructionType::I64TruncF64S
-            | ast::InstructionType::I64TruncF64U
-            | ast::InstructionType::I64TruncSatF64S
-            | ast::InstructionType::I64TruncSatF64U => {
-                self.sig_unary(MaybeValue::Val(F64_VALUE), MaybeValue::Val(I64_VALUE))
+            I64TruncF64S | I64TruncF64U | I64TruncSatF64S | I64TruncSatF64U => {
+                self.sig_unary(Val(F64_VALUE), Val(I64_VALUE))
             }
 
-            ast::InstructionType::F32Const => self
-                .push_val(MaybeValue::Val(F32_VALUE))
-                .ok_or("type mismatch"),
+            F32Const => self.push_val(Val(F32_VALUE)).ok_or("type mismatch"),
 
             // funop (f32):f32
-            ast::InstructionType::F32Abs
-            | ast::InstructionType::F32Neg
-            | ast::InstructionType::F32Sqrt
-            | ast::InstructionType::F32Ceil
-            | ast::InstructionType::F32Floor
-            | ast::InstructionType::F32Trunc
-            | ast::InstructionType::F32Nearest => {
-                self.sig_unary(MaybeValue::Val(F32_VALUE), MaybeValue::Val(F32_VALUE))
+            F32Abs | F32Neg | F32Sqrt | F32Ceil | F32Floor | F32Trunc | F32Nearest => {
+                self.sig_unary(Val(F32_VALUE), Val(F32_VALUE))
             }
 
             // fbinop (f32,f32):f32
-            ast::InstructionType::F32Add
-            | ast::InstructionType::F32Sub
-            | ast::InstructionType::F32Mul
-            | ast::InstructionType::F32Div
-            | ast::InstructionType::F32Min
-            | ast::InstructionType::F32Max
-            | ast::InstructionType::F32Copysign => self.sig_binary(
-                MaybeValue::Val(F32_VALUE),
-                MaybeValue::Val(F32_VALUE),
-                MaybeValue::Val(F32_VALUE),
-            ),
-
-            // frelop (f32,f32):i32
-            ast::InstructionType::F32Eq
-            | ast::InstructionType::F32Ne
-            | ast::InstructionType::F32Lt
-            | ast::InstructionType::F32Gt
-            | ast::InstructionType::F32Le
-            | ast::InstructionType::F32Ge => self.sig_binary(
-                MaybeValue::Val(F32_VALUE),
-                MaybeValue::Val(F32_VALUE),
-                MaybeValue::Val(I32_VALUE),
-            ),
-
-            // cvtop (f64):f32
-            ast::InstructionType::F32DemoteF64 => {
-                self.sig_unary(MaybeValue::Val(F64_VALUE), MaybeValue::Val(F32_VALUE))
+            F32Add | F32Sub | F32Mul | F32Div | F32Min | F32Max | F32Copysign => {
+                self.sig_binary(Val(F32_VALUE), Val(F32_VALUE), Val(F32_VALUE))
             }
 
+            // frelop (f32,f32):i32
+            F32Eq | F32Ne | F32Lt | F32Gt | F32Le | F32Ge => {
+                self.sig_binary(Val(F32_VALUE), Val(F32_VALUE), Val(I32_VALUE))
+            }
+
+            // cvtop (f64):f32
+            F32DemoteF64 => self.sig_unary(Val(F64_VALUE), Val(F32_VALUE)),
+
             // cvtop (i32):f32
-            ast::InstructionType::F32ConvertI32S
-            | ast::InstructionType::F32ConvertI32U
-            | ast::InstructionType::F32ReinterpretI32 => {
-                self.sig_unary(MaybeValue::Val(I32_VALUE), MaybeValue::Val(F32_VALUE))
+            F32ConvertI32S | F32ConvertI32U | F32ReinterpretI32 => {
+                self.sig_unary(Val(I32_VALUE), Val(F32_VALUE))
             }
 
             // cvtop (i64):f32
-            ast::InstructionType::F32ConvertI64S | ast::InstructionType::F32ConvertI64U => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(F32_VALUE))
-            }
+            F32ConvertI64S | F32ConvertI64U => self.sig_unary(Val(I64_VALUE), Val(F32_VALUE)),
 
-            ast::InstructionType::F64Const => self
-                .push_val(MaybeValue::Val(F64_VALUE))
-                .ok_or("type mismatch"),
+            F64Const => self.push_val(Val(F64_VALUE)).ok_or("type mismatch"),
 
             // funop (f64):f64
-            ast::InstructionType::F64Abs
-            | ast::InstructionType::F64Neg
-            | ast::InstructionType::F64Sqrt
-            | ast::InstructionType::F64Ceil
-            | ast::InstructionType::F64Floor
-            | ast::InstructionType::F64Trunc
-            | ast::InstructionType::F64Nearest => {
-                self.sig_unary(MaybeValue::Val(F64_VALUE), MaybeValue::Val(F64_VALUE))
+            F64Abs | F64Neg | F64Sqrt | F64Ceil | F64Floor | F64Trunc | F64Nearest => {
+                self.sig_unary(Val(F64_VALUE), Val(F64_VALUE))
             }
 
             // fbinop (f64,f64):f64
-            ast::InstructionType::F64Add
-            | ast::InstructionType::F64Sub
-            | ast::InstructionType::F64Mul
-            | ast::InstructionType::F64Div
-            | ast::InstructionType::F64Min
-            | ast::InstructionType::F64Max
-            | ast::InstructionType::F64Copysign => self.sig_binary(
-                MaybeValue::Val(F64_VALUE),
-                MaybeValue::Val(F64_VALUE),
-                MaybeValue::Val(F64_VALUE),
-            ),
+            F64Add | F64Sub | F64Mul | F64Div | F64Min | F64Max | F64Copysign => {
+                self.sig_binary(Val(F64_VALUE), Val(F64_VALUE), Val(F64_VALUE))
+            }
 
             // frelop (f64,f64):i32
-            ast::InstructionType::F64Eq
-            | ast::InstructionType::F64Ne
-            | ast::InstructionType::F64Lt
-            | ast::InstructionType::F64Gt
-            | ast::InstructionType::F64Le
-            | ast::InstructionType::F64Ge => self.sig_binary(
-                MaybeValue::Val(F64_VALUE),
-                MaybeValue::Val(F64_VALUE),
-                MaybeValue::Val(I32_VALUE),
-            ),
+            F64Eq | F64Ne | F64Lt | F64Gt | F64Le | F64Ge => {
+                self.sig_binary(Val(F64_VALUE), Val(F64_VALUE), Val(I32_VALUE))
+            }
 
             // cvtop (f32):f64
-            ast::InstructionType::F64PromoteF32 => {
-                self.sig_unary(MaybeValue::Val(F32_VALUE), MaybeValue::Val(F64_VALUE))
-            }
+            F64PromoteF32 => self.sig_unary(Val(F32_VALUE), Val(F64_VALUE)),
 
             // cvtop (i32):f64
-            ast::InstructionType::F64ConvertI32S | ast::InstructionType::F64ConvertI32U => {
-                self.sig_unary(MaybeValue::Val(I32_VALUE), MaybeValue::Val(F64_VALUE))
-            }
+            F64ConvertI32S | F64ConvertI32U => self.sig_unary(Val(I32_VALUE), Val(F64_VALUE)),
 
             // cvtop (i64):f64
-            ast::InstructionType::F64ConvertI64S
-            | ast::InstructionType::F64ConvertI64U
-            | ast::InstructionType::F64ReinterpretI64 => {
-                self.sig_unary(MaybeValue::Val(I64_VALUE), MaybeValue::Val(F64_VALUE))
+            F64ConvertI64S | F64ConvertI64U | F64ReinterpretI64 => {
+                self.sig_unary(Val(I64_VALUE), Val(F64_VALUE))
             }
 
-            ast::InstructionType::LocalGet => {
-                if let ast::InstructionData::LocalInstruction { local_index: li } = *inst.get_data()
-                {
-                    self.ftype
-                        .parameters
-                        .get(li as usize)
-                        .map(|v| self.push_val(MaybeValue::Val(*v)));
+            LocalGet => {
+                if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
+                    let local = self.local(li)?.clone();
+                    self.push_val(Val(local));
                     Ok(())
                 } else {
-                    println!("validate: LocalGet: invalid data");
                     Err("invalid instruction")
                 }
             }
 
-            ast::InstructionType::Block | ast::InstructionType::Loop | ast::InstructionType::If => {
+            LocalSet => {
+                if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
+                    let local = self.local(li)?.clone();
+                    self.pop_expected(Val(local));
+                    Ok(())
+                } else {
+                    Err("invalid instruction")
+                }
+            }
+
+            Block | Loop | If => {
                 // special case for If we need to pop an i32
-                if inst.get_type() == &ast::InstructionType::If {
-                    self.pop_expected(MaybeValue::Val(super::module::ValueType::I32))
-                        .ok_or("type mismatch")?;
+                if inst.get_type() == &If {
+                    self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 }
 
-                if let ast::InstructionData::BlockInstruction { blocktype: bt } = *inst.get_data() {
+                if let InstructionData::BlockInstruction { blocktype: bt } = *inst.get_data() {
+                    let mut start_types = Vec::new();
                     let mut end_types = Vec::new();
                     match bt {
                         // simple []->[type] version
-                        ast::BlockType::Type(t) => {
-                            end_types.push(MaybeValue::Val(t));
+                        BlockType::Type(t) => {
+                            end_types.push(Val(t));
+                            Ok(())
                         }
-                        ast::BlockType::Empty => {}
-                        // TODO: TypeIndex form with start_types too
-                        ast::BlockType::TypeIndex(_) => {}
-                    }
-                    self.push_ctrl(*inst.get_type(), Vec::new(), end_types);
+                        BlockType::Empty => Ok(()),
+                        // complex [type*]->[type*] version
+                        BlockType::TypeIndex(ti) => {
+                            let ftype = self.types.get(ti as u8).ok_or("unknown block type")?;
+                            ftype.parameters.iter().try_for_each(|v| {
+                                start_types.push(Val(*v));
+                                match self.pop_expected(Val(*v)) {
+                                    Some(_) => Ok(()),
+                                    None => Err("type mismatch"),
+                                }
+                            })?;
+                            ftype.return_types.iter().for_each(|v| {
+                                end_types.push(Val(*v));
+                            });
+                            Ok(())
+                        }
+                    }?;
+                    self.push_ctrl(*inst.get_type(), start_types, end_types);
                     Ok(())
                 } else {
-                    println!("validate: Block: invalid data");
                     Err("invalid instruction")
                 }
             }
 
-            ast::InstructionType::Else => {
+            Else => {
                 let ctrl = self.pop_ctrl()?;
-                if ctrl.instruction != ast::InstructionType::If {
-                    println!("validate: Else: invalid instruction");
+                if ctrl.instruction != If {
                     Err("invalid instruction")
                 } else {
-                    let mut end_types = Vec::new();
-                    for t in ctrl.start_types {
-                        end_types.push(t);
-                    }
-                    self.push_ctrl(ast::InstructionType::Else, Vec::new(), end_types);
+                    self.push_ctrl(Else, ctrl.start_types, ctrl.end_types);
                     Ok(())
                 }
             }
 
-            ast::InstructionType::End => {
+            End => {
                 let ctrl = self.pop_ctrl()?;
-                if ctrl.end_types.len() != 0 {
-                    self.push_vals(ctrl.end_types).ok_or("type mismatch")
+                self.push_vals(ctrl.end_types).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            Return | Br | BrIf => {
+                let li: u32 = if let InstructionData::LabelledInstruction { label_index: li } =
+                    *inst.get_data()
+                {
+                    li
                 } else {
-                    Ok(())
+                    // Return
+                    self.ctrls.len() as u32 - 1
+                };
+
+                if inst.get_type() == &BrIf {
+                    self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                }
+
+                if self.ctrls.len() < li as usize {
+                    Err("invalid instruction")
+                } else {
+                    let label_types = self.label_types_at(li)?;
+                    self.pop_expecteds(label_types.clone())
+                        .ok_or("type mismatch")?;
+                    match inst.get_type() {
+                        &Return | &Br => {
+                            self.unreachable().ok_or("type mismatch")?;
+                            Ok(())
+                        }
+                        &BrIf => {
+                            self.push_vals(label_types).ok_or("type mismatch")?;
+                            Ok(())
+                        }
+                        _ => Err("invalid instruction"),
+                    }
                 }
             }
 
-            ast::InstructionType::Drop => {
+            BrTable => {
+                if let InstructionData::TableLabelledInstruction {
+                    ref labels,
+                    label_index: li,
+                } = *inst.get_data()
+                {
+                    self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                    if self.ctrls.len() < li as usize {
+                        return Err("invalid instruction");
+                    }
+                    let label_types = self.label_types_at(li)?;
+                    let arity = label_types.len();
+                    labels.iter().try_for_each(|&li| {
+                        if self.ctrls.len() < li as usize {
+                            Err("invalid instruction")
+                        } else {
+                            let label_types = self.label_types_at(li)?;
+                            if label_types.len() != arity {
+                                Err("invalid instruction")
+                            } else {
+                                let popped = self.pop_expecteds(label_types.clone());
+                                if popped.is_none() {
+                                    Err("invalid instruction")
+                                } else {
+                                    self.push_vals(label_types).ok_or("type mismatch")?;
+                                    Ok(())
+                                }
+                            }
+                        }
+                    })?;
+                    self.pop_expecteds(label_types).ok_or("type mismatch")?;
+                    self.unreachable().ok_or("type mismatch")?;
+                    Ok(())
+                } else {
+                    Err("invalid instruction")
+                }
+            }
+
+            Drop => {
                 self.pop_val().ok_or("type mismatch")?;
                 Ok(())
             }

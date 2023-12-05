@@ -722,7 +722,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     let mut bytes = vec![0x02];
                     if let InstructionData::BlockInstruction { blocktype } = &data {
                         let mut block_bytes = blocktype.emit_bytes();
@@ -732,11 +732,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|_: &InstructionData| {
-                    String::from("block") // TODO:
+                Arc::new(|data| {
+                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                        if blocktype == &BlockType::Empty {
+                            "block".to_string()
+                        } else {
+                            format!("block {}", blocktype)
+                        }
+                    } else {
+                        panic!("expected block instruction");
+                    }
                 }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::Loop,
                 0x03,
                 0,
@@ -748,8 +756,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x03];
+                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                        let mut block_bytes = blocktype.emit_bytes();
+                        bytes.append(&mut block_bytes);
+                    } else {
+                        panic!("expected block instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                        format!("loop {}", blocktype)
+                    } else {
+                        panic!("expected block instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::If,
                 0x04,
                 0,
@@ -761,9 +786,26 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x04];
+                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                        let mut block_bytes = blocktype.emit_bytes();
+                        bytes.append(&mut block_bytes);
+                    } else {
+                        panic!("expected block instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                        format!("if {}", blocktype)
+                    } else {
+                        panic!("expected block instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_simple(InstructionType::Else, 0x05, 0, "else"),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::Br,
                 0x0c,
                 0,
@@ -775,8 +817,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x0c];
+                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                        let mut label_bytes = reader::emit_vu32(*label_index);
+                        bytes.append(&mut label_bytes);
+                    } else {
+                        panic!("expected labelled instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                        format!("br {}", label_index)
+                    } else {
+                        panic!("expected labelled instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::BrIf,
                 0x0d,
                 0,
@@ -788,8 +847,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x0d];
+                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                        let mut label_bytes = reader::emit_vu32(*label_index);
+                        bytes.append(&mut label_bytes);
+                    } else {
+                        panic!("expected labelled instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                        format!("br_if {}", label_index)
+                    } else {
+                        panic!("expected labelled instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::BrTable,
                 0x0e,
                 0,
@@ -802,6 +878,37 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x0e];
+                    if let InstructionData::TableLabelledInstruction {
+                        labels,
+                        label_index,
+                    } = &data
+                    {
+                        let mut labels_bytes = emit_vu32vec(labels);
+                        bytes.append(&mut labels_bytes);
+                        let mut label_bytes = reader::emit_vu32(*label_index);
+                        bytes.append(&mut label_bytes);
+                    } else {
+                        panic!("expected table labelled instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::TableLabelledInstruction {
+                        labels,
+                        label_index,
+                    } = &data
+                    {
+                        let mut labels_str = String::new();
+                        for label in labels {
+                            labels_str.push_str(&format!(" {}", label));
+                        }
+                        format!("br_table{} {}", labels_str, label_index)
+                    } else {
+                        panic!("expected table labelled instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_simple(InstructionType::Return, 0x0f, 0, "return"),
             InstructionCoding::new_with_parse(
@@ -888,7 +995,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     let mut bytes = vec![0x20];
                     if let InstructionData::LocalInstruction { local_index } = &data {
                         let mut local_bytes = reader::emit_vu32(*local_index);
@@ -898,7 +1005,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     if let InstructionData::LocalInstruction { local_index } = &data {
                         format!("local.get {}", local_index)
                     } else {
@@ -906,7 +1013,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                 }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::LocalSet,
                 0x21,
                 0,
@@ -918,6 +1025,23 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x21];
+                    if let InstructionData::LocalInstruction { local_index } = &data {
+                        let mut local_bytes = reader::emit_vu32(*local_index);
+                        bytes.append(&mut local_bytes);
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::LocalInstruction { local_index } = &data {
+                        format!("local.set {}", local_index)
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_with_parse(
                 InstructionType::LocalTee,
@@ -1430,7 +1554,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     let mut bytes = vec![0x41];
                     if let InstructionData::I32Instruction { value } = &data {
                         let mut u32_bytes = reader::emit_vs32(*value as i32);
@@ -1440,7 +1564,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     if let InstructionData::I32Instruction { value } = &data {
                         format!("i32.const {}", value)
                     } else {
@@ -1460,7 +1584,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     let mut bytes = vec![0x42];
                     if let InstructionData::I64Instruction { value } = &data {
                         let mut u64_bytes = reader::emit_vs64(*value as i64);
@@ -1470,7 +1594,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     if let InstructionData::I64Instruction { value } = &data {
                         format!("i64.const {}", value)
                     } else {
@@ -1490,7 +1614,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     let mut bytes = vec![0x43];
                     if let InstructionData::F32Instruction { value } = &data {
                         let mut f32_bytes = reader::emit_f32(*value);
@@ -1500,7 +1624,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     if let InstructionData::F32Instruction { value } = &data {
                         format!("f32.const {}", value.to_hex())
                     } else {
@@ -1520,7 +1644,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     let mut bytes = vec![0x44];
                     if let InstructionData::F64Instruction { value } = &data {
                         let mut f64_bytes = reader::emit_f64(*value);
@@ -1530,7 +1654,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data: &InstructionData| {
+                Arc::new(|data| {
                     if let InstructionData::F64Instruction { value } = &data {
                         format!("f64.const {}", value.to_hex())
                     } else {
@@ -2874,7 +2998,26 @@ pub fn get_codings_by_type() -> &'static HashMap<InstructionType, InstructionCod
 
 struct InstructionIterator<'a> {
     bytes: &'a mut super::reader::Reader,
+    parse_type: ParseType,
     ended: bool,
+}
+
+enum ParseType {
+    ReadAll,
+    ReadTillEnd,
+}
+
+impl InstructionIterator<'_> {
+    fn new<'a>(
+        bytes: &'a mut super::reader::Reader,
+        parse_type: ParseType,
+    ) -> InstructionIterator<'a> {
+        InstructionIterator {
+            bytes,
+            parse_type,
+            ended: false,
+        }
+    }
 }
 
 impl<'a> Iterator for InstructionIterator<'a> {
@@ -2885,16 +3028,21 @@ impl<'a> Iterator for InstructionIterator<'a> {
             return None;
         }
 
+        let pos = self.bytes.pos();
         match self.bytes.read_byte() {
             Ok(opcode) => match get_codings_by_opcode().get(&opcode) {
                 Some(block_coding) => {
                     let instruction = (block_coding.to_owned().parse_bytes)(&mut self.bytes);
                     match instruction {
                         Ok(data) => {
-                            println!("opcode: {} '{}'", opcode, block_coding.name);
-                            if let InstructionType::End = block_coding.typ {
-                                self.ended = true;
-                            }
+                            println!("opcode: {} '{}' @ {:x}", opcode, block_coding.name, pos);
+                            self.ended = !self.bytes.has_at_least(1)
+                                || match self.parse_type {
+                                    ParseType::ReadAll => false,
+                                    ParseType::ReadTillEnd => {
+                                        block_coding.typ == InstructionType::End
+                                    }
+                                };
                             Some(Ok(Instruction {
                                 typ: block_coding.typ,
                                 data: data,
@@ -2917,28 +3065,41 @@ impl<'a> Iterator for InstructionIterator<'a> {
 }
 
 impl Instruction {
-    // TODO: need locals too so we can pick up local loads beyond function params, globals too for the same reason
-    // TODO: implement an option for constant expressions, restricting the instructions allowable (*.const, ref.null, ref.func, global.get [for const globals])
     pub fn decode_expression(
+        bytes: &mut super::reader::Reader,
+    ) -> Result<Vec<Instruction>, io::Error> {
+        let types = &super::module::TypeSection::new();
+        let locals = &vec![];
+        let ftype = &super::module::FunctionType {
+            // TODO: confirm this is the right signature for these: [0,n]=>[x]
+            parameters: vec![super::module::ValueType::I32, super::module::ValueType::I32],
+            return_types: vec![super::module::ValueType::I32],
+        };
+
+        let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadTillEnd);
+        let mut instructions: Vec<Instruction> = vec![];
+        let mut validator = super::validate::Validator::new(&types, &locals, ftype);
+        for result in instruction_iter {
+            let instruction = result?;
+            validator
+                .validate(&instruction)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            instructions.push(instruction);
+        }
+        Ok(instructions)
+    }
+
+    pub fn decode_function(
+        types: &super::module::TypeSection,
+        locals: &Vec<super::module::ValueType>,
         ftype: &super::module::FunctionType,
         bytes: &mut super::reader::Reader,
     ) -> Result<Vec<Instruction>, io::Error> {
-        let instruction_iter = InstructionIterator {
-            bytes: bytes,
-            ended: false,
-        };
+        let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadAll);
         let mut instructions: Vec<Instruction> = vec![];
-        let mut validator = super::validate::Validator::new(ftype);
+        let mut validator = super::validate::Validator::new(&types, &locals, ftype);
         for result in instruction_iter {
             let instruction = result?;
-            /*
-            match validator.validate(&instruction) {
-                Ok(_) => {}
-                Err(e) => {
-                    println!("validation error: {}", e);
-                }
-            }
-            */
             validator
                 .validate(&instruction)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -2996,6 +3157,16 @@ impl BlockType {
     }
 }
 
+impl fmt::Display for BlockType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BlockType::Empty => write!(f, ""),
+            BlockType::Type(value_type) => write!(f, "{}", value_type),
+            BlockType::TypeIndex(type_index) => write!(f, "type {}", type_index),
+        }
+    }
+}
+
 fn consume_vu32vec(bytes: &mut super::reader::Reader) -> Result<Vec<u32>, io::Error> {
     let len: u64 = bytes.read_vu64()?;
     let mut vec: Vec<u32> = vec![];
@@ -3003,4 +3174,12 @@ fn consume_vu32vec(bytes: &mut super::reader::Reader) -> Result<Vec<u32>, io::Er
         vec.push(bytes.read_vu32()?);
     }
     Ok(vec)
+}
+
+fn emit_vu32vec(vec: &Vec<u32>) -> Vec<u8> {
+    let mut bytes: Vec<u8> = super::reader::emit_vu64(vec.len() as u64);
+    for value in vec {
+        bytes.extend(super::reader::emit_vu32(*value));
+    }
+    bytes
 }
