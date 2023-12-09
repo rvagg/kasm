@@ -326,22 +326,13 @@ fn read_section_code(
         let body = bytes.read_bytes(size - (lpos - spos))?;
         let mut reader = reader::Reader::new(body.clone());
 
-        let ftype = match functions
-            .get(code.len() as u8)
-            .and_then(|f| types.get(f.ftype_index))
-        {
-            Some(ftype) => ftype,
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "error looking up function type for function #{}",
-                    code.len()
-                ),
-            ))?,
-        };
-
-        let instructions: Vec<ast::Instruction> =
-            self::ast::Instruction::decode_function(&types, &locals, &ftype, &mut reader)?;
+        let instructions: Vec<ast::Instruction> = self::ast::Instruction::decode_function(
+            &types,
+            &functions,
+            &locals,
+            code.len() as u32,
+            &mut reader,
+        )?;
         let function_body = module::FunctionBody {
             locals: locals,
             // body: body,

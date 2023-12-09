@@ -3076,17 +3076,22 @@ impl Instruction {
     pub fn decode_expression(
         bytes: &mut super::reader::Reader,
     ) -> Result<Vec<Instruction>, io::Error> {
-        let types = &super::module::TypeSection::new();
+        let mut types = super::module::TypeSection::new();
+        let mut functions = super::module::FunctionSection::new();
         let locals = &vec![];
-        let ftype = &super::module::FunctionType {
+        let ftype = super::module::FunctionType {
             // TODO: confirm this is the right signature for these: [0,n]=>[x]
             parameters: vec![super::module::ValueType::I32, super::module::ValueType::I32],
             return_types: vec![super::module::ValueType::I32],
         };
+        types.types.push(ftype);
+        functions
+            .functions
+            .push(super::module::Function { ftype_index: 0 });
 
         let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadTillEnd);
         let mut instructions: Vec<Instruction> = vec![];
-        let mut validator = super::validate::Validator::new(&types, &locals, ftype);
+        let mut validator = super::validate::Validator::new(&types, &functions, &locals, 0);
         for result in instruction_iter {
             let instruction = result?;
             validator
@@ -3099,13 +3104,15 @@ impl Instruction {
 
     pub fn decode_function(
         types: &super::module::TypeSection,
+        functions: &super::module::FunctionSection,
         locals: &Vec<super::module::ValueType>,
-        ftype: &super::module::FunctionType,
+        function_index: u32,
         bytes: &mut super::reader::Reader,
     ) -> Result<Vec<Instruction>, io::Error> {
         let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadAll);
         let mut instructions: Vec<Instruction> = vec![];
-        let mut validator = super::validate::Validator::new(&types, &locals, ftype);
+        let mut validator =
+            super::validate::Validator::new(&types, &functions, &locals, function_index);
         for result in instruction_iter {
             let instruction = result?;
             validator

@@ -1,5 +1,4 @@
-use super::module::ValueType;
-use super::module::ValueType::*;
+use super::module::{FunctionType, ValueType, ValueType::*};
 use crate::parser::ast;
 use ast::InstructionType::*;
 use ast::{BlockType, Instruction, InstructionData, InstructionType};
@@ -13,23 +12,23 @@ enum MaybeValue {
 
 #[allow(dead_code)]
 impl MaybeValue {
-    fn is_num(self) -> bool {
+    fn is_num(&self) -> bool {
         match self {
-            Val(v) => v == I32 || v == I64 || v == F32 || v == F64,
+            Val(v) => *v == I32 || *v == I64 || *v == F32 || *v == F64,
             Unknown => true,
         }
     }
 
-    fn is_vec(self) -> bool {
+    fn is_vec(&self) -> bool {
         match self {
-            Val(v) => v == V128,
+            Val(v) => *v == V128,
             Unknown => true,
         }
     }
 
-    fn is_ref(self) -> bool {
+    fn is_ref(&self) -> bool {
         match self {
-            Val(v) => v == FuncRef || v == ExternRef,
+            Val(v) => *v == FuncRef || *v == ExternRef,
             Unknown => true,
         }
     }
@@ -53,25 +52,44 @@ struct CtrlFrame {
 
 pub struct Validator<'a> {
     types: &'a super::module::TypeSection,
-    params: &'a Vec<ValueType>,
+    functions: &'a super::module::FunctionSection,
+    params: Vec<ValueType>,
     locals: &'a Vec<ValueType>,
     vals: Vec<MaybeValue>,
     ctrls: Vec<CtrlFrame>,
 }
 
+fn function_type<'a>(
+    types: &'a super::module::TypeSection,
+    functions: &'a super::module::FunctionSection,
+    fi: u32,
+) -> Result<&'a super::module::FunctionType, &'static str> {
+    let ftype = functions
+        .get(fi as u8)
+        .and_then(|f| types.get(f.ftype_index))
+        .ok_or("unknown function type")?;
+    Ok(ftype)
+}
+
 impl<'a> Validator<'a> {
     pub fn new<'b>(
         types: &'b super::module::TypeSection,
+        functions: &'b super::module::FunctionSection,
         locals: &'b Vec<ValueType>,
-        ftype: &'b super::module::FunctionType,
+        function_index: u32,
     ) -> Validator<'b> {
+        // TODO: should we Result<> this?
+        let ftype = function_type(types, functions, function_index).unwrap();
+
         let mut v = Validator {
             types,
-            params: &ftype.parameters,
+            functions,
+            params: ftype.parameters.clone(),
             locals,
             vals: vec![],
             ctrls: vec![],
         };
+
         let start_types = ftype.parameters.iter().map(|v| Val(*v)).collect();
         let end_types = ftype.return_types.iter().map(|v| Val(*v)).collect();
         v.push_ctrl(Block, start_types, end_types);
@@ -211,6 +229,10 @@ impl<'a> Validator<'a> {
         let index = self.ctrls.len() - li as usize - 1;
         let frame = self.ctrls.get(index).ok_or("invalid label index")?.clone();
         Ok(self.frame_types(frame))
+    }
+
+    fn function_type(&mut self, fi: u32) -> Result<&FunctionType, &'static str> {
+        return function_type(self.types, self.functions, fi);
     }
 
     pub fn validate(&mut self, inst: &Instruction) -> Result<(), &'static str> {
@@ -361,6 +383,17 @@ impl<'a> Validator<'a> {
                 }
             }
 
+            LocalTee => {
+                if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
+                    let local = self.local(li)?.clone();
+                    self.pop_expected(Val(local)).ok_or("type mismatch")?;
+                    self.push_val(Val(local)).ok_or("type mismatch")?;
+                    Ok(())
+                } else {
+                    Err("invalid instruction")
+                }
+            }
+
             Block | Loop | If => {
                 // special case for If we need to pop an i32
                 if inst.get_type() == &If {
@@ -485,6 +518,65 @@ impl<'a> Validator<'a> {
                     Ok(())
                 } else {
                     Err("invalid instruction")
+                }
+            }
+
+            Call => {
+                if let InstructionData::FunctionInstruction { function_index: fi } =
+                    *inst.get_data()
+                {
+                    let ftype: &FunctionType = self.function_type(fi)?;
+                    let parameters: Vec<_> = ftype.parameters.iter().cloned().collect();
+                    let return_types: Vec<_> = ftype.return_types.iter().cloned().collect();
+
+                    parameters
+                        .iter()
+                        .try_for_each(|v| match self.pop_expected(Val(*v)) {
+                            Some(_) => Ok(()),
+                            None => Err("type mismatch"),
+                        })?;
+                    return_types
+                        .iter()
+                        .try_for_each(|v| match self.push_val(Val(*v)) {
+                            Some(_) => Ok(()),
+                            None => Err("type mismatch"),
+                        })?;
+                    Ok(())
+                } else {
+                    Err("invalid instruction")
+                }
+            }
+
+            CallIndirect => {
+                if let InstructionData::IndirectInstruction {
+                    type_index: ti,
+                    table_index: tabi,
+                } = *inst.get_data()
+                {
+                    // TODO: need a TableSection!
+                } else {
+                    Err("invalid instruction")
+                }
+            }
+
+            Select => {
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                let t1 = self.pop_val().ok_or("type mismatch")?.clone();
+                let t2 = self.pop_val().ok_or("type mismatch")?.clone();
+                if (t1.is_num() && t2.is_num()) || (t1.is_vec() && t2.is_vec()) {
+                    if t1 != t2 && t1 != Unknown && t2 != Unknown {
+                        Err("type mismatch")
+                    } else {
+                        self.push_val(if t1 == Unknown {
+                            t2.clone()
+                        } else {
+                            t1.clone()
+                        })
+                        .ok_or("type mismatch")?;
+                        Ok(())
+                    }
+                } else {
+                    Err("type mismatch")
                 }
             }
 
