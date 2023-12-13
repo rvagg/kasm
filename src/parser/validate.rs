@@ -1,4 +1,4 @@
-use super::module::{FunctionType, ValueType, ValueType::*};
+use super::module::{FunctionType, GlobalType, ValueType, ValueType::*};
 use crate::parser::ast;
 use ast::InstructionType::*;
 use ast::{BlockType, Instruction, InstructionData, InstructionType};
@@ -55,6 +55,7 @@ pub struct Validator<'a> {
     functions: &'a super::module::FunctionSection,
     params: Vec<ValueType>,
     locals: &'a Vec<ValueType>,
+    globals: &'a Vec<GlobalType>,
     vals: Vec<MaybeValue>,
     ctrls: Vec<CtrlFrame>,
 }
@@ -76,6 +77,7 @@ impl<'a> Validator<'a> {
         types: &'b super::module::TypeSection,
         functions: &'b super::module::FunctionSection,
         locals: &'b Vec<ValueType>,
+        globals: &'b Vec<GlobalType>,
         function_index: u32,
     ) -> Validator<'b> {
         // TODO: should we Result<> this?
@@ -86,6 +88,7 @@ impl<'a> Validator<'a> {
             functions,
             params: ftype.parameters.clone(),
             locals,
+            globals,
             vals: vec![],
             ctrls: vec![],
         };
@@ -223,6 +226,12 @@ impl<'a> Validator<'a> {
         };
 
         local.ok_or("unknown local")
+    }
+
+    fn global(&mut self, global_index: u32) -> Result<&GlobalType, &'static str> {
+        self.globals
+            .get(global_index as usize)
+            .ok_or("unknown local")
     }
 
     fn label_types_at(&mut self, li: u32) -> Result<Vec<MaybeValue>, &'static str> {
@@ -394,6 +403,38 @@ impl<'a> Validator<'a> {
                 }
             }
 
+            GlobalSet => {
+                if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
+                    let global = self.global(gi)?.clone();
+                    self.pop_expected(Val(global.value_type))
+                        .ok_or("type mismatch")?;
+                    Ok(())
+                } else {
+                    Err("invalid instruction")
+                }
+            }
+
+            I32Load | I32Load8S | I32Load8U | I32Load16S | I32Load16U => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                self.push_val(Val(I32)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            I32Store | I32Store8 | I32Store16 => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            MemoryGrow => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                self.push_val(Val(I32)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
             Block | Loop | If => {
                 // special case for If we need to pop an i32
                 if inst.get_type() == &If {
@@ -550,10 +591,32 @@ impl<'a> Validator<'a> {
             CallIndirect => {
                 if let InstructionData::IndirectInstruction {
                     type_index: ti,
-                    table_index: tabi,
+                    table_index: _,
                 } = *inst.get_data()
                 {
-                    // TODO: need a TableSection!
+                    // TOOD: this probably should check that table_index exists in the table space
+
+                    // operand that directs us to the table entry
+                    self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+
+                    // table entry must have this function signature
+                    let ftype = self.types.get(ti as u8).ok_or("unknown function type")?;
+                    let parameters: Vec<_> = ftype.parameters.iter().cloned().collect();
+                    let return_types: Vec<_> = ftype.return_types.iter().cloned().collect();
+
+                    parameters
+                        .iter()
+                        .try_for_each(|v| match self.pop_expected(Val(*v)) {
+                            Some(_) => Ok(()),
+                            None => Err("type mismatch"),
+                        })?;
+                    return_types
+                        .iter()
+                        .try_for_each(|v| match self.push_val(Val(*v)) {
+                            Some(_) => Ok(()),
+                            None => Err("type mismatch"),
+                        })?;
+                    Ok(())
                 } else {
                     Err("invalid instruction")
                 }

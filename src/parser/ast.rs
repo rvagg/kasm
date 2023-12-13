@@ -1051,7 +1051,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                 }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::LocalTee,
                 0x22,
                 0,
@@ -1063,6 +1063,23 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x22];
+                    if let InstructionData::LocalInstruction { local_index } = &data {
+                        let mut local_bytes = reader::emit_vu32(*local_index);
+                        bytes.append(&mut local_bytes);
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::LocalInstruction { local_index } = &data {
+                        format!("local.tee {}", local_index)
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_with_parse(
                 InstructionType::GlobalGet,
@@ -1254,7 +1271,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I32Load8S,
                 0x2c,
                 0,
-                "i32.load8s",
+                "i32.load8_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1267,7 +1284,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I32Load8U,
                 0x2d,
                 0,
-                "i32.load8u",
+                "i32.load8_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1280,7 +1297,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I32Load16S,
                 0x2e,
                 0,
-                "i32.load16s",
+                "i32.load16_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1293,7 +1310,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I32Load16U,
                 0x2f,
                 0,
-                "i32.load16u",
+                "i32.load16_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1306,7 +1323,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I64Load8S,
                 0x30,
                 0,
-                "i64.load8s",
+                "i64.load8_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1319,7 +1336,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I64Load8U,
                 0x31,
                 0,
-                "i64.load8u",
+                "i64.load8_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1332,7 +1349,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I64Load16S,
                 0x32,
                 0,
-                "i64.load16s",
+                "i64.load16_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1345,7 +1362,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I64Load16U,
                 0x33,
                 0,
-                "i64.load16u",
+                "i64.load16_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1358,7 +1375,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I64Load32S,
                 0x34,
                 0,
-                "i64.load32s",
+                "i64.load32_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1371,7 +1388,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I64Load32U,
                 0x35,
                 0,
-                "i64.load32u",
+                "i64.load32_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::MemoryInstruction {
@@ -1497,8 +1514,40 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_simple(InstructionType::MemorySize, 0x3f, 0, "memory.size"),
-            InstructionCoding::new_simple(InstructionType::MemoryGrow, 0x40, 0, "memory.grow"),
+            InstructionCoding::new_with_parse(
+                InstructionType::MemorySize,
+                0x3f,
+                0,
+                "memory.size",
+                Arc::new(
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
+                        if bytes.read_byte()? != 0x0 {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "expected 0x0 for memory.size",
+                            ));
+                        }
+                        Ok(InstructionData::SimpleInstruction.clone())
+                    },
+                ),
+            ),
+            InstructionCoding::new_with_parse(
+                InstructionType::MemoryGrow,
+                0x40,
+                0,
+                "memory.grow",
+                Arc::new(
+                    |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
+                        if bytes.read_byte()? != 0x0 {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "expected 0x0 for memory.grow",
+                            ));
+                        }
+                        Ok(InstructionData::SimpleInstruction.clone())
+                    },
+                ),
+            ),
             InstructionCoding::new_with_parse(
                 InstructionType::MemoryInit,
                 0xfc,
@@ -1506,15 +1555,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "memory.init",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
+                        let data_index = bytes.read_vu32()?;
                         if bytes.read_byte()? != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
-                                "expected 0x0 for memory init",
+                                "expected 0x0 for memory.init",
                             ));
                         }
-                        Ok(InstructionData::DataInstruction {
-                            data_index: bytes.read_vu32()?,
-                        })
+                        Ok(InstructionData::DataInstruction { data_index })
                     },
                 ),
             ),
@@ -3079,6 +3127,7 @@ impl Instruction {
         let mut types = super::module::TypeSection::new();
         let mut functions = super::module::FunctionSection::new();
         let locals = &vec![];
+        let globals = &vec![];
         let ftype = super::module::FunctionType {
             // TODO: confirm this is the right signature for these: [0,n]=>[x]
             parameters: vec![super::module::ValueType::I32, super::module::ValueType::I32],
@@ -3091,7 +3140,8 @@ impl Instruction {
 
         let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadTillEnd);
         let mut instructions: Vec<Instruction> = vec![];
-        let mut validator = super::validate::Validator::new(&types, &functions, &locals, 0);
+        let mut validator =
+            super::validate::Validator::new(&types, &functions, &locals, &globals, 0);
         for result in instruction_iter {
             let instruction = result?;
             validator
@@ -3106,13 +3156,14 @@ impl Instruction {
         types: &super::module::TypeSection,
         functions: &super::module::FunctionSection,
         locals: &Vec<super::module::ValueType>,
+        globals: &Vec<super::module::GlobalType>,
         function_index: u32,
         bytes: &mut super::reader::Reader,
     ) -> Result<Vec<Instruction>, io::Error> {
         let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadAll);
         let mut instructions: Vec<Instruction> = vec![];
         let mut validator =
-            super::validate::Validator::new(&types, &functions, &locals, function_index);
+            super::validate::Validator::new(&types, &functions, &locals, &globals, function_index);
         for result in instruction_iter {
             let instruction = result?;
             validator

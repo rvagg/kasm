@@ -113,7 +113,13 @@ fn read_sections(
             &mut unit.elements as &mut dyn module::Positional
         }
         10 => {
-            read_section_code(bytes, &mut unit.code, &unit.types, &unit.functions)?;
+            read_section_code(
+                bytes,
+                &mut unit.code,
+                &unit.types,
+                &unit.functions,
+                &unit.globals,
+            )?;
             &mut unit.code as &mut dyn module::Positional
         }
         11 => {
@@ -152,9 +158,9 @@ fn read_header(
 
 /* SECTION READERS ************************************************/
 
-fn read_result_types(bytes: &mut reader::Reader) -> Result<Vec<module::ValueType>, io::Error> {
+fn read_value_types_list(bytes: &mut reader::Reader) -> Result<Vec<module::ValueType>, io::Error> {
     let mut rt: Vec<module::ValueType> = vec![];
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
     for _ in 0..count {
         let value = module::ValueType::decode(bytes.read_byte()?)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -167,7 +173,7 @@ fn read_section_type(
     bytes: &mut reader::Reader,
     types: &mut module::TypeSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for ii in 0..count {
         let byt = bytes.read_byte()?;
@@ -180,8 +186,8 @@ fn read_section_type(
                 ),
             ));
         }
-        let parameters = read_result_types(bytes)?;
-        let return_types = read_result_types(bytes)?;
+        let parameters = read_value_types_list(bytes)?;
+        let return_types = read_value_types_list(bytes)?;
 
         types.push(module::FunctionType {
             parameters: parameters,
@@ -196,7 +202,7 @@ fn read_section_import(
     bytes: &mut reader::Reader,
     imports: &mut module::ImportSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let module = bytes.read_string()?;
@@ -230,7 +236,7 @@ fn read_section_function(
     functions: &mut module::FunctionSection,
     types: &module::TypeSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let ftype_index = bytes.read_byte()?;
@@ -257,7 +263,7 @@ fn read_section_memory(
     bytes: &mut reader::Reader,
     memory: &mut module::MemorySection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let limits = module::Limits::decode(bytes)?;
@@ -273,7 +279,7 @@ fn read_section_export(
     bytes: &mut reader::Reader,
     exports: &mut module::ExportSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let name = bytes.read_string()?;
@@ -294,9 +300,10 @@ fn read_section_code(
     code: &mut module::CodeSection,
     types: &module::TypeSection,
     functions: &module::FunctionSection,
+    globals: &module::GlobalSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
-    if count != functions.functions.len() as u64 {
+    let count = bytes.read_vu32()?;
+    if count != functions.functions.len() as u32 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
@@ -330,6 +337,11 @@ fn read_section_code(
             &types,
             &functions,
             &locals,
+            &globals
+                .globals
+                .iter()
+                .map(|g| g.global_type.clone())
+                .collect::<Vec<_>>(),
             code.len() as u32,
             &mut reader,
         )?;
@@ -388,7 +400,7 @@ fn read_section_data(
     bytes: &mut reader::Reader,
     datas: &mut module::DataSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let data = module::Data::decode(bytes)?;
@@ -450,7 +462,7 @@ fn read_section_global(
     bytes: &mut reader::Reader,
     globals: &mut module::GlobalSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let data = module::Global::decode(bytes)?;
@@ -511,7 +523,7 @@ fn read_section_table(
     bytes: &mut reader::Reader,
     table: &mut module::TableSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let table_type = module::TableType::decode(bytes)?;
@@ -601,6 +613,7 @@ impl module::Element {
             0 => {
                 // 0:u32 𝑒:expr 𝑦*:vec(funcidx) => {type funcref, init ((ref.func 𝑦) end)*, mode active {table 0, offset 𝑒}}
                 Ok(module::Element {
+                    flags: typ,
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
@@ -612,6 +625,7 @@ impl module::Element {
             1 => {
                 // 1:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode passive}
                 Ok(module::Element {
+                    flags: typ,
                     ref_type: read_element_kind(bytes)?,
                     mode: module::ElementMode::Passive,
                     init: read_func_index_init(bytes)?,
@@ -620,6 +634,7 @@ impl module::Element {
             2 => {
                 // 2:u32 𝑥:tableidx 𝑒:expr et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode active {table 𝑥, offset 𝑒}}
                 Ok(module::Element {
+                    flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
                         offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
@@ -631,6 +646,7 @@ impl module::Element {
             3 => {
                 // 3:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode declarative}
                 Ok(module::Element {
+                    flags: typ,
                     ref_type: read_element_kind(bytes)?,
                     mode: module::ElementMode::Declarative,
                     init: read_func_index_init(bytes)?,
@@ -639,6 +655,7 @@ impl module::Element {
             4 => {
                 // 4:u32 𝑒:expr el *:vec(expr) => {type funcref, init el *, mode active {table 0, offset 𝑒}}
                 Ok(module::Element {
+                    flags: typ,
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
@@ -650,6 +667,7 @@ impl module::Element {
             5 => {
                 // 5:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode passive}
                 Ok(module::Element {
+                    flags: typ,
                     ref_type: read_type(bytes)?,
                     mode: module::ElementMode::Passive,
                     init: read_init(bytes)?,
@@ -658,6 +676,7 @@ impl module::Element {
             6 => {
                 // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
                 Ok(module::Element {
+                    flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
                         offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
@@ -669,6 +688,7 @@ impl module::Element {
             7 => {
                 // 7:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode declarative}
                 Ok(module::Element {
+                    flags: typ,
                     ref_type: read_type(bytes)?,
                     mode: module::ElementMode::Declarative,
                     init: read_init(bytes)?,
@@ -686,7 +706,7 @@ fn read_section_elements(
     bytes: &mut reader::Reader,
     elements: &mut module::ElementSection,
 ) -> Result<(), io::Error> {
-    let count = bytes.read_vu64()?;
+    let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let element = module::Element::decode(bytes)?;

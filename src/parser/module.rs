@@ -282,6 +282,21 @@ impl TableSection {
     }
 }
 
+impl SectionToString for TableSection {
+    fn to_header_string(&self) -> String {
+        format!("{} count: {}", self.position.to_string(), self.table.len())
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Table[{}]:\n", self.table.len()));
+        for (i, table_type) in self.table.iter().enumerate() {
+            result.push_str(&format!(" - table[{}] {}\n", i, table_type));
+        }
+        result
+    }
+}
+
 #[derive(Debug)]
 pub struct MemorySection {
     pub memory: Vec<Memory>,
@@ -301,6 +316,24 @@ impl MemorySection {
     }
 }
 
+impl SectionToString for MemorySection {
+    fn to_header_string(&self) -> String {
+        format!("{} count: {}", self.position.to_string(), self.memory.len())
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Memory[{}]:\n", self.memory.len()));
+        for (i, memory) in self.memory.iter().enumerate() {
+            result.push_str(&format!(
+                " - memory[{}] pages: initial={}\n",
+                i, memory.memory_type.min
+            ));
+        }
+        result
+    }
+}
+
 #[derive(Debug)]
 pub struct GlobalSection {
     pub globals: Vec<Global>,
@@ -313,6 +346,31 @@ impl GlobalSection {
             globals: Vec::new(),
             position: SectionPosition::new(0, 0),
         }
+    }
+}
+
+impl SectionToString for GlobalSection {
+    fn to_header_string(&self) -> String {
+        format!(
+            "{} count: {}",
+            self.position.to_string(),
+            self.globals.len()
+        )
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Global[{}]:\n", self.globals.len()));
+        for (i, global) in self.globals.iter().enumerate() {
+            result.push_str(&format!(
+                " - global[{}] {} mutable={} - init i32=0\n",
+                i,
+                global.global_type.value_type,
+                if global.global_type.mutable { 1 } else { 0 },
+                // TODO: init expr, how to resolve?
+            ));
+        }
+        result
     }
 }
 
@@ -347,16 +405,16 @@ impl SectionToString for ExportSection {
     fn to_details_string(&self, _: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Export[{}]:\n", self.exports.len()));
-        for (i, export) in self.exports.iter().enumerate() {
-            let typ = match export.index {
-                ExportIndex::Function(_) => "func",
-                ExportIndex::Table(_) => "table",
-                ExportIndex::Memory(_) => "mem",
-                ExportIndex::Global(_) => "global",
+        for export in &self.exports {
+            let (typ, idx) = match export.index {
+                ExportIndex::Function(i) => ("func", i),
+                ExportIndex::Table(i) => ("table", i),
+                ExportIndex::Memory(i) => ("mem", i),
+                ExportIndex::Global(i) => ("global", i),
             };
             result.push_str(&format!(
                 " - {}[{}] <{}> -> \"{}\"\n",
-                typ, i, export.name, export.name
+                typ, idx, export.name, export.name
             ));
         }
         result
@@ -396,6 +454,219 @@ impl ElementSection {
         self.elements.push(element);
     }
 }
+
+impl SectionToString for ElementSection {
+    fn to_header_string(&self) -> String {
+        format!(
+            "{} count: {}",
+            self.position.to_string(),
+            self.elements.len()
+        )
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result: String = String::new();
+        result.push_str(&format!("Elem[{}]:\n", self.elements.len()));
+        for (i, element) in self.elements.iter().enumerate() {
+            result.push_str(&format!(
+                " - segment[{}] flags={} table={} count={} - init i32=0\n",
+                i,
+                element.flags,
+                match element.mode {
+                    ElementMode::Passive => 0,
+                    ElementMode::Declarative => 0,
+                    ElementMode::Active { table_index, .. } => table_index,
+                },
+                element.init.len(),
+            ));
+            element.init.iter().enumerate().for_each(|(i, _)| {
+                // TODO: probably not .. this is simplistic for now, more work to do, i.e. not even printing constant expressions yet
+                result.push_str(&format!(
+                    "  - elem[{}] = ref.{}:{}\n",
+                    i,
+                    match element.ref_type {
+                        RefType::FuncRef => "func",
+                        RefType::ExternRef => "extern",
+                    },
+                    element.init[i]
+                        .iter()
+                        .fold(String::new(), |mut acc, instruction| {
+                            match instruction.get_type() {
+                                ast::InstructionType::RefFunc => {
+                                    if let ast::InstructionData::FunctionInstruction {
+                                        function_index: fi,
+                                    } = *instruction.get_data()
+                                    {
+                                        acc.push_str(&format!("{}", fi))
+                                    }
+                                }
+                                _ => {}
+                            }
+                            acc
+                        })
+                ));
+            });
+        }
+        result
+    }
+}
+
+/*
+    C++ version of init_expr_to_details_string():
+
+  // We have two different way to print init expressions.  One for
+  // extended expressions involving more than one instruction, and
+  // a short form for the more traditional single instruction form.
+  if (expr.insts.size() > 1) {
+    PrintDetails("(");
+    bool first = true;
+    for (auto& inst : expr.insts) {
+      if (!first) {
+        PrintDetails(", ");
+      }
+      first = false;
+      PrintDetails("%s", inst.opcode.GetName());
+      switch (inst.opcode) {
+        case Opcode::I32Const:
+          PrintDetails(" %d", inst.imm.i32);
+          break;
+        case Opcode::I64Const:
+          PrintDetails(" %" PRId64, inst.imm.i64);
+          break;
+        case Opcode::F32Const: {
+          char buffer[WABT_MAX_FLOAT_HEX];
+          WriteFloatHex(buffer, sizeof(buffer), inst.imm.f32);
+          PrintDetails(" %s\n", buffer);
+          break;
+        }
+        case Opcode::F64Const: {
+          char buffer[WABT_MAX_DOUBLE_HEX];
+          WriteDoubleHex(buffer, sizeof(buffer), inst.imm.f64);
+          PrintDetails(" %s\n", buffer);
+          break;
+        }
+        case Opcode::GlobalGet: {
+          PrintDetails(" %" PRIindex, inst.imm.index);
+          std::string_view name = GetGlobalName(inst.imm.index);
+          if (!name.empty()) {
+            PrintDetails(" <" PRIstringview ">",
+                         WABT_PRINTF_STRING_VIEW_ARG(name));
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    PrintDetails(")\n");
+    return;
+  }
+
+  switch (expr.type) {
+    case InitExprType::I32:
+      if (as_unsigned) {
+        PrintDetails("i32=%u\n", expr.insts[0].imm.i32);
+      } else {
+        PrintDetails("i32=%d\n", expr.insts[0].imm.i32);
+      }
+      break;
+    case InitExprType::I64:
+      if (as_unsigned) {
+        PrintDetails("i64=%" PRIu64 "\n", expr.insts[0].imm.i64);
+      } else {
+        PrintDetails("i64=%" PRId64 "\n", expr.insts[0].imm.i64);
+      }
+      break;
+    case InitExprType::F64: {
+      char buffer[WABT_MAX_DOUBLE_HEX];
+      WriteDoubleHex(buffer, sizeof(buffer), expr.insts[0].imm.f64);
+      PrintDetails("f64=%s\n", buffer);
+      break;
+    }
+    case InitExprType::F32: {
+      char buffer[WABT_MAX_FLOAT_HEX];
+      WriteFloatHex(buffer, sizeof(buffer), expr.insts[0].imm.f32);
+      PrintDetails("f32=%s\n", buffer);
+      break;
+    }
+    case InitExprType::V128: {
+      PrintDetails(
+          "v128=0x%08x 0x%08x 0x%08x 0x%08x \n",
+          expr.insts[0].imm.v128_v.u32(0), expr.insts[0].imm.v128_v.u32(1),
+          expr.insts[0].imm.v128_v.u32(2), expr.insts[0].imm.v128_v.u32(3));
+      break;
+    }
+    case InitExprType::Global: {
+      PrintDetails("global=%" PRIindex, expr.insts[0].imm.index);
+      std::string_view name = GetGlobalName(expr.insts[0].imm.index);
+      if (!name.empty()) {
+        PrintDetails(" <" PRIstringview ">", WABT_PRINTF_STRING_VIEW_ARG(name));
+      }
+      PrintDetails("\n");
+      break;
+    }
+    case InitExprType::FuncRef: {
+      PrintDetails("ref.func:%" PRIindex, expr.insts[0].imm.index);
+      std::string_view name = GetFunctionName(expr.insts[0].imm.index);
+      if (!name.empty()) {
+        PrintDetails(" <" PRIstringview ">", WABT_PRINTF_STRING_VIEW_ARG(name));
+      }
+      PrintDetails("\n");
+      break;
+    }
+    case InitExprType::NullRef:
+      PrintDetails("ref.null %s\n", expr.insts[0].imm.type.GetName().c_str());
+      break;
+    case InitExprType::Invalid:
+      PrintDetails("<INVALID>\n");
+      break;
+  }
+*/
+
+/*
+fn init_expr_to_details_string(instr: Vec<ast::Instruction>) -> String {
+    // Rust version of the above code
+
+    // We have two different way to print init expressions.  One for
+    // extended expressions involving more than one instruction, and
+    // a short form for the more traditional single instruction form.
+    let mut result: String = String::new();
+
+    if instr.len() > 1 {
+        let mut result = String::new();
+        result.push_str("(");
+        let mut first = true;
+        for inst in instr {
+            if !first {
+                result.push_str(", ");
+            }
+            first = false;
+            result.push_str(&format!("{}", inst.get_type()));
+            match inst.get_type() {
+                ast::InstructionType::I32Const => {
+                    result.push_str(&format!(" {}", inst.get_data()[0]));
+                }
+                ast::InstructionType::I64Const => {
+                    result.push_str(&format!(" {}", inst.get_data()[0]));
+                }
+                ast::InstructionType::F32Const => {
+                    result.push_str(&format!(" {}", inst.get_data()[0]));
+                }
+                ast::InstructionType::F64Const => {
+                    result.push_str(&format!(" {}", inst.get_data()[0]));
+                }
+                ast::InstructionType::GlobalGet => {
+                    result.push_str(&format!(" {}", inst.get_data()[0]));
+                }
+                _ => {}
+            }
+        }
+        result.push_str(")");
+    }
+
+    result
+}
+ */
 
 #[derive(Debug)]
 pub struct CodeSection {
@@ -438,7 +709,7 @@ impl SectionToString for CodeSection {
             }
             result.push_str(&format!(
                 " - func[{}] size={}{}\n",
-                i,
+                i, // TODO: i is wrong when `(func $dummy)` is included - it should skip over these, need to figure out how it knows
                 function_body.position.len(),
                 exp
             ));
@@ -493,7 +764,7 @@ impl CodeSection {
 
                 result.push_str(&format!(
                     " {:06x}: {:27}| local[{}] type={}\n",
-                    pos, byts, range, val_type
+                    pos, byts, range, val_type,
                 ));
                 pos += 2;
             }
@@ -509,7 +780,9 @@ impl CodeSection {
                     });
 
                 match instruction.get_type() {
-                    ast::InstructionType::Else | ast::InstructionType::End => indent = indent.saturating_sub(1),
+                    ast::InstructionType::Else | ast::InstructionType::End => {
+                        indent = indent.saturating_sub(1)
+                    }
                     _ => {}
                 }
 
@@ -703,10 +976,10 @@ impl fmt::Display for TableType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "TableType({}) min = {}, max = {}",
+            "type={} initial={} max={}",
             match self.ref_type {
-                RefType::FuncRef => "FuncRef",
-                RefType::ExternRef => "ExternRef",
+                RefType::FuncRef => "funcref",
+                RefType::ExternRef => "externref",
             },
             self.limits.min,
             self.limits.max
@@ -745,6 +1018,7 @@ impl fmt::Display for ElementMode {
 
 #[derive(Debug)]
 pub struct Element {
+    pub flags: u32, // we only keep this for now to match the dump output
     pub ref_type: RefType,
     pub init: Vec<Vec<ast::Instruction>>,
     pub mode: ElementMode,
@@ -815,7 +1089,7 @@ impl fmt::Display for Data {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub struct GlobalType {
     pub value_type: ValueType,
     pub mutable: bool, // const or var
@@ -942,8 +1216,20 @@ impl Module {
                 self.functions.to_header_string()
             ));
         }
+        if self.table.has_position() {
+            result.push_str(&format!("    Table {}\n", self.table.to_header_string()));
+        }
+        if self.memory.has_position() {
+            result.push_str(&format!("   Memory {}\n", self.memory.to_header_string()));
+        }
+        if self.globals.has_position() {
+            result.push_str(&format!("   Global {}\n", self.globals.to_header_string()));
+        }
         if self.exports.has_position() {
             result.push_str(&format!("   Export {}\n", self.exports.to_header_string()));
+        }
+        if self.elements.has_position() {
+            result.push_str(&format!("     Elem {}\n", self.elements.to_header_string()));
         }
         if self.code.has_position() {
             result.push_str(&format!("     Code {}\n", self.code.to_header_string()));
@@ -961,8 +1247,20 @@ impl Module {
         if self.functions.has_position() {
             result.push_str(self.functions.to_details_string(&self).as_str());
         }
+        if self.table.has_position() {
+            result.push_str(self.table.to_details_string(&self).as_str());
+        }
+        if self.memory.has_position() {
+            result.push_str(self.memory.to_details_string(&self).as_str());
+        }
+        if self.globals.has_position() {
+            result.push_str(self.globals.to_details_string(&self).as_str());
+        }
         if self.exports.has_position() {
             result.push_str(self.exports.to_details_string(&self).as_str());
+        }
+        if self.elements.has_position() {
+            result.push_str(self.elements.to_details_string(&self).as_str());
         }
         if self.code.has_position() {
             result.push_str(self.code.to_details_string(&self).as_str());
