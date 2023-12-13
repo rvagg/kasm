@@ -919,7 +919,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
             ),
             InstructionCoding::new_simple(InstructionType::Return, 0x0f, 0, "return"),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::Call,
                 0x10,
                 0,
@@ -931,8 +931,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x10];
+                    if let InstructionData::FunctionInstruction { function_index } = &data {
+                        let mut local_bytes = reader::emit_vu32(*function_index);
+                        bytes.append(&mut local_bytes);
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::FunctionInstruction { function_index } = &data {
+                        format!("call {}", function_index)
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::CallIndirect,
                 0x11,
                 0,
@@ -945,6 +962,33 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x11];
+                    if let InstructionData::IndirectInstruction {
+                        type_index,
+                        table_index,
+                    } = &data
+                    {
+                        let mut local_bytes = reader::emit_vu32(*type_index);
+                        bytes.append(&mut local_bytes);
+                        local_bytes = reader::emit_vu32(*table_index);
+                        bytes.append(&mut local_bytes);
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::IndirectInstruction {
+                        type_index,
+                        table_index,
+                    } = &data
+                    {
+                        format!("call_indirect {} (type {})", table_index, type_index)
+                    } else {
+                        panic!("expected local instruction");
+                    }
+                }),
             ),
             // Reference instructions¶ -----------------------------------------
             InstructionCoding::new_with_parse(
@@ -1094,7 +1138,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::GlobalSet,
                 0x24,
                 0,
@@ -1106,6 +1150,23 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x24];
+                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                        let mut local_bytes = reader::emit_vu32(*global_index);
+                        bytes.append(&mut local_bytes);
+                    } else {
+                        panic!("expected global instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                        format!("global.set {}", global_index)
+                    } else {
+                        panic!("expected global instruction");
+                    }
+                }),
             ),
             // Table instructions¶ ---------------------------------------------
             InstructionCoding::new_with_parse(
@@ -1215,7 +1276,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
             ),
             // Memory instructions¶ --------------------------------------------
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Load,
                 0x28,
                 0,
@@ -1227,8 +1288,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x28];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.load {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Load,
                 0x29,
                 0,
@@ -1240,8 +1320,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x29];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.load {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::F32Load,
                 0x2a,
                 0,
@@ -1253,8 +1352,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x2a];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("f32.load {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::F64Load,
                 0x2b,
                 0,
@@ -1266,8 +1384,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x2b];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("f64.load {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Load8S,
                 0x2c,
                 0,
@@ -1279,8 +1416,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x2c];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.load8_s {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Load8U,
                 0x2d,
                 0,
@@ -1292,8 +1448,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x2d];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.load8_u {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Load16S,
                 0x2e,
                 0,
@@ -1305,8 +1480,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x2e];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.load16_s {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Load16U,
                 0x2f,
                 0,
@@ -1318,8 +1512,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x2f];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.load16_u {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Load8S,
                 0x30,
                 0,
@@ -1331,8 +1544,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x30];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.load8_s {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Load8U,
                 0x31,
                 0,
@@ -1344,8 +1576,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x31];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.load8_u {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Load16S,
                 0x32,
                 0,
@@ -1357,8 +1608,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x32];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.load16_s {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Load16U,
                 0x33,
                 0,
@@ -1370,8 +1640,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x33];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.load16_u {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Load32S,
                 0x34,
                 0,
@@ -1383,8 +1672,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x34];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.load32_s {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Load32U,
                 0x35,
                 0,
@@ -1396,8 +1704,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x35];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.load32_u {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Store,
                 0x36,
                 0,
@@ -1409,8 +1736,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x36];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.store {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Store,
                 0x37,
                 0,
@@ -1422,8 +1768,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x37];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.store {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::F32Store,
                 0x38,
                 0,
@@ -1435,8 +1800,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x38];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("f32.store {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::F64Store,
                 0x39,
                 0,
@@ -1448,8 +1832,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x39];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("f64.store {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Store8,
                 0x3a,
                 0,
@@ -1461,8 +1864,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x3a];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.store8 {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I32Store16,
                 0x3b,
                 0,
@@ -1474,8 +1896,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x3b];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i32.store16 {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Store8,
                 0x3c,
                 0,
@@ -1487,8 +1928,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x3c];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.store8 {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Store16,
                 0x3d,
                 0,
@@ -1500,8 +1960,27 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x3d];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.store16 {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::I64Store32,
                 0x3e,
                 0,
@@ -1513,6 +1992,25 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x3e];
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        let mut memarg_bytes = reader::emit_vu32(memarg.0);
+                        bytes.append(&mut memarg_bytes);
+                        memarg_bytes = reader::emit_vu32(memarg.1);
+                        bytes.append(&mut memarg_bytes);
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::MemoryInstruction { memarg } = &data {
+                        format!("i64.store32 {} {}", memarg.0, memarg.1)
+                    } else {
+                        panic!("expected memory instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_with_parse(
                 InstructionType::MemorySize,
@@ -1531,7 +2029,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::MemoryGrow,
                 0x40,
                 0,
@@ -1547,6 +2045,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         Ok(InstructionData::SimpleInstruction.clone())
                     },
                 ),
+                Arc::new(|_| vec![0x40, 0x0]),
+                Arc::new(|_| format!("memory.grow 0")),
             ),
             InstructionCoding::new_with_parse(
                 InstructionType::MemoryInit,
@@ -1816,7 +2316,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple(InstructionType::F64Min, 0xa4, 0, "f64.min"),
             InstructionCoding::new_simple(InstructionType::F64Max, 0xa5, 0, "f64.max"),
             InstructionCoding::new_simple(InstructionType::F64Copysign, 0xa6, 0, "f64.copysign"),
-            InstructionCoding::new_simple(InstructionType::I32WrapI64, 0xa7, 0, "i32.wrapi64"),
+            InstructionCoding::new_simple(InstructionType::I32WrapI64, 0xa7, 0, "i32.wrap_i64"),
             InstructionCoding::new_simple(
                 InstructionType::I32TruncF32S,
                 0xa8,

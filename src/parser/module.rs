@@ -733,6 +733,21 @@ impl CodeSection {
                     _ => {}
                 }
             }
+            let ftype_index = match unit.functions.get(i as u8) {
+                Some(f) => f.ftype_index,
+                None => {
+                    result.push_str(&format!("invalid function index: {}\n", i));
+                    continue;
+                }
+            };
+            let ftype = match unit.types.get(ftype_index) {
+                Some(t) => t,
+                None => {
+                    result.push_str(&format!("invalid type index: {}\n", ftype_index));
+                    continue;
+                }
+            };
+
             let mut pos = function_body.position.start as usize;
             result.push_str(&format!("{:06x} func[{}]{}:\n", pos, i, exp));
             pos += 1; // TODO: do we need more bytes to represent a function start?
@@ -740,12 +755,12 @@ impl CodeSection {
                       //  00011f: 20 00                      | local.get 0
             let mut i = 0;
             while i < function_body.locals.len() {
-                let start = i;
+                let start = i + ftype.parameters.len();
                 let val_type = &function_body.locals[i];
                 while i < function_body.locals.len() && &function_body.locals[i] == val_type {
                     i += 1;
                 }
-                let end = i;
+                let end = i + ftype.parameters.len();
 
                 let mut byts = super::reader::emit_vu64((end - start) as u64).iter().fold(
                     String::new(),

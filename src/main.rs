@@ -12,7 +12,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let unit = parser::parse(&source_file_path, &mut parser::reader::Reader::new(bytes))?;
 
-    println!("{}", unit);
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.contains(&"--dump-header".to_string()) {
+        println!(
+            "{}",
+            unit.to_string(parser::module::ParsedUnitFormat::Header)
+        );
+    } else if args.contains(&"--dump-details".to_string()) {
+        println!(
+            "{}",
+            unit.to_string(parser::module::ParsedUnitFormat::Details)
+        );
+    } else if args.contains(&"--dump-disassemble".to_string()) {
+        println!(
+            "{}",
+            unit.to_string(parser::module::ParsedUnitFormat::Disassemble)
+        );
+    }
 
     Ok(())
 }
