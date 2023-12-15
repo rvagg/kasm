@@ -737,7 +737,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         if blocktype == &BlockType::Empty {
                             "block".to_string()
                         } else {
-                            format!("block {}", blocktype)
+                            format!(
+                                "block{}",
+                                match blocktype {
+                                    BlockType::Empty => String::from(""),
+                                    BlockType::Type(value_type) => format!(" {}", value_type),
+                                    BlockType::TypeIndex(type_index) => format!(" type[{}]", type_index),
+                                }
+                            )
                         }
                     } else {
                         panic!("expected block instruction");
@@ -1125,7 +1132,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                 }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::GlobalGet,
                 0x23,
                 0,
@@ -1137,6 +1144,23 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x23];
+                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                        let mut local_bytes = reader::emit_vu32(*global_index);
+                        bytes.append(&mut local_bytes);
+                    } else {
+                        panic!("expected global instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data| {
+                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                        format!("global.get {}", global_index)
+                    } else {
+                        panic!("expected global instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_with_options(
                 InstructionType::GlobalSet,
@@ -2243,8 +2267,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple(InstructionType::F32Eq, 0x5b, 0, "f32.eq"),
             InstructionCoding::new_simple(InstructionType::F32Ne, 0x5c, 0, "f32.ne"),
             InstructionCoding::new_simple(InstructionType::F32Lt, 0x5d, 0, "f32.lt"),
-            InstructionCoding::new_simple(InstructionType::F32Le, 0x5e, 0, "f32.le"),
-            InstructionCoding::new_simple(InstructionType::F32Gt, 0x5f, 0, "f32.gt"),
+            InstructionCoding::new_simple(InstructionType::F32Gt, 0x5e, 0, "f32.gt"),
+            InstructionCoding::new_simple(InstructionType::F32Le, 0x5f, 0, "f32.le"),
             InstructionCoding::new_simple(InstructionType::F32Ge, 0x60, 0, "f32.ge"),
             InstructionCoding::new_simple(InstructionType::F64Eq, 0x61, 0, "f64.eq"),
             InstructionCoding::new_simple(InstructionType::F64Ne, 0x62, 0, "f64.ne"),

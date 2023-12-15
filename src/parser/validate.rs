@@ -93,9 +93,10 @@ impl<'a> Validator<'a> {
             ctrls: vec![],
         };
 
-        let start_types = ftype.parameters.iter().map(|v| Val(*v)).collect();
+        // push the return types but leave the parameters blank as they aren't on the stack
+        // until explicitly loaded with local.get
         let end_types = ftype.return_types.iter().map(|v| Val(*v)).collect();
-        v.push_ctrl(Block, start_types, end_types);
+        v.push_ctrl(Block, vec![], end_types);
 
         v
     }
@@ -155,9 +156,7 @@ impl<'a> Validator<'a> {
             height: self.vals.len() as u32,
             unreachable: false,
         });
-        // TODO: turns out we don't need to push the start types on, they're for locals, but we
-        // do probably need to validate that the end type is right somehow?
-        // self.push_vals(start_types);
+        self.push_vals(start_types);
     }
 
     fn pop_ctrl(&mut self) -> Result<CtrlFrame, &'static str> {
@@ -403,6 +402,17 @@ impl<'a> Validator<'a> {
                 }
             }
 
+            GlobalGet => {
+                if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
+                    let global = self.global(gi)?.clone();
+                    self.push_val(Val(global.value_type))
+                        .ok_or("type mismatch")?;
+                    Ok(())
+                } else {
+                    Err("invalid instruction")
+                }
+            }
+
             GlobalSet => {
                 if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
                     let global = self.global(gi)?.clone();
@@ -560,6 +570,11 @@ impl<'a> Validator<'a> {
                 } else {
                     Err("invalid instruction")
                 }
+            }
+
+            Unreachable => {
+                self.unreachable().ok_or("type mismatch")?;
+                Ok(())
             }
 
             Call => {

@@ -363,11 +363,30 @@ impl SectionToString for GlobalSection {
         result.push_str(&format!("Global[{}]:\n", self.globals.len()));
         for (i, global) in self.globals.iter().enumerate() {
             result.push_str(&format!(
-                " - global[{}] {} mutable={} - init i32=0\n",
+                " - global[{}] {} mutable={} - init i32={}\n",
                 i,
                 global.global_type.value_type,
                 if global.global_type.mutable { 1 } else { 0 },
-                // TODO: init expr, how to resolve?
+                global
+                    .init
+                    .iter()
+                    .fold(String::new(), |mut acc, instruction| {
+                        match instruction.get_type() {
+                            ast::InstructionType::I32Const => {
+                                if let ast::InstructionData::I32Instruction { value } =
+                                    *instruction.get_data()
+                                {
+                                    acc.push_str(&format!("{}", value));
+                                    acc
+                                } else {
+                                    acc
+                                }
+                            }
+                            _ => {
+                                acc
+                            }
+                        }
+                    }),
             ));
         }
         result
@@ -878,7 +897,7 @@ impl fmt::Display for FunctionType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "({}) -> {}", // assumes a single return type
+            "({}) -> {}",
             self.parameters
                 .iter()
                 .map(ToString::to_string)
@@ -886,6 +905,15 @@ impl fmt::Display for FunctionType {
                 .join(", "),
             if self.return_types.is_empty() {
                 "nil".to_string()
+            } else if self.return_types.len() > 1 {
+                format!(
+                    "({})",
+                    self.return_types
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
             } else {
                 self.return_types
                     .iter()
