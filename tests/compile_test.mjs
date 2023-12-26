@@ -84,7 +84,7 @@ async function dump (wasmPath, opt) {
 }
 
 function cleanJsonString (str) {
-  return str.replace(/\n/g, '\\n').replace(/"/g, '\\"')
+  return str.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"')
 }
 
 async function parseWast (wastPath) {

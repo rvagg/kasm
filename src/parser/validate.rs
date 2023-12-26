@@ -271,7 +271,7 @@ impl<'a> Validator<'a> {
             I32WrapI64 => self.sig_unary(Val(I64_VALUE), Val(I32_VALUE)),
 
             // cvtop (f32):i32
-            I32TruncF32S | I32TruncF32U | I32TruncSatF32S | I32TruncSatF32U => {
+            I32TruncF32S | I32TruncF32U | I32TruncSatF32S | I32TruncSatF32U | I32ReinterpretF32 => {
                 self.sig_unary(Val(F32_VALUE), Val(I32_VALUE))
             }
 
@@ -312,7 +312,7 @@ impl<'a> Validator<'a> {
             }
 
             // cvtop (f64):i64
-            I64TruncF64S | I64TruncF64U | I64TruncSatF64S | I64TruncSatF64U => {
+            I64TruncF64S | I64TruncF64U | I64TruncSatF64S | I64TruncSatF64U | I64ReinterpretF64 => {
                 self.sig_unary(Val(F64_VALUE), Val(I64_VALUE))
             }
 

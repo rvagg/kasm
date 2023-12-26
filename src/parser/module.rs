@@ -326,8 +326,14 @@ impl SectionToString for MemorySection {
         result.push_str(&format!("Memory[{}]:\n", self.memory.len()));
         for (i, memory) in self.memory.iter().enumerate() {
             result.push_str(&format!(
-                " - memory[{}] pages: initial={}\n",
-                i, memory.memory_type.min
+                " - memory[{}] pages: initial={}{}\n",
+                i,
+                memory.memory_type.min,
+                if memory.memory_type.max != u32::MAX {
+                    format!(" max={}", memory.memory_type.max)
+                } else {
+                    "".to_string()
+                }
             ));
         }
         result
@@ -1127,6 +1133,63 @@ impl fmt::Display for Data {
     }
 }
 
+impl SectionToString for DataSection {
+    fn to_header_string(&self) -> String {
+        format!("{} count: {}", self.position.to_string(), self.data.len())
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result: String = String::new();
+        result.push_str(&format!("Data[{}]:\n", self.data.len()));
+        for (i, data) in self.data.iter().enumerate() {
+            result.push_str(&format!(
+                " - segment[{}] memory={} size={} - init i32=0\n",
+                i,
+                match data.mode {
+                    DataMode::Passive => 0,
+                    DataMode::Active { memory_index, .. } => memory_index,
+                },
+                data.init.len(),
+            ));
+            // for data.init byte array, print it in blocks of 8 bytes like so:
+            //   - 0000000: 0100 0000 0000 0000 0100 0000 0000 0080  ................
+            let mut pos = 0;
+            while pos < data.init.len() {
+                let mut byts = String::new();
+                let mut chars = String::new();
+                for i in (0..16).step_by(2) {
+                    if pos + i + 1 < data.init.len() {
+                        byts.push_str(&format!(
+                            "{:02x}{:02x} ",
+                            data.init[pos + i],
+                            data.init[pos + i + 1]
+                        ));
+                    } else if pos + i < data.init.len() {
+                        byts.push_str(&format!("{:02x}   ", data.init[pos + i]));
+                    } else {
+                        byts.push_str("     ");
+                    }
+                }
+                for i in 0..16 {
+                    if pos + i < data.init.len() {
+                        let byte = data.init[pos + i];
+                        let ch = if byte.is_ascii_graphic() || byte == /* space */ 32 {
+                            byte as char
+                        } else {
+                            '.'
+                        };
+                        chars.push(ch);
+                    }
+                }
+
+                result.push_str(&format!("  - {:07x}: {} {}\n", pos, byts, chars));
+                pos += 16;
+            }
+        }
+        result
+    }
+}
+
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub struct GlobalType {
     pub value_type: ValueType,
@@ -1272,6 +1335,9 @@ impl Module {
         if self.code.has_position() {
             result.push_str(&format!("     Code {}\n", self.code.to_header_string()));
         }
+        if self.data.has_position() {
+            result.push_str(&format!("     Data {}\n", self.data.to_header_string()));
+        }
 
         result
     }
@@ -1302,6 +1368,9 @@ impl Module {
         }
         if self.code.has_position() {
             result.push_str(self.code.to_details_string(&self).as_str());
+        }
+        if self.data.has_position() {
+            result.push_str(self.data.to_details_string(&self).as_str());
         }
 
         result
