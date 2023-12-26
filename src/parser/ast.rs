@@ -742,7 +742,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 match blocktype {
                                     BlockType::Empty => String::from(""),
                                     BlockType::Type(value_type) => format!(" {}", value_type),
-                                    BlockType::TypeIndex(type_index) => format!(" type[{}]", type_index),
+                                    BlockType::TypeIndex(type_index) =>
+                                        format!(" type[{}]", type_index),
                                 }
                             )
                         }
@@ -2369,13 +2370,13 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 InstructionType::I64ExtendI32S,
                 0xac,
                 0,
-                "i64.extendi32__s",
+                "i64.extend_i32_s",
             ),
             InstructionCoding::new_simple(
                 InstructionType::I64ExtendI32U,
                 0xad,
                 0,
-                "i64.extendi32__u",
+                "i64.extend_i32_u",
             ),
             InstructionCoding::new_simple(
                 InstructionType::I64TruncF32S,
@@ -3554,15 +3555,34 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
     })
 }
 
-pub fn get_codings_by_opcode() -> &'static HashMap<u8, InstructionCoding> {
-    static CODINGS_BY_OPCODE: OnceCell<HashMap<u8, InstructionCoding>> = OnceCell::new();
-    CODINGS_BY_OPCODE.get_or_init(|| {
-        let mut map: HashMap<u8, InstructionCoding> = HashMap::new();
-        for coding in get_codings().iter() {
-            map.insert(coding.opcode, coding.clone());
+pub fn get_coding_by_opcode(opcode: u8, subopcode: u32) -> Option<&'static InstructionCoding> {
+    static CODINGS_BY_OPCODE: OnceCell<HashMap<u8, Vec<InstructionCoding>>> = OnceCell::new();
+    match CODINGS_BY_OPCODE
+        .get_or_init(|| {
+            let mut map: HashMap<u8, Vec<InstructionCoding>> = HashMap::new();
+            for coding in get_codings().iter() {
+                map.entry(coding.opcode)
+                    .or_insert_with(Vec::new)
+                    .push(coding.clone());
+            }
+            map
+        })
+        .get(&opcode)
+    {
+        Some(codings) => {
+            if codings.len() == 1 {
+                Some(&codings[0])
+            } else {
+                for coding in codings.iter() {
+                    if coding.subopcode == subopcode {
+                        return Some(coding);
+                    }
+                }
+                None
+            }
         }
-        map
-    })
+        None => None,
+    }
 }
 
 pub fn get_codings_by_type() -> &'static HashMap<InstructionType, InstructionCoding> {
@@ -3609,37 +3629,56 @@ impl<'a> Iterator for InstructionIterator<'a> {
         }
 
         let pos = self.bytes.pos();
-        match self.bytes.read_byte() {
-            Ok(opcode) => match get_codings_by_opcode().get(&opcode) {
-                Some(block_coding) => {
-                    let instruction = (block_coding.to_owned().parse_bytes)(&mut self.bytes);
-                    match instruction {
-                        Ok(data) => {
-                            println!("opcode: {} '{}' @ {:x}", opcode, block_coding.name, pos);
-                            self.ended = !self.bytes.has_at_least(1)
-                                || match self.parse_type {
-                                    ParseType::ReadAll => false,
-                                    ParseType::ReadTillEnd => {
-                                        block_coding.typ == InstructionType::End
-                                    }
-                                };
-                            Some(Ok(Instruction {
-                                typ: block_coding.typ,
-                                data: data,
-                            }))
-                        }
-                        Err(e) => {
-                            println!("error: {}", e);
-                            Some(Err(e))
-                        }
-                    }
+        let opcode = match self.bytes.read_byte() {
+            Ok(byte) => byte,
+            Err(e) => {
+                self.ended = true;
+                return Some(Err(e));
+            }
+        };
+        let subopcode = match opcode {
+            0xfc | 0xfd => match self.bytes.read_vu32() {
+                Ok(byte) => byte,
+                Err(e) => {
+                    self.ended = true;
+                    return Some(Err(e));
                 }
-                None => Some(Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unknown opcode: {}", opcode),
-                ))),
             },
-            Err(e) => Some(Err(e)),
+            _ => 0,
+        };
+        let block_coding = match get_coding_by_opcode(opcode, subopcode) {
+            Some(coding) => coding,
+            None => {
+                self.ended = true;
+                return Some(Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown opcode: {} ({})", opcode, subopcode),
+                )));
+            }
+        };
+
+        println!(
+            "opcode: {} ({}) '{}' @ {:x}",
+            opcode, subopcode, block_coding.name, pos
+        );
+
+        let instruction = (block_coding.to_owned().parse_bytes)(&mut self.bytes);
+        match instruction {
+            Ok(data) => {
+                self.ended = !self.bytes.has_at_least(1)
+                    || match self.parse_type {
+                        ParseType::ReadAll => false,
+                        ParseType::ReadTillEnd => block_coding.typ == InstructionType::End,
+                    };
+                Some(Ok(Instruction {
+                    typ: block_coding.typ,
+                    data: data,
+                }))
+            }
+            Err(e) => {
+                println!("error: {}", e);
+                Some(Err(e))
+            }
         }
     }
 }
