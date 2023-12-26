@@ -187,13 +187,11 @@ impl<'a> Validator<'a> {
     fn unreachable(&mut self) -> Option<()> {
         if let Some(ctrl) = self.ctrls.last_mut() {
             let h = ctrl.height as usize;
-            if self.vals.len() <= h {
+            if self.vals.len() > h {
                 self.vals.truncate(h);
-                ctrl.unreachable = true;
-                Some(())
-            } else {
-                None
             }
+            ctrl.unreachable = true;
+            Some(())
         } else {
             None
         }
@@ -234,8 +232,11 @@ impl<'a> Validator<'a> {
     }
 
     fn label_types_at(&mut self, li: u32) -> Result<Vec<MaybeValue>, &'static str> {
+        if self.ctrls.len() <= li as usize {
+            return Err("unknown label");
+        }
         let index = self.ctrls.len() - li as usize - 1;
-        let frame = self.ctrls.get(index).ok_or("invalid label index")?.clone();
+        let frame = self.ctrls.get(index).ok_or("unknown label")?.clone();
         Ok(self.frame_types(frame))
     }
 
@@ -431,9 +432,51 @@ impl<'a> Validator<'a> {
                 Ok(())
             }
 
+            I64Load | I64Load8S | I64Load8U | I64Load16S | I64Load16U | I64Load32S | I64Load32U => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                self.push_val(Val(I64)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            F32Load => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                self.push_val(Val(F32)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            F64Load => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                self.push_val(Val(F64)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
             I32Store | I32Store8 | I32Store16 => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            I64Store | I64Store8 | I64Store16 | I64Store32 => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(I64)).ok_or("type mismatch")?;
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            F32Store => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(F32)).ok_or("type mismatch")?;
+                self.pop_expected(Val(I32)).ok_or("type mismatch")?;
+                Ok(())
+            }
+
+            F64Store => {
+                // TODO: check that the memory index exists
+                self.pop_expected(Val(F64)).ok_or("type mismatch")?;
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 Ok(())
             }
@@ -506,7 +549,7 @@ impl<'a> Validator<'a> {
                 {
                     li
                 } else {
-                    // Return
+                    // Return, outermost label
                     self.ctrls.len() as u32 - 1
                 };
 
@@ -514,23 +557,19 @@ impl<'a> Validator<'a> {
                     self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 }
 
-                if self.ctrls.len() < li as usize {
-                    Err("invalid instruction")
-                } else {
-                    let label_types = self.label_types_at(li)?;
-                    self.pop_expecteds(label_types.clone())
-                        .ok_or("type mismatch")?;
-                    match inst.get_type() {
-                        &Return | &Br => {
-                            self.unreachable().ok_or("type mismatch")?;
-                            Ok(())
-                        }
-                        &BrIf => {
-                            self.push_vals(label_types).ok_or("type mismatch")?;
-                            Ok(())
-                        }
-                        _ => Err("invalid instruction"),
+                let label_types = self.label_types_at(li)?;
+                self.pop_expecteds(label_types.clone())
+                    .ok_or("type mismatch")?;
+                match inst.get_type() {
+                    &Return | &Br => {
+                        self.unreachable().ok_or("type mismatch")?;
+                        Ok(())
                     }
+                    &BrIf => {
+                        self.push_vals(label_types).ok_or("type mismatch")?;
+                        Ok(())
+                    }
+                    _ => Err("invalid instruction"),
                 }
             }
 
