@@ -382,9 +382,7 @@ impl SectionToString for GlobalSection {
                                     acc
                                 }
                             }
-                            _ => {
-                                acc
-                            }
+                            _ => acc,
                         }
                     }),
             ));
@@ -825,39 +823,36 @@ impl CodeSection {
                 //  000017: 42 80 80 80 80 80 80 80 80 | i64.const -9223372036854775808
                 //  000020: 80 7f                      |
                 result.push_str(&format!(" {:06x}: ", pos));
+
                 let mut byte_string = String::new();
                 let coding_bytes = (coding.emit_bytes)(instruction.get_data());
                 let coding_string = (coding.emit_str)(instruction.get_data());
                 let mut coding_string_added = false;
+
+                let push_format = |byte_string: &String, coding_string_added: bool| -> String {
+                    let (indent_string, coding_str) = if coding_string_added {
+                        ("".to_string(), "")
+                    } else {
+                        ("  ".repeat(indent), coding_string.as_str())
+                    };
+                    format!("{:27}| {}{}\n", byte_string, indent_string, coding_str,)
+                };
+
                 for byte in &coding_bytes {
                     let new_byte_string = format!("{:02x} ", byte);
                     if byte_string.len() + new_byte_string.len() > 27 {
-                        result.push_str(&format!(
-                            "{:27}| {}\n {:06x}: ",
-                            byte_string,
-                            if coding_string_added {
-                                ""
-                            } else {
-                                coding_string.as_str()
-                            },
-                            pos
-                        ));
+                        // the case of a byte block that's too long, so we dump the
+                        // current batch and loop again, possibly dumping more until
+                        // we're within the 26 char limit
+                        result.push_str(&push_format(&byte_string, coding_string_added));
+                        result.push_str(&format!(" {:06x}: ", pos));
                         byte_string.clear();
                         coding_string_added = true;
                     }
                     byte_string.push_str(&new_byte_string);
                     pos += 1;
                 }
-                result.push_str(&format!(
-                    "{:27}| {}{}\n",
-                    byte_string,
-                    "  ".repeat(indent),
-                    if coding_string_added {
-                        ""
-                    } else {
-                        coding_string.as_str()
-                    }
-                ));
+                result.push_str(&push_format(&byte_string, coding_string_added));
 
                 match instruction.get_type() {
                     ast::InstructionType::Block
@@ -1438,8 +1433,8 @@ impl fmt::Display for ValueType {
                 &ValueType::F64 => "f64",
                 &ValueType::F32 => "f32",
                 &ValueType::V128 => "v128",
-                &ValueType::FuncRef => "FuncRef",
-                &ValueType::ExternRef => "ExternRef",
+                &ValueType::FuncRef => "funcref",
+                &ValueType::ExternRef => "externref",
             }
         )
     }

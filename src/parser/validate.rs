@@ -581,21 +581,21 @@ impl<'a> Validator<'a> {
                 {
                     self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                     if self.ctrls.len() < li as usize {
-                        return Err("invalid instruction");
+                        return Err("unknown label");
                     }
                     let label_types = self.label_types_at(li)?;
                     let arity = label_types.len();
                     labels.iter().try_for_each(|&li| {
                         if self.ctrls.len() < li as usize {
-                            Err("invalid instruction")
+                            Err("unknown label")
                         } else {
                             let label_types = self.label_types_at(li)?;
                             if label_types.len() != arity {
-                                Err("invalid instruction")
+                                Err("type mismatch")
                             } else {
                                 let popped = self.pop_expecteds(label_types.clone());
                                 if popped.is_none() {
-                                    Err("invalid instruction")
+                                    Err("type mismatch")
                                 } else {
                                     self.push_vals(label_types).ok_or("type mismatch")?;
                                     Ok(())
