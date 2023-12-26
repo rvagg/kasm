@@ -429,56 +429,90 @@ impl<'a> Validator<'a> {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 self.push_val(Val(I32)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(
+                    &inst,
+                    match inst.get_type() {
+                        &I32Load => 2,                  // 4 bytes = 2^2
+                        &I32Load8S | &I32Load8U => 0,   // 1 byte = 2^0
+                        &I32Load16S | &I32Load16U => 1, // 2 bytes = 2^1
+                        _ => unreachable!(),
+                    },
+                )
             }
 
             I64Load | I64Load8S | I64Load8U | I64Load16S | I64Load16U | I64Load32S | I64Load32U => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 self.push_val(Val(I64)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(
+                    &inst,
+                    match inst.get_type() {
+                        &I64Load => 3,                  // 8 bytes = 2^3
+                        &I64Load8S | &I64Load8U => 0,   // 1 byte = 2^0
+                        &I64Load16S | &I64Load16U => 1, // 2 bytes = 2^1
+                        &I64Load32S | &I64Load32U => 2, // 4 bytes = 2^2
+                        _ => unreachable!(),
+                    },
+                )
             }
 
             F32Load => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 self.push_val(Val(F32)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(&inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Load => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 self.push_val(Val(F64)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(&inst, 3 /* 8 bytes = 2^3 */)
             }
 
             I32Store | I32Store8 | I32Store16 => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(
+                    &inst,
+                    match inst.get_type() {
+                        &I32Store => 2,   // 4 bytes = 2^2
+                        &I32Store8 => 0,  // 1 byte = 2^0
+                        &I32Store16 => 1, // 2 bytes = 2^1
+                        _ => unreachable!(),
+                    },
+                )
             }
 
             I64Store | I64Store8 | I64Store16 | I64Store32 => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I64)).ok_or("type mismatch")?;
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(
+                    &inst,
+                    match inst.get_type() {
+                        &I64Store => 3,   // 8 bytes = 2^3
+                        &I64Store8 => 0,  // 1 byte = 2^0
+                        &I64Store16 => 1, // 2 bytes = 2^1
+                        &I64Store32 => 2, // 4 bytes = 2^2
+                        _ => unreachable!(),
+                    },
+                )
             }
 
             F32Store => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(F32)).ok_or("type mismatch")?;
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(&inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Store => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(F64)).ok_or("type mismatch")?;
                 self.pop_expected(Val(I32)).ok_or("type mismatch")?;
-                Ok(())
+                check_alignment(&inst, 3 /* 8 bytes = 2^3 */)
             }
 
             MemoryGrow => {
@@ -710,4 +744,18 @@ impl<'a> Validator<'a> {
             }
         }
     }
+}
+
+fn check_alignment(inst: &Instruction, align_exponent: u32) -> Result<(), &'static str> {
+    let align: u32 = if let InstructionData::MemoryInstruction { memarg } = *inst.get_data() {
+        memarg.0
+    } else {
+        return Err("invalid instruction");
+    };
+
+    if align > align_exponent {
+        return Err("alignment must not be larger than natural");
+    }
+
+    Ok(())
 }

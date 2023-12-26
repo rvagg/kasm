@@ -1436,8 +1436,10 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.load8_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader| -> Result<InstructionData, io::Error> {
+                        let ma = (bytes.read_vu32()?, bytes.read_vu32()?);
+                        println!("ma: {:?}", ma);
                         Ok(InstructionData::MemoryInstruction {
-                            memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
+                            memarg: ma,
                         })
                     },
                 ),
