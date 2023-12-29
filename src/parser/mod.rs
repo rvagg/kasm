@@ -19,11 +19,6 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, i
 
         let sec_id = bytes.read_byte()?;
         let sec_len = bytes.read_vu32()?;
-        let mut sec_tag = "unknown".to_string();
-        if sec_id == 0 {
-            // custom section
-            sec_tag = bytes.read_string()?;
-        }
 
         if !bytes.has_at_least(sec_len as usize) {
             let error_message = format!(
@@ -33,26 +28,30 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, i
             );
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, error_message));
         }
-
-        let sec_name = match sec_id {
-            0 => sec_tag.as_str(),
-            1 => "type",
-            2 => "import",
-            3 => "function",
-            4 => "table",
-            5 => "memory",
-            6 => "global",
-            7 => "export",
-            8 => "start",
-            9 => "element",
-            10 => "code",
-            11 => "data",
-            _ => "unknown",
-        };
-        println!("section #{} '{}', len = {}", sec_id, sec_name, sec_len);
-
         let start_pos = bytes.pos();
-        read_sections(sec_id, bytes, &mut unit)?;
+
+        println!(
+            "section #{} '{}', len = {}",
+            sec_id,
+            match sec_id {
+                0 => "custom?",
+                1 => "type",
+                2 => "import",
+                3 => "function",
+                4 => "table",
+                5 => "memory",
+                6 => "global",
+                7 => "export",
+                8 => "start",
+                9 => "element",
+                10 => "code",
+                11 => "data",
+                _ => "unknown",
+            },
+            sec_len
+        );
+
+        read_sections(sec_id, bytes, &mut unit, sec_len)?;
         let end_pos = bytes.pos();
         let actual_len = end_pos - start_pos;
         if actual_len != sec_len as usize {
@@ -73,6 +72,7 @@ fn read_sections(
     sec_id: u8,
     bytes: &mut reader::Reader,
     unit: &mut module::Module,
+    custom_read_len: u32,
 ) -> Result<(), io::Error> {
     let start = bytes.pos();
     let positional: &mut dyn module::Positional = match sec_id {
@@ -130,6 +130,10 @@ fn read_sections(
             read_section_datacount(bytes, &mut unit.data)?;
             &mut unit.data as &mut dyn module::Positional
         }
+        0 => {
+            read_section_custom(bytes, custom_read_len, &mut unit.custom)?;
+            &mut unit.custom as &mut dyn module::Positional
+        }
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -175,14 +179,15 @@ fn read_section_type(
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
 
-    for ii in 0..count {
-        let byt = bytes.read_byte()?;
-        if byt != 0x60 {
+    for _ in 0..count {
+        if bytes.read_byte()? != 0x60 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "expected 0x60 to lead function type, got 0x{:02x} for func #{} / #{}",
-                    byt, ii, count
+                    // NOTE: binary-leb128.wast asserts this, for some reason, by pushing through a 0xe0 byte
+                    // and expecting this error string, however the spec says to expect an 0x60 byte always
+                    "integer representation too long",
+                    // "expected 0x60 to lead function type, got 0x{:02x} for func #{} / #{}", byt, ii, count
                 ),
             ));
         }
@@ -207,7 +212,7 @@ fn read_section_import(
     for _ in 0..count {
         let module = bytes.read_string()?;
         let name = bytes.read_string()?;
-        let external_kind = module::ExternalKind::decode(bytes.read_byte()?)?;
+        let external_kind = module::ExternalKind::decode(bytes)?;
 
         println!(
             "module = {}, name = {}, kind = {}",
@@ -215,15 +220,10 @@ fn read_section_import(
         );
 
         let import = module::Import {
-            external_kind: external_kind,
-            module: module,
-            name: name,
-            ftype_index: None,
-            memory_type: None,
+            external_kind,
+            module,
+            name,
         };
-
-        //if external_kind == parsed_unit::ExternalKind::Memory
-        //  import.memory_type =
 
         imports.push(import);
     }
@@ -239,8 +239,8 @@ fn read_section_function(
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let ftype_index = bytes.read_byte()?;
-        if ftype_index >= types.len() as u8 {
+        let ftype_index = bytes.read_vu32()?;
+        if ftype_index >= types.len() as u32 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -373,14 +373,14 @@ impl module::Data {
             0 => {
                 mode = module::DataMode::Active {
                     memory_index: 0,
-                    offset: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
+                    offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm this should be constant expr & signature type
                 };
             }
             1 => {} // nothing else needed
             2 => {
                 mode = module::DataMode::Active {
                     memory_index: bytes.read_vu32()?,
-                    offset: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
+                    offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm this should be constant expr & signature type
                 };
             }
             _ => Err(io::Error::new(
@@ -411,6 +411,17 @@ fn read_section_data(
     Ok(())
 }
 
+fn read_section_custom(
+    bytes: &mut reader::Reader,
+    read_len: u32,
+    custom: &mut module::CustomSection,
+) -> Result<(), io::Error> {
+    let start_pos = bytes.pos();
+    custom.name = bytes.read_string()?;
+    custom.data = bytes.read_bytes(read_len as usize - (bytes.pos() - start_pos) as usize)?;
+    Ok(())
+}
+
 fn read_section_datacount(
     bytes: &mut reader::Reader,
     datas: &mut module::DataSection,
@@ -429,17 +440,44 @@ fn read_section_datacount(
     Ok(())
 }
 
+impl module::ExternalKind {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<module::ExternalKind, io::Error> {
+        let byte = bytes.read_byte()?;
+        match byte {
+            0x00 => {
+                let typeidx = bytes.read_vu32()?;
+                Ok(module::ExternalKind::Function(typeidx))
+            }
+            0x01 => {
+                let tabletype = module::TableType::decode(bytes)?;
+                Ok(module::ExternalKind::Table(tabletype))
+            }
+            0x02 => {
+                let memtype = module::Limits::decode(bytes)?;
+                Ok(module::ExternalKind::Memory(memtype))
+            }
+            0x03 => {
+                let globaltype = module::GlobalType::decode(bytes)?;
+                Ok(module::ExternalKind::Global(globaltype))
+            }
+            _ => {
+                let msg: String = format!("invalid external kind: {}", byte);
+                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+            }
+        }
+    }
+}
+
 impl module::GlobalType {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
         let value_type = module::ValueType::decode(bytes.read_byte()?)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        let mut_byte = bytes.read_byte()?;
-        let mutable = match mut_byte {
+        let mutable = match bytes.read_byte()? {
             0x00 => false,
             0x01 => true,
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unknown global type: 0x{:02x}", mut_byte),
+                format!("invalid global type mutable flag"),
             ))?,
         };
         Ok(module::GlobalType {
@@ -451,9 +489,10 @@ impl module::GlobalType {
 
 impl module::Global {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
+        let global_type = module::GlobalType::decode(bytes)?;
         Ok(module::Global {
-            global_type: module::GlobalType::decode(bytes)?,
-            init: consume_constant_expr(bytes)?, // TODO: confirm this should be constant expr & signature type
+            global_type,
+            init: consume_constant_expr(bytes, global_type.value_type)?, // TODO: confirm this should be constant expr & signature type
         })
     }
 }
@@ -573,7 +612,7 @@ impl module::Element {
                 let mut init: Vec<Vec<ast::Instruction>> = vec![];
                 for _ in 0..count {
                     // TODO: does this need to be a constant expression? probably, also confirm signautre
-                    init.push(consume_constant_expr(bytes)?);
+                    init.push(consume_constant_expr(bytes, module::ValueType::I32)?);
                 }
                 Ok(init)
             };
@@ -601,7 +640,9 @@ impl module::Element {
                             ),
                             ast::Instruction::new(
                                 ast::InstructionType::End,
-                                ast::InstructionData::SimpleInstruction,
+                                ast::InstructionData::SimpleInstruction {
+                                    subopcode_bytes: Vec::new(),
+                                },
                             ),
                         ]
                     })
@@ -617,7 +658,7 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: consume_constant_expr(bytes)?,
+                        offset: consume_constant_expr(bytes, module::ValueType::I32)?,
                     },
                     init: read_func_index_init(bytes)?,
                 })
@@ -637,7 +678,7 @@ impl module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
-                        offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
+                        offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm is constant expr && signautre type
                     },
                     ref_type: read_element_kind(bytes)?,
                     init: read_func_index_init(bytes)?,
@@ -659,7 +700,7 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
+                        offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm is constant expr && signautre type
                     },
                     init: read_init(bytes)?,
                 })
@@ -679,7 +720,7 @@ impl module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
-                        offset: consume_constant_expr(bytes)?, // TODO: confirm is constant expr && signautre type
+                        offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm is constant expr && signautre type
                     },
                     ref_type: read_type(bytes)?,
                     init: read_init(bytes)?,
@@ -717,6 +758,9 @@ fn read_section_elements(
     Ok(())
 }
 
-fn consume_constant_expr(bytes: &mut reader::Reader) -> Result<Vec<ast::Instruction>, io::Error> {
-    self::ast::Instruction::decode_expression(bytes)
+fn consume_constant_expr(
+    bytes: &mut reader::Reader,
+    return_type: module::ValueType,
+) -> Result<Vec<ast::Instruction>, io::Error> {
+    self::ast::Instruction::decode_expression(bytes, return_type)
 }

@@ -20,6 +20,7 @@ pub struct Module {
     pub elements: ElementSection,
     pub code: CodeSection,
     pub data: DataSection,
+    pub custom: CustomSection,
 }
 
 impl fmt::Display for Module {
@@ -142,7 +143,8 @@ impl_positional!(
     StartSection,
     ElementSection,
     CodeSection,
-    DataSection
+    DataSection,
+    CustomSection
 );
 
 pub trait SectionToString {
@@ -208,6 +210,25 @@ impl ImportSection {
 
     pub fn push(&mut self, import: Import) {
         self.imports.push(import);
+    }
+}
+
+impl SectionToString for ImportSection {
+    fn to_header_string(&self) -> String {
+        format!(
+            "{} count: {}",
+            self.position.to_string(),
+            self.imports.len()
+        )
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Import[{}]:\n", self.imports.len()));
+        for (index, import) in self.imports.iter().enumerate() {
+            result.push_str(&format!(" - func[{}] {}\n", index, import));
+        }
+        result
     }
 }
 
@@ -329,7 +350,7 @@ impl SectionToString for MemorySection {
                 " - memory[{}] pages: initial={}{}\n",
                 i,
                 memory.memory_type.min,
-                if memory.memory_type.max != u32::MAX {
+                if memory.memory_type.max < u32::MAX {
                     format!(" max={}", memory.memory_type.max)
                 } else {
                     "".to_string()
@@ -369,20 +390,32 @@ impl SectionToString for GlobalSection {
         result.push_str(&format!("Global[{}]:\n", self.globals.len()));
         for (i, global) in self.globals.iter().enumerate() {
             result.push_str(&format!(
-                " - global[{}] {} mutable={} - init i32={}\n",
+                " - global[{}] {} mutable={} - init {}={}\n",
                 i,
                 global.global_type.value_type,
                 if global.global_type.mutable { 1 } else { 0 },
+                global.global_type.value_type,
                 global
                     .init
                     .iter()
                     .fold(String::new(), |mut acc, instruction| {
+                        // TODO: this doesn't scale .. need to figure out how to handle
                         match instruction.get_type() {
                             ast::InstructionType::I32Const => {
                                 if let ast::InstructionData::I32Instruction { value } =
                                     *instruction.get_data()
                                 {
-                                    acc.push_str(&format!("{}", value));
+                                    acc.push_str(&format!("{}", value as i32));
+                                    acc
+                                } else {
+                                    acc
+                                }
+                            }
+                            ast::InstructionType::I64Const => {
+                                if let ast::InstructionData::I64Instruction { value } =
+                                    *instruction.get_data()
+                                {
+                                    acc.push_str(&format!("{}", value as i32));
                                     acc
                                 } else {
                                     acc
@@ -534,163 +567,6 @@ impl SectionToString for ElementSection {
     }
 }
 
-/*
-    C++ version of init_expr_to_details_string():
-
-  // We have two different way to print init expressions.  One for
-  // extended expressions involving more than one instruction, and
-  // a short form for the more traditional single instruction form.
-  if (expr.insts.size() > 1) {
-    PrintDetails("(");
-    bool first = true;
-    for (auto& inst : expr.insts) {
-      if (!first) {
-        PrintDetails(", ");
-      }
-      first = false;
-      PrintDetails("%s", inst.opcode.GetName());
-      switch (inst.opcode) {
-        case Opcode::I32Const:
-          PrintDetails(" %d", inst.imm.i32);
-          break;
-        case Opcode::I64Const:
-          PrintDetails(" %" PRId64, inst.imm.i64);
-          break;
-        case Opcode::F32Const: {
-          char buffer[WABT_MAX_FLOAT_HEX];
-          WriteFloatHex(buffer, sizeof(buffer), inst.imm.f32);
-          PrintDetails(" %s\n", buffer);
-          break;
-        }
-        case Opcode::F64Const: {
-          char buffer[WABT_MAX_DOUBLE_HEX];
-          WriteDoubleHex(buffer, sizeof(buffer), inst.imm.f64);
-          PrintDetails(" %s\n", buffer);
-          break;
-        }
-        case Opcode::GlobalGet: {
-          PrintDetails(" %" PRIindex, inst.imm.index);
-          std::string_view name = GetGlobalName(inst.imm.index);
-          if (!name.empty()) {
-            PrintDetails(" <" PRIstringview ">",
-                         WABT_PRINTF_STRING_VIEW_ARG(name));
-          }
-          break;
-        }
-        default:
-          break;
-      }
-    }
-    PrintDetails(")\n");
-    return;
-  }
-
-  switch (expr.type) {
-    case InitExprType::I32:
-      if (as_unsigned) {
-        PrintDetails("i32=%u\n", expr.insts[0].imm.i32);
-      } else {
-        PrintDetails("i32=%d\n", expr.insts[0].imm.i32);
-      }
-      break;
-    case InitExprType::I64:
-      if (as_unsigned) {
-        PrintDetails("i64=%" PRIu64 "\n", expr.insts[0].imm.i64);
-      } else {
-        PrintDetails("i64=%" PRId64 "\n", expr.insts[0].imm.i64);
-      }
-      break;
-    case InitExprType::F64: {
-      char buffer[WABT_MAX_DOUBLE_HEX];
-      WriteDoubleHex(buffer, sizeof(buffer), expr.insts[0].imm.f64);
-      PrintDetails("f64=%s\n", buffer);
-      break;
-    }
-    case InitExprType::F32: {
-      char buffer[WABT_MAX_FLOAT_HEX];
-      WriteFloatHex(buffer, sizeof(buffer), expr.insts[0].imm.f32);
-      PrintDetails("f32=%s\n", buffer);
-      break;
-    }
-    case InitExprType::V128: {
-      PrintDetails(
-          "v128=0x%08x 0x%08x 0x%08x 0x%08x \n",
-          expr.insts[0].imm.v128_v.u32(0), expr.insts[0].imm.v128_v.u32(1),
-          expr.insts[0].imm.v128_v.u32(2), expr.insts[0].imm.v128_v.u32(3));
-      break;
-    }
-    case InitExprType::Global: {
-      PrintDetails("global=%" PRIindex, expr.insts[0].imm.index);
-      std::string_view name = GetGlobalName(expr.insts[0].imm.index);
-      if (!name.empty()) {
-        PrintDetails(" <" PRIstringview ">", WABT_PRINTF_STRING_VIEW_ARG(name));
-      }
-      PrintDetails("\n");
-      break;
-    }
-    case InitExprType::FuncRef: {
-      PrintDetails("ref.func:%" PRIindex, expr.insts[0].imm.index);
-      std::string_view name = GetFunctionName(expr.insts[0].imm.index);
-      if (!name.empty()) {
-        PrintDetails(" <" PRIstringview ">", WABT_PRINTF_STRING_VIEW_ARG(name));
-      }
-      PrintDetails("\n");
-      break;
-    }
-    case InitExprType::NullRef:
-      PrintDetails("ref.null %s\n", expr.insts[0].imm.type.GetName().c_str());
-      break;
-    case InitExprType::Invalid:
-      PrintDetails("<INVALID>\n");
-      break;
-  }
-*/
-
-/*
-fn init_expr_to_details_string(instr: Vec<ast::Instruction>) -> String {
-    // Rust version of the above code
-
-    // We have two different way to print init expressions.  One for
-    // extended expressions involving more than one instruction, and
-    // a short form for the more traditional single instruction form.
-    let mut result: String = String::new();
-
-    if instr.len() > 1 {
-        let mut result = String::new();
-        result.push_str("(");
-        let mut first = true;
-        for inst in instr {
-            if !first {
-                result.push_str(", ");
-            }
-            first = false;
-            result.push_str(&format!("{}", inst.get_type()));
-            match inst.get_type() {
-                ast::InstructionType::I32Const => {
-                    result.push_str(&format!(" {}", inst.get_data()[0]));
-                }
-                ast::InstructionType::I64Const => {
-                    result.push_str(&format!(" {}", inst.get_data()[0]));
-                }
-                ast::InstructionType::F32Const => {
-                    result.push_str(&format!(" {}", inst.get_data()[0]));
-                }
-                ast::InstructionType::F64Const => {
-                    result.push_str(&format!(" {}", inst.get_data()[0]));
-                }
-                ast::InstructionType::GlobalGet => {
-                    result.push_str(&format!(" {}", inst.get_data()[0]));
-                }
-                _ => {}
-            }
-        }
-        result.push_str(")");
-    }
-
-    result
-}
- */
-
 #[derive(Debug)]
 pub struct CodeSection {
     pub code: Vec<FunctionBody>,
@@ -763,7 +639,7 @@ impl CodeSection {
                     continue;
                 }
             };
-            let ftype = match unit.types.get(ftype_index) {
+            let ftype = match unit.types.get(ftype_index as u8) {
                 Some(t) => t,
                 None => {
                     result.push_str(&format!("invalid type index: {}\n", ftype_index));
@@ -828,7 +704,6 @@ impl CodeSection {
                 // the instruction hex, so we end up with something like this:
                 //  000017: 42 80 80 80 80 80 80 80 80 | i64.const -9223372036854775808
                 //  000020: 80 7f                      |
-                result.push_str(&format!(" {:06x}: ", pos));
 
                 let mut byte_string = String::new();
                 let coding_bytes = (coding.emit_bytes)(instruction.get_data());
@@ -844,18 +719,36 @@ impl CodeSection {
                     format!("{:27}| {}{}\n", byte_string, indent_string, coding_str,)
                 };
 
-                for byte in &coding_bytes {
-                    let new_byte_string = format!("{:02x} ", byte);
-                    if byte_string.len() + new_byte_string.len() > 27 {
-                        // the case of a byte block that's too long, so we dump the
-                        // current batch and loop again, possibly dumping more until
-                        // we're within the 26 char limit
-                        result.push_str(&push_format(&byte_string, coding_string_added));
-                        result.push_str(&format!(" {:06x}: ", pos));
-                        byte_string.clear();
-                        coding_string_added = true;
+                // crop_last_2, and related paraphernalia is a hack to handle what appears to be
+                // a bug in wabt when it comes to printing subopcodes that are encoded with more
+                // bytes than necessary, as per binary-leb128.81.wasm.
+                // TODO: figure out why and maybe fix upstream so we can ditch this garbage
+                let crop_last_2 = coding_bytes.len() > 2 && coding_bytes[0] >= 0xfc;
+                let mut p = pos as u32;
+                // if crop_last_2, correct p to account for the skipped bytes
+                if crop_last_2 {
+                    p += (coding_bytes.len() - 2) as u32;
+                }
+                result.push_str(&format!(" {:06x}: ", p));
+
+                for (index, byte) in coding_bytes.iter().enumerate() {
+                    if !crop_last_2 || index >= coding_bytes.len() - 2 {
+                        let new_byte_string = format!("{:02x} ", byte);
+                        if byte_string.len() + new_byte_string.len() > 27 {
+                            // the case of a byte block that's too long, so we dump the
+                            // current batch and loop again, possibly dumping more until
+                            // we're within the 26 char limit
+                            result.push_str(&push_format(&byte_string, coding_string_added));
+                            let mut p = pos as u32;
+                            if crop_last_2 {
+                                p += (coding_bytes.len() - 2) as u32;
+                            }
+                            result.push_str(&format!(" {:06x}: ", p));
+                            byte_string.clear();
+                            coding_string_added = true;
+                        }
+                        byte_string.push_str(&new_byte_string);
                     }
-                    byte_string.push_str(&new_byte_string);
                     pos += 1;
                 }
                 result.push_str(&push_format(&byte_string, coding_string_added));
@@ -885,6 +778,39 @@ impl DataSection {
             data: Vec::new(),
             position: SectionPosition::new(0, 0),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct CustomSection {
+    pub name: String,
+    pub data: Vec<u8>,
+    pub position: SectionPosition,
+}
+
+impl CustomSection {
+    pub fn new() -> CustomSection {
+        CustomSection {
+            name: String::new(),
+            data: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+}
+
+impl SectionToString for CustomSection {
+    fn to_header_string(&self) -> String {
+        format!(
+            "{} \"{}\"",
+            self.position.to_string(),
+            self.name.to_string()
+        )
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Custom:\n - name: \"{}\"\n", self.name));
+        result
     }
 }
 
@@ -928,27 +854,27 @@ impl fmt::Display for FunctionType {
 
 #[derive(Debug)]
 pub struct Import {
-    // TODO: this is no longer correct
     pub external_kind: ExternalKind,
     pub module: String,
     pub name: String,
-    pub ftype_index: Option<u8>,
-    pub memory_type: Option<MemoryType>,
 }
 
 impl fmt::Display for Import {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}::{} kind = {}",
-            self.module, self.name, self.external_kind
-        )
+        match self.external_kind {
+            ExternalKind::Function(type_index) => write!(
+                f,
+                "sig={} <{}.{}> <- {}.{}",
+                type_index, self.module, self.name, self.module, self.name
+            ),
+            _ => panic!("TODO: implement"),
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct Function {
-    pub ftype_index: u8,
+    pub ftype_index: u32,
 }
 
 impl fmt::Display for Function {
@@ -1020,13 +946,17 @@ impl fmt::Display for TableType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "type={} initial={} max={}",
+            "type={} initial={}{}",
             match self.ref_type {
                 RefType::FuncRef => "funcref",
                 RefType::ExternRef => "externref",
             },
             self.limits.min,
-            self.limits.max
+            if self.limits.max < u32::MAX {
+                format!(" max={}", self.limits.max as i32)
+            } else {
+                "".to_string()
+            }
         )
     }
 }
@@ -1143,13 +1073,20 @@ impl SectionToString for DataSection {
         result.push_str(&format!("Data[{}]:\n", self.data.len()));
         for (i, data) in self.data.iter().enumerate() {
             result.push_str(&format!(
-                " - segment[{}] memory={} size={} - init i32=0\n",
+                " - segment[{}] {} size={}{}\n",
                 i,
                 match data.mode {
-                    DataMode::Passive => 0,
-                    DataMode::Active { memory_index, .. } => memory_index,
+                    DataMode::Passive => "passive".to_string(),
+                    DataMode::Active { memory_index, .. } => format!("memory={}", memory_index),
                 },
                 data.init.len(),
+                match data.mode {
+                    DataMode::Passive => "".to_string(),
+                    DataMode::Active { .. } => {
+                        // TODO: need const expression support to do this properly
+                        format!(" - init i32=0")
+                    }
+                }
             ));
             // for data.init byte array, print it in blocks of 8 bytes like so:
             //   - 0000000: 0100 0000 0000 0000 0100 0000 0000 0080  ................
@@ -1225,10 +1162,10 @@ impl fmt::Display for Global {
 }
 
 pub enum ExternalKind {
-    Function,
-    Table,
-    Memory,
-    Global,
+    Function(u32), // typeidx
+    Table(TableType),
+    Memory(Limits),
+    Global(GlobalType),
 }
 
 impl fmt::Debug for ExternalKind {
@@ -1243,10 +1180,10 @@ impl fmt::Display for ExternalKind {
             f,
             "{}",
             match self {
-                &ExternalKind::Function => "Function",
-                &ExternalKind::Table => "Table",
-                &ExternalKind::Memory => "Memory",
-                &ExternalKind::Global => "Global",
+                &ExternalKind::Function(ref typeidx) => format!("Function({})", typeidx),
+                &ExternalKind::Table(ref table_type) => format!("Table({})", table_type),
+                &ExternalKind::Memory(ref limits) => format!("Memory({})", limits),
+                &ExternalKind::Global(ref global_type) => format!("Global({})", global_type),
             }
         )
     }
@@ -1284,6 +1221,7 @@ impl Module {
             elements: ElementSection::new(),
             code: CodeSection::new(),
             data: DataSection::new(),
+            custom: CustomSection::new(),
         }
     }
 }
@@ -1320,6 +1258,9 @@ impl Module {
         if self.table.has_position() {
             result.push_str(&format!("    Table {}\n", self.table.to_header_string()));
         }
+        if self.imports.has_position() {
+            result.push_str(&format!("   Import {}\n", self.imports.to_header_string()));
+        }
         if self.memory.has_position() {
             result.push_str(&format!("   Memory {}\n", self.memory.to_header_string()));
         }
@@ -1338,6 +1279,9 @@ impl Module {
         if self.data.has_position() {
             result.push_str(&format!("     Data {}\n", self.data.to_header_string()));
         }
+        if self.custom.has_position() {
+            result.push_str(&format!("   Custom {}\n", self.custom.to_header_string()));
+        }
 
         result
     }
@@ -1347,6 +1291,9 @@ impl Module {
 
         if self.types.has_position() {
             result.push_str(self.types.to_details_string(&self).as_str());
+        }
+        if self.imports.has_position() {
+            result.push_str(self.imports.to_details_string(&self).as_str());
         }
         if self.functions.has_position() {
             result.push_str(self.functions.to_details_string(&self).as_str());
@@ -1371,6 +1318,9 @@ impl Module {
         }
         if self.data.has_position() {
             result.push_str(self.data.to_details_string(&self).as_str());
+        }
+        if self.custom.has_position() {
+            result.push_str(self.custom.to_details_string(&self).as_str());
         }
 
         result
@@ -1506,20 +1456,5 @@ impl fmt::Display for ValueType {
                 &ValueType::ExternRef => "externref",
             }
         )
-    }
-}
-
-impl ExternalKind {
-    pub fn decode(byte: u8) -> Result<ExternalKind, io::Error> {
-        match byte {
-            0x01 => Ok(ExternalKind::Function),
-            0x02 => Ok(ExternalKind::Table),
-            0x03 => Ok(ExternalKind::Memory),
-            0x04 => Ok(ExternalKind::Global),
-            _ => {
-                let msg: String = format!("invalid external kind: {}", byte);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
-            }
-        }
     }
 }

@@ -67,7 +67,7 @@ fn function_type<'a>(
 ) -> Result<&'a super::module::FunctionType, &'static str> {
     let ftype = functions
         .get(fi as u8)
-        .and_then(|f| types.get(f.ftype_index))
+        .and_then(|f| types.get(f.ftype_index as u8))
         .ok_or("unknown function type")?;
     Ok(ftype)
 }
@@ -747,7 +747,11 @@ impl<'a> Validator<'a> {
 }
 
 fn check_alignment(inst: &Instruction, align_exponent: u32) -> Result<(), &'static str> {
-    let align: u32 = if let InstructionData::MemoryInstruction { memarg } = *inst.get_data() {
+    let align: u32 = if let InstructionData::MemoryInstruction {
+        subopcode_bytes: _,
+        memarg,
+    } = *inst.get_data()
+    {
         memarg.0
     } else {
         return Err("invalid instruction");
