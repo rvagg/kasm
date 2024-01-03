@@ -172,8 +172,12 @@ mod tests {
                 &mut kasm::parser::reader::Reader::new(icab.bin.clone()),
             ) {
                 Ok(_) => panic!("should not succeed"),
-                Err(e) => assert_eq!(e.to_string(), icab.command.text),
-            }
+                Err(e) => assert!(
+                    e.to_string().contains(&icab.command.text),
+                    "Error message does not contain the expected text. Error message: '{}', Expected text: '{}'",
+                    e.to_string(),
+                    &icab.command.text
+                ),            }
         }
 
         test_data.dump.iter().for_each(|(filename, dump)| {

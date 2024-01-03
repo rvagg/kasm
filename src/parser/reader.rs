@@ -43,23 +43,15 @@ impl Reader {
         self.bytes.len() - self.pos >= count
     }
 
-    pub fn remaining(&self) -> usize {
-        self.bytes.len() - self.pos
-    }
-
     pub fn skip(&mut self, len: usize) {
         self.pos += len;
     }
 
-    pub fn skip_to(&mut self, pos: usize) {
-        self.pos = pos;
-    }
-
     pub fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>, io::Error> {
-        if self.pos + len > self.bytes.len() {
+        if !self.has_at_least(len) {
             return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "not enough bytes to read",
+                io::ErrorKind::InvalidData,
+                "unexpected end",
             ));
         }
         let mut vec = Vec::with_capacity(len);
@@ -77,8 +69,8 @@ impl Reader {
         let bytes = self.read_bytes(4)?;
         if bytes.len() != 4 {
             return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "not enough bytes to read",
+                io::ErrorKind::InvalidData,
+                "unexpected end",
             ));
         }
 
@@ -101,6 +93,16 @@ impl Reader {
 
     pub fn read_vu32(&mut self) -> Result<u32, io::Error> {
         read_vu32(&mut || match self.next() {
+            Some(byte) => Ok(byte),
+            None => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "no more bytes to read",
+            )),
+        })
+    }
+
+    pub fn read_vu1(&mut self) -> Result<bool, io::Error> {
+        read_vu1(&mut || match self.next() {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -171,7 +173,13 @@ impl Reader {
 
     pub fn read_string(&mut self) -> Result<String, io::Error> {
         let len = self.read_vu32()?;
-        let mut v = Vec::with_capacity(len as usize);
+        if !self.has_at_least(len as usize) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "length out of bounds",
+            ));
+        }
+        let mut v: Vec<u8> = Vec::with_capacity(len as usize);
 
         for _ in 0..len {
             match self.next() {
@@ -191,6 +199,14 @@ impl Reader {
 
     pub fn read_u8vec(&mut self) -> Result<Vec<u8>, io::Error> {
         let len = self.read_vu64()?;
+        /*
+        if !self.has_at_least(len as usize) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "length out of bounds",
+            ));
+        }
+        */
         let mut vec: Vec<u8> = vec![];
         for _ in 0..len {
             vec.push(self.read_u8()?);
@@ -644,6 +660,33 @@ fn test_rt_vu32() {
     }
 }
 
+pub fn read_vu1<F>(reader: &mut F) -> Result<bool, io::Error>
+where
+    F: FnMut() -> Result<u8, io::Error>,
+{
+    read_vu(reader, 1).map(|v| v == 1)
+}
+
+/*
+pub fn emit_vu1(v: bool) -> Vec<u8> {
+    vec![if v { 1 } else { 0 }]
+}
+*/
+
+#[test]
+fn test_read_vu1() {
+    let read = |v: Vec<u8>| {
+        let mut reader = Reader::new(v);
+        reader.read_vu1().expect("Failed to read vu1")
+    };
+
+    assert_eq_with_diag(read(vec![0b0]), false);
+    assert_eq_with_diag(read(vec![0b1]), true);
+    for i in 2..=127 {
+        assert_err_with_diag(Reader::new(vec![i]).read_vu1(), "integer too large");
+    }
+}
+
 // TODO: simplify this, a lot!
 fn read_vs<F>(reader: &mut F, size: usize) -> Result<i64, io::Error>
 where
@@ -723,6 +766,13 @@ where
 
 pub fn emit_vs32(v: i32) -> Vec<u8> {
     emit_vs(v as i64)
+}
+
+pub fn read_vs33<F>(reader: &mut F) -> Result<i32, io::Error>
+where
+    F: FnMut() -> Result<u8, io::Error>,
+{
+    read_vs(reader, 33).map(|v| v as i32)
 }
 
 #[test]

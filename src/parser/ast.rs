@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::sync::Arc;
+use thiserror::Error;
 
 use crate::parser::reader;
 
@@ -497,11 +498,23 @@ pub enum InstructionType {
 pub struct Instruction {
     typ: InstructionType,
     data: InstructionData,
+    byte_offset: usize,
+    byte_length: usize,
 }
 
 impl Instruction {
-    pub fn new(typ: InstructionType, data: InstructionData) -> Self {
-        Self { typ, data }
+    pub fn new(
+        typ: InstructionType,
+        data: InstructionData,
+        byte_offset: usize,
+        byte_length: usize,
+    ) -> Self {
+        Self {
+            typ,
+            data,
+            byte_offset,
+            byte_length,
+        }
     }
 
     pub fn get_type(&self) -> &InstructionType {
@@ -549,7 +562,7 @@ pub enum InstructionData {
 
     // Reference instructions¶ -------------------------------------------------
     RefTypeInstruction {
-        ref_type: u8,
+        ref_type: super::module::ValueType,
     },
 
     // Parametric instructions¶ ------------------------------------------------
@@ -1080,7 +1093,10 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::RefTypeInstruction {
-                            ref_type: bytes.read_byte()?, // TODO: implement reference types
+                            ref_type: super::module::ValueType::decode(bytes.read_byte()?)
+                                .map_err(|e| {
+                                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                                })?,
                         })
                     },
                 ),
@@ -2514,7 +2530,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         if bytes.read_byte()? != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
-                                "expected 0x0 for memory.size",
+                                "zero byte expected",
                             ));
                         }
                         Ok(InstructionData::SimpleInstruction {
@@ -2533,7 +2549,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         if bytes.read_byte()? != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
-                                "expected 0x0 for memory.grow",
+                                "zero byte expected",
                             ));
                         }
                         Ok(InstructionData::SimpleInstruction {
@@ -2557,7 +2573,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         if bytes.read_byte()? != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
-                                "expected 0x0 for memory.init",
+                                "zero byte expected",
                             ));
                         }
                         Ok(InstructionData::DataInstruction {
@@ -4808,9 +4824,10 @@ impl<'a> Iterator for InstructionIterator<'a> {
             Some(coding) => coding,
             None => {
                 self.ended = true;
+                println!("unknown opcode: {} ({})", opcode, subopcode);
                 return Some(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("unknown opcode: {} ({})", opcode, subopcode),
+                    "illegal opcode",
                 )));
             }
         };
@@ -4828,10 +4845,12 @@ impl<'a> Iterator for InstructionIterator<'a> {
                         ParseType::ReadAll => false,
                         ParseType::ReadTillEnd => block_coding.typ == InstructionType::End,
                     };
-                Some(Ok(Instruction {
-                    typ: block_coding.typ,
-                    data: data,
-                }))
+                Some(Ok(Instruction::new(
+                    block_coding.typ,
+                    data,
+                    pos,
+                    self.bytes.pos() - pos,
+                )))
             }
             Err(e) => {
                 println!("error: {}", e);
@@ -4841,14 +4860,30 @@ impl<'a> Iterator for InstructionIterator<'a> {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum DecodeError {
+    #[error("{0}")]
+    Io(#[from] io::Error),
+
+    #[error("{0}")]
+    Validation(super::validate::ValidationError),
+}
+
+impl From<super::validate::ValidationError> for DecodeError {
+    fn from(error: super::validate::ValidationError) -> Self {
+        DecodeError::Validation(error)
+    }
+}
+
 impl Instruction {
     pub fn decode_expression(
         bytes: &mut super::reader::Reader,
         return_type: super::module::ValueType,
-    ) -> Result<Vec<Instruction>, io::Error> {
+        // TODO: accpet maximum length here
+    ) -> Result<Vec<Instruction>, DecodeError> {
         let mut types = super::module::TypeSection::new();
         let mut functions = super::module::FunctionSection::new();
-        let locals = &vec![];
+        let locals = super::module::Locals::empty();
         let globals = &vec![];
         let ftype = super::module::FunctionType {
             // TODO: confirm this is the right signature for these: [0,n]=>[x]
@@ -4863,37 +4898,52 @@ impl Instruction {
         let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadTillEnd);
         let mut instructions: Vec<Instruction> = vec![];
         let mut validator =
-            super::validate::Validator::new(&types, &functions, &locals, &globals, 0);
+            super::validate::Validator::new(&types, &functions, &globals, 0, &locals, 0);
         for result in instruction_iter {
             let instruction = result?;
             validator
                 .validate(&instruction)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                .map_err(|e| DecodeError::from(e))?;
             instructions.push(instruction);
+            if validator.ended() {
+                return Ok(instructions);
+            }
         }
-        Ok(instructions)
+        Err(io::Error::new(io::ErrorKind::UnexpectedEof, "END opcode expected").into())
     }
 
     pub fn decode_function(
         types: &super::module::TypeSection,
         functions: &super::module::FunctionSection,
-        locals: &Vec<super::module::ValueType>,
         globals: &Vec<super::module::GlobalType>,
+        data_count: u32,
+        locals: &super::module::Locals,
         function_index: u32,
         bytes: &mut super::reader::Reader,
-    ) -> Result<Vec<Instruction>, io::Error> {
+    ) -> Result<Vec<Instruction>, DecodeError> {
+        // let end_pos = start_pos + byte_length as usize;
         let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadAll);
         let mut instructions: Vec<Instruction> = vec![];
-        let mut validator =
-            super::validate::Validator::new(&types, &functions, &locals, &globals, function_index);
+        let mut validator = super::validate::Validator::new(
+            &types,
+            &functions,
+            &globals,
+            data_count,
+            &locals,
+            function_index,
+        );
         for result in instruction_iter {
             let instruction = result?;
+            // current_pos = instruction.byte_offset + instruction.byte_length;
             validator
                 .validate(&instruction)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                .map_err(|e| DecodeError::from(e))?;
             instructions.push(instruction);
+            if validator.ended() {
+                return Ok(instructions);
+            }
         }
-        Ok(instructions)
+        Err(io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into())
     }
 }
 
@@ -4917,7 +4967,7 @@ impl BlockType {
         // if first byte is 0x40, it's an empty type
         // if it's one of the value type bytes, it's a value type
         // otherwise, interpret the first byte and following bytes as a signed
-        // LEB128 integer using read_vs32, and use that as the type index _if_ it's
+        // LEB128 integer using read_vs33, and use that as the type index _if_ it's
         // positive, otherwise it's an error
         let b = bytes.read_byte()?;
         if b == 0x40 {
@@ -4929,7 +4979,7 @@ impl BlockType {
             ))
         } else {
             let mut first_byte = Some(b);
-            let type_index = super::reader::read_vs32(&mut || match first_byte.take() {
+            let type_index = super::reader::read_vs33(&mut || match first_byte.take() {
                 Some(byte) => Ok(byte),
                 None => bytes.read_byte(),
             })?;
@@ -4956,7 +5006,7 @@ impl fmt::Display for BlockType {
 }
 
 fn consume_vu32vec(bytes: &mut super::reader::Reader) -> Result<Vec<u32>, io::Error> {
-    let len: u64 = bytes.read_vu64()?;
+    let len = bytes.read_vu32()?;
     let mut vec: Vec<u32> = vec![];
     for _ in 0..len {
         vec.push(bytes.read_vu32()?);

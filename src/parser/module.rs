@@ -20,6 +20,7 @@ pub struct Module {
     pub elements: ElementSection,
     pub code: CodeSection,
     pub data: DataSection,
+    pub data_count: DataCountSection,
     pub custom: CustomSection,
 }
 
@@ -144,6 +145,7 @@ impl_positional!(
     ElementSection,
     CodeSection,
     DataSection,
+    DataCountSection,
     CustomSection
 );
 
@@ -479,7 +481,7 @@ impl SectionToString for ExportSection {
 
 #[derive(Debug)]
 pub struct StartSection {
-    pub start: u64,
+    pub start: u32,
     pub position: SectionPosition,
 }
 
@@ -489,6 +491,18 @@ impl StartSection {
             start: 0,
             position: SectionPosition::new(0, 0),
         }
+    }
+}
+
+impl SectionToString for StartSection {
+    fn to_header_string(&self) -> String {
+        format!("{} start: {}", self.position.to_string(), self.start)
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("Start:\n - start function: {}\n", self.start));
+        result
     }
 }
 
@@ -511,6 +525,134 @@ impl ElementSection {
     }
 }
 
+fn init_expr_to_string(
+    init: &Vec<ast::Instruction>,
+    as_unsigned: bool,
+    with_prefix: bool,
+) -> String {
+    let mut result: String = String::new();
+    if with_prefix {
+        result.push_str(" - init ");
+    }
+    match init.len() {
+        0 => {
+            result.push_str("<EMPTY>\n");
+        }
+        1 => result.push_str("<INVALID INIT EXPR>\n"),
+        2 => match init[0].get_type() {
+            // include instruction + end
+            ast::InstructionType::I32Const => {
+                if let ast::InstructionData::I32Instruction { value } = *init[0].get_data() {
+                    if as_unsigned {
+                        result.push_str(&format!("i32={}", value as u32));
+                    } else {
+                        result.push_str(&format!("i32={}", value as i32));
+                    }
+                }
+            }
+            ast::InstructionType::I64Const => {
+                if let ast::InstructionData::I64Instruction { value } = *init[0].get_data() {
+                    if as_unsigned {
+                        result.push_str(&format!("i64={}", value as u64));
+                    } else {
+                        result.push_str(&format!("i64={}", value as i64));
+                    }
+                }
+            }
+            ast::InstructionType::F32Const => {
+                if let ast::InstructionData::F32Instruction { value } = *init[0].get_data() {
+                    result.push_str(&format!("f32={}", value));
+                }
+            }
+            ast::InstructionType::F64Const => {
+                if let ast::InstructionData::F64Instruction { value } = *init[0].get_data() {
+                    result.push_str(&format!("f64={}", value));
+                }
+            }
+            // TODO: v128
+            ast::InstructionType::GlobalGet => {
+                if let ast::InstructionData::GlobalInstruction { global_index } =
+                    *init[0].get_data()
+                {
+                    result.push_str(&format!("global={}", global_index));
+                }
+            }
+            ast::InstructionType::RefFunc => {
+                if let ast::InstructionData::FunctionInstruction { function_index } =
+                    *init[0].get_data()
+                {
+                    result.push_str(&format!("ref.func:{}", function_index));
+                }
+            }
+            ast::InstructionType::RefNull => {
+                if let ast::InstructionData::RefTypeInstruction { ref_type } = *init[0].get_data() {
+                    result.push_str(&format!("ref.null {}", ref_type));
+                }
+            }
+            _ => {
+                result.push_str("<INVALID>");
+            }
+        },
+        _ => {
+            result.push_str("(");
+            let mut first = true;
+            if let Some(len) = init.len().checked_sub(1) {
+                for instruction in init.iter().take(len) {
+                    if !first {
+                        result.push_str(", ");
+                    }
+                    first = false;
+                    result.push_str(&format!("{}", instruction));
+                    match instruction.get_type() {
+                        ast::InstructionType::I32Const => {
+                            if let ast::InstructionData::I32Instruction { value } =
+                                *instruction.get_data()
+                            {
+                                result.push_str(&format!("{}", value as i32));
+                            }
+                        }
+                        ast::InstructionType::I64Const => {
+                            if let ast::InstructionData::I64Instruction { value } =
+                                *instruction.get_data()
+                            {
+                                result.push_str(&format!("{}", value as i32));
+                            }
+                        }
+                        ast::InstructionType::F32Const => {
+                            if let ast::InstructionData::F32Instruction { value } =
+                                *instruction.get_data()
+                            {
+                                result.push_str(&format!("{}", value));
+                            }
+                        }
+                        ast::InstructionType::F64Const => {
+                            if let ast::InstructionData::F64Instruction { value } =
+                                *instruction.get_data()
+                            {
+                                result.push_str(&format!("{}", value));
+                            }
+                        }
+                        ast::InstructionType::GlobalGet => {
+                            if let ast::InstructionData::GlobalInstruction { global_index } =
+                                *instruction.get_data()
+                            {
+                                result.push_str(&format!("{}", global_index));
+                                // TODO: global name?
+                            }
+                        }
+                        _ => {
+                            result.push_str("<INVALID>");
+                        }
+                    };
+                }
+            } else {
+                result.push_str("<UNEXPECTED ERR>");
+            }
+        }
+    }
+    result
+}
+
 impl SectionToString for ElementSection {
     fn to_header_string(&self) -> String {
         format!(
@@ -525,7 +667,7 @@ impl SectionToString for ElementSection {
         result.push_str(&format!("Elem[{}]:\n", self.elements.len()));
         for (i, element) in self.elements.iter().enumerate() {
             result.push_str(&format!(
-                " - segment[{}] flags={} table={} count={} - init i32=0\n",
+                " - segment[{}] flags={} table={} count={}{}\n",
                 i,
                 element.flags,
                 match element.mode {
@@ -534,32 +676,18 @@ impl SectionToString for ElementSection {
                     ElementMode::Active { table_index, .. } => table_index,
                 },
                 element.init.len(),
+                match element.mode {
+                    ElementMode::Active { ref offset, .. } =>
+                        init_expr_to_string(offset, true, true),
+                    _ => "".to_string(),
+                }
             ));
             element.init.iter().enumerate().for_each(|(i, _)| {
                 // TODO: probably not .. this is simplistic for now, more work to do, i.e. not even printing constant expressions yet
                 result.push_str(&format!(
-                    "  - elem[{}] = ref.{}:{}\n",
+                    "  - elem[{}] = {}\n",
                     i,
-                    match element.ref_type {
-                        RefType::FuncRef => "func",
-                        RefType::ExternRef => "extern",
-                    },
-                    element.init[i]
-                        .iter()
-                        .fold(String::new(), |mut acc, instruction| {
-                            match instruction.get_type() {
-                                ast::InstructionType::RefFunc => {
-                                    if let ast::InstructionData::FunctionInstruction {
-                                        function_index: fi,
-                                    } = *instruction.get_data()
-                                    {
-                                        acc.push_str(&format!("{}", fi))
-                                    }
-                                }
-                                _ => {}
-                            }
-                            acc
-                        })
+                    init_expr_to_string(&element.init[i], false, false),
                 ));
             });
         }
@@ -652,36 +780,30 @@ impl CodeSection {
             pos += 1; // TODO: do we need more bytes to represent a function start?
                       // for each instruction, ignoring the opcodes for now
                       //  00011f: 20 00                      | local.get 0
-            let mut i = 0;
-            while i < function_body.locals.len() {
-                let start = i + ftype.parameters.len();
-                let val_type = &function_body.locals[i];
-                while i < function_body.locals.len() && &function_body.locals[i] == val_type {
-                    i += 1;
-                }
-                let end = i + ftype.parameters.len();
 
-                let mut byts = super::reader::emit_vu64((end - start) as u64).iter().fold(
-                    String::new(),
-                    |mut acc, byte| {
-                        acc.push_str(&format!("{:02x} ", byte));
-                        acc
-                    },
-                );
-                byts.push_str(&format!("{:02x}", val_type.emit_bytes()[0]));
+            let mut offset = ftype.parameters.len() as u32;
+            function_body.locals.iter().for_each(|(count, value_type)| {
+                let count_bytes = super::reader::emit_vu32(*count);
+                let mut byts = count_bytes.iter().fold(String::new(), |mut acc, byte| {
+                    acc.push_str(&format!("{:02x} ", byte));
+                    acc
+                });
+                byts.push_str(&format!("{:02x}", value_type.emit_bytes()[0]));
 
-                let range = if start == end - 1 {
-                    format!("{}", start)
-                } else {
-                    format!("{}..{}", start, end - 1)
+                let range = match *count {
+                    0 => "".to_string(),
+                    1 => format!("{}", offset),
+                    _ => format!("{}..{}", offset, offset + count - 1),
                 };
 
                 result.push_str(&format!(
                     " {:06x}: {:27}| local[{}] type={}\n",
-                    pos, byts, range, val_type,
+                    pos, byts, range, value_type,
                 ));
-                pos += 2;
-            }
+                pos += count_bytes.len() + 1;
+                offset += count;
+            });
+
             let mut indent: usize = 0;
             function_body.instructions.iter().for_each(|instruction| {
                 let coding = ast::get_codings_by_type()
@@ -776,6 +898,21 @@ impl DataSection {
     pub fn new() -> DataSection {
         DataSection {
             data: Vec::new(),
+            position: SectionPosition::new(0, 0),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DataCountSection {
+    pub count: u32,
+    pub position: SectionPosition,
+}
+
+impl DataCountSection {
+    pub fn new() -> DataCountSection {
+        DataCountSection {
+            count: 0,
             position: SectionPosition::new(0, 0),
         }
     }
@@ -903,8 +1040,45 @@ pub struct Export {
 }
 
 #[derive(Debug)]
+pub struct Locals {
+    entries: Vec<(u32, ValueType)>,
+}
+
+impl Locals {
+    // Initialize with a list of count+ValueType pairs
+    pub fn new(entries: Vec<(u32, ValueType)>) -> Self {
+        Self { entries }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn len(&self) -> u64 {
+        self.entries.iter().map(|(count, _)| *count as u64).sum()
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (u32, ValueType)> {
+        self.entries.iter()
+    }
+
+    pub fn get(&self, index: u32) -> Option<&ValueType> {
+        let mut remaining = index;
+        for (count, value_type) in &self.entries {
+            if remaining < *count {
+                return Some(value_type);
+            }
+            remaining -= count;
+        }
+        None
+    }
+}
+
+#[derive(Debug)]
 pub struct FunctionBody {
-    pub locals: Vec<ValueType>,
+    pub locals: Locals,
     pub instructions: Vec<ast::Instruction>,
     pub position: SectionPosition, // sub-section position
 }
@@ -915,8 +1089,8 @@ pub enum RefType {
     ExternRef,
 }
 
-impl From<RefType> for ValueType {
-    fn from(rt: RefType) -> Self {
+impl From<&RefType> for ValueType {
+    fn from(rt: &RefType) -> Self {
         match rt {
             RefType::FuncRef => ValueType::FuncRef,
             RefType::ExternRef => ValueType::ExternRef,
@@ -1221,6 +1395,7 @@ impl Module {
             elements: ElementSection::new(),
             code: CodeSection::new(),
             data: DataSection::new(),
+            data_count: DataCountSection::new(),
             custom: CustomSection::new(),
         }
     }
@@ -1270,6 +1445,9 @@ impl Module {
         if self.exports.has_position() {
             result.push_str(&format!("   Export {}\n", self.exports.to_header_string()));
         }
+        if self.start.has_position() {
+            result.push_str(&format!("    Start {}\n", self.start.to_header_string()));
+        }
         if self.elements.has_position() {
             result.push_str(&format!("     Elem {}\n", self.elements.to_header_string()));
         }
@@ -1309,6 +1487,9 @@ impl Module {
         }
         if self.exports.has_position() {
             result.push_str(self.exports.to_details_string(&self).as_str());
+        }
+        if self.start.has_position() {
+            result.push_str(self.start.to_details_string(&self).as_str());
         }
         if self.elements.has_position() {
             result.push_str(self.elements.to_details_string(&self).as_str());
@@ -1355,8 +1536,7 @@ impl fmt::Display for Export {
 
 impl fmt::Display for FunctionBody {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "locals = ").unwrap();
-        f.debug_set().entries(self.locals.iter()).finish().unwrap();
+        write!(f, "locals = {:?}", self.locals).unwrap();
         /* TODO: do we want this back? need to intercept the reader
         write!(f, " body = ").unwrap();
         let hex_string = self
