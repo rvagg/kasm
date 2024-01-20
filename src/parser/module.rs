@@ -24,6 +24,22 @@ pub struct Module {
     pub custom: CustomSection,
 }
 
+impl Module {
+    pub fn get_function_name(&self, index: u32) -> Option<&String> {
+        for export in &self.exports.exports {
+            match export.index {
+                ExportIndex::Function(idx) => {
+                    if idx == index as u64 {
+                        return Some(&export.name);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
 impl fmt::Display for Module {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ParsedUnit name = {}", self.name)?;
@@ -270,20 +286,14 @@ impl SectionToString for FunctionSection {
         let mut result = String::new();
         result.push_str(&format!("Function[{}]:\n", self.functions.len()));
         for (i, function) in self.functions.iter().enumerate() {
-            let mut exp = String::new();
-            for export in &unit.exports.exports {
-                match export.index {
-                    ExportIndex::Function(idx) => {
-                        if idx == i as u64 {
-                            exp = format!(" <{}>", export.name);
-                        }
-                    }
-                    _ => {}
-                }
-            }
             result.push_str(&format!(
                 " - func[{}] sig={}{}\n",
-                i, function.ftype_index, exp
+                i,
+                function.ftype_index,
+                match unit.get_function_name(i as u32) {
+                    Some(name) => format!(" <{}>", name),
+                    None => "".to_string(),
+                }
             ));
         }
         result
@@ -839,7 +849,7 @@ impl CodeSection {
 
                 let mut byte_string = String::new();
                 let coding_bytes = (coding.emit_bytes)(instruction.get_data());
-                let coding_string = (coding.emit_str)(instruction.get_data());
+                let coding_string = (coding.emit_str)(instruction.get_data(), &unit);
                 let mut coding_string_added = false;
 
                 let push_format = |byte_string: &String, coding_string_added: bool| -> String {

@@ -865,8 +865,10 @@ impl Validator for CodeValidator<'_> {
                     let parameters: Vec<_> = ftype.parameters.iter().cloned().collect();
                     let return_types: Vec<_> = ftype.return_types.iter().cloned().collect();
 
+                    // parameters are stack ordered, so pick them in reverse
                     parameters
                         .iter()
+                        .rev()
                         .try_for_each(|v| match self.pop_expected(Val(*v)) {
                             Some(_) => Ok(()),
                             None => Err(ValidationError::TypeMismatch),

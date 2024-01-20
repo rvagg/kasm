@@ -8,6 +8,8 @@ use thiserror::Error;
 
 use crate::parser::reader;
 
+use super::module::Module;
+
 #[derive(PartialEq, Clone, Copy, Debug, Hash, Eq)]
 pub enum InstructionType {
     // Control instructions¶ ---------------------------------------------------
@@ -656,7 +658,7 @@ pub struct InstructionCoding {
             + Sync,
     >,
     pub emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
-    pub emit_str: Arc<dyn Fn(&InstructionData) -> String + Send + Sync>,
+    pub emit_str: Arc<dyn Fn(&InstructionData, &Module) -> String + Send + Sync>,
 }
 
 impl InstructionCoding {
@@ -671,7 +673,7 @@ impl InstructionCoding {
             }),
             // default should emit the opcode byte; and if opcode is 0xfc or 0xfd, emit the subopcode byte too
             emit_bytes: Arc::new(move |_| vec![opcode]),
-            emit_str: Arc::new(move |_| name.to_string()),
+            emit_str: Arc::new(move |_, _| name.to_string()),
         }
     }
 
@@ -702,7 +704,7 @@ impl InstructionCoding {
                 // bytes[2..].to_vec()
                 bytes
             }),
-            emit_str: Arc::new(move |_| name.to_string()),
+            emit_str: Arc::new(move |_, _| name.to_string()),
         }
     }
 
@@ -723,7 +725,7 @@ impl InstructionCoding {
             name,
             parse_bytes,
             emit_bytes: Arc::new(move |_| vec![opcode]),
-            emit_str: Arc::new(move |_| name.to_string()),
+            emit_str: Arc::new(move |_, _| name.to_string()),
         }
     }
 
@@ -738,7 +740,7 @@ impl InstructionCoding {
                 + Sync,
         >,
         emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
-        emit_str: Arc<dyn Fn(&InstructionData) -> String + Send + Sync>,
+        emit_str: Arc<dyn Fn(&InstructionData, &Module) -> String + Send + Sync>,
     ) -> Self {
         Self {
             typ,
@@ -785,7 +787,7 @@ impl InstructionCoding {
                 }
                 bytes
             }),
-            emit_str: Arc::new(move |_| name.to_string()),
+            emit_str: Arc::new(move |_, _| name.to_string()),
         }
     }
 }
@@ -819,7 +821,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::BlockInstruction { blocktype } = &data {
                         if blocktype == &BlockType::Empty {
                             "block".to_string()
@@ -861,7 +863,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::BlockInstruction { blocktype } = &data {
                         if blocktype == &BlockType::Empty {
                             "loop".to_string()
@@ -895,7 +897,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::BlockInstruction { blocktype } = &data {
                         if blocktype == &BlockType::Empty {
                             "if".to_string()
@@ -930,7 +932,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::LabelledInstruction { label_index } = &data {
                         format!("br {}", label_index)
                     } else {
@@ -960,7 +962,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::LabelledInstruction { label_index } = &data {
                         format!("br_if {}", label_index)
                     } else {
@@ -997,7 +999,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::TableLabelledInstruction {
                         labels,
                         label_index,
@@ -1036,9 +1038,16 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, module| {
                     if let InstructionData::FunctionInstruction { function_index } = &data {
-                        format!("call {}", function_index)
+                        format!(
+                            "call {}{}",
+                            function_index,
+                            match module.get_function_name(*function_index) {
+                                Some(name) => format!(" <{}>", name),
+                                None => "".to_string(),
+                            }
+                        )
                     } else {
                         panic!("expected local instruction");
                     }
@@ -1073,7 +1082,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::IndirectInstruction {
                         type_index,
                         table_index,
@@ -1152,7 +1161,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::LocalInstruction { local_index } = &data {
                         format!("local.get {}", local_index)
                     } else {
@@ -1182,7 +1191,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::LocalInstruction { local_index } = &data {
                         format!("local.set {}", local_index)
                     } else {
@@ -1212,7 +1221,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::LocalInstruction { local_index } = &data {
                         format!("local.tee {}", local_index)
                     } else {
@@ -1242,7 +1251,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::GlobalInstruction { global_index } = &data {
                         format!("global.get {}", global_index)
                     } else {
@@ -1272,7 +1281,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::GlobalInstruction { global_index } = &data {
                         format!("global.set {}", global_index)
                     } else {
@@ -1342,7 +1351,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::TableInitInstruction {
                         subopcode_bytes: _,
                         elem_index,
@@ -1386,7 +1395,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::ElemInstruction {
                         subopcode_bytes: _,
                         elem_index,
@@ -1433,7 +1442,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::TableCopyInstruction {
                         subopcode_bytes: _,
                         src_table_index,
@@ -1477,7 +1486,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::TableInstruction {
                         subopcode_bytes: _,
                         table_index,
@@ -1520,7 +1529,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::TableInstruction {
                         subopcode_bytes: _,
                         table_index,
@@ -1563,7 +1572,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::TableInstruction {
                         subopcode_bytes: _,
                         table_index,
@@ -1605,7 +1614,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1646,7 +1655,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1687,7 +1696,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1728,7 +1737,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1771,7 +1780,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1812,7 +1821,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1853,7 +1862,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1894,7 +1903,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1935,7 +1944,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -1976,7 +1985,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2017,7 +2026,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2058,7 +2067,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2099,7 +2108,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2140,7 +2149,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2181,7 +2190,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2222,7 +2231,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2263,7 +2272,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2304,7 +2313,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2345,7 +2354,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2386,7 +2395,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2427,7 +2436,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2468,7 +2477,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2509,7 +2518,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::MemoryInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -2558,7 +2567,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|_| vec![0x40, 0x0]),
-                Arc::new(|_| format!("memory.grow 0")),
+                Arc::new(|_, _| format!("memory.grow 0")),
             ),
             InstructionCoding::new_with_options(
                 InstructionType::MemoryInit,
@@ -2598,7 +2607,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::DataInstruction {
                         subopcode_bytes: _,
                         data_index,
@@ -2640,7 +2649,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::DataInstruction {
                         subopcode_bytes: _,
                         data_index,
@@ -2681,7 +2690,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|_| format!("memory.copy 0 0")),
+                Arc::new(|_, _| format!("memory.copy 0 0")),
             ),
             InstructionCoding::new_with_options(
                 InstructionType::MemoryFill,
@@ -2711,7 +2720,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|_| format!("memory.fill 0")),
+                Arc::new(|_, _| format!("memory.fill 0")),
             ),
             // Numeric instructions¶ -------------------------------------------
             InstructionCoding::new_with_options(
@@ -2736,7 +2745,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::I32Instruction { value } = &data {
                         format!("i32.const {}", value)
                     } else {
@@ -2766,7 +2775,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::I64Instruction { value } = &data {
                         format!("i64.const {}", value)
                     } else {
@@ -2796,7 +2805,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::F32Instruction { value } = &data {
                         format!("f32.const {}", value.to_hex())
                     } else {
@@ -2826,7 +2835,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::F64Instruction { value } = &data {
                         format!("f64.const {}", value.to_hex())
                     } else {
@@ -3168,7 +3177,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3216,7 +3225,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3264,7 +3273,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3312,7 +3321,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3360,7 +3369,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3408,7 +3417,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3456,7 +3465,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3504,7 +3513,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes: _,
                         memarg,
@@ -3547,7 +3556,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128Instruction {
                         subopcode_bytes: _,
                         value,
@@ -3596,7 +3605,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LanesInstruction {
                         subopcode_bytes: _,
                         lane_indices,
@@ -3644,7 +3653,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3685,7 +3694,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3726,7 +3735,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3767,7 +3776,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3808,7 +3817,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3849,7 +3858,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3890,7 +3899,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3931,7 +3940,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -3972,7 +3981,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -4013,7 +4022,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -4054,7 +4063,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -4095,7 +4104,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -4136,7 +4145,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
@@ -4177,7 +4186,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data| {
+                Arc::new(|data, _| {
                     if let InstructionData::V128LaneInstruction {
                         subopcode_bytes: _,
                         lane_index,
