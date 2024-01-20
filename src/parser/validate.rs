@@ -19,6 +19,9 @@ pub enum ValidationError {
     #[error("unknown local")]
     UnknownLocal,
 
+    #[error("unknown global")]
+    UnknownGlobal,
+
     #[error("unknown label")]
     UnknownLabel,
 
@@ -36,6 +39,77 @@ pub enum ValidationError {
 
     #[error("alignment must not be larger than natural")]
     BadAlignment,
+}
+
+pub trait Validator {
+    fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError>;
+    fn ended(&mut self) -> bool;
+}
+
+pub struct ConstantExpressionValidator<'a> {
+    globals: &'a Vec<GlobalType>,
+    return_type: ValueType,
+    has_end: bool,
+}
+
+impl ConstantExpressionValidator<'_> {
+    pub fn new<'a>(
+        globals: &'a Vec<GlobalType>,
+        return_type: super::module::ValueType,
+    ) -> ConstantExpressionValidator<'a> {
+        ConstantExpressionValidator {
+            globals,
+            return_type,
+            has_end: false,
+        }
+    }
+}
+
+impl Validator for ConstantExpressionValidator<'_> {
+    fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError> {
+        match inst.get_type() {
+            // const type must match self.return_type
+            I32Const => (self.return_type == I32)
+                .then(|| ())
+                .ok_or(ValidationError::TypeMismatch),
+            I64Const => (self.return_type == I64)
+                .then(|| ())
+                .ok_or(ValidationError::TypeMismatch),
+            F32Const => (self.return_type == F32)
+                .then(|| ())
+                .ok_or(ValidationError::TypeMismatch),
+            F64Const => (self.return_type == F64)
+                .then(|| ())
+                .ok_or(ValidationError::TypeMismatch),
+            RefNull => (self.return_type == FuncRef || self.return_type == ExternRef)
+                .then(|| ())
+                .ok_or(ValidationError::TypeMismatch),
+            RefFunc => (self.return_type == FuncRef || self.return_type == ExternRef)
+                .then(|| ())
+                .ok_or(ValidationError::TypeMismatch), // TODO: should check that the function index exists? but this implies the functions section is required
+            GlobalGet => {
+                // TODO: globals are further constrained in that they must be imported, do that here by requiring imports too?
+                if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
+                    match self.globals.get(gi as usize) {
+                        Some(global) if !global.mutable => Ok(()),
+                        Some(_) => Err(ValidationError::InvalidInstruction),
+                        None => Err(ValidationError::UnknownGlobal),
+                    }
+                } else {
+                    Err(ValidationError::InvalidInstruction)
+                }
+            }
+            End => {
+                self.has_end = true;
+                Ok(())
+            }
+            _ => Err(ValidationError::InvalidInstruction),
+        }
+    }
+
+    fn ended(&mut self) -> bool {
+        self.has_end
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -85,7 +159,7 @@ struct CtrlFrame {
 }
 
 // TODO: this should probably just augment the Module Unit itself so we have access to all of this
-pub struct Validator<'a> {
+pub struct CodeValidator<'a> {
     types: &'a super::module::TypeSection,
     functions: &'a super::module::FunctionSection,
     globals: &'a Vec<GlobalType>,
@@ -97,7 +171,7 @@ pub struct Validator<'a> {
     need_end: bool,
 }
 
-fn function_type<'a>(
+pub fn function_type<'a>(
     types: &'a super::module::TypeSection,
     functions: &'a super::module::FunctionSection,
     fi: u32,
@@ -109,25 +183,25 @@ fn function_type<'a>(
     Ok(ftype)
 }
 
-impl<'a> Validator<'a> {
+impl<'a> CodeValidator<'a> {
     pub fn new<'b>(
         types: &'b super::module::TypeSection,
         functions: &'b super::module::FunctionSection,
         globals: &'b Vec<GlobalType>,
         data_count: u32,
         locals: &'b super::module::Locals,
-        function_index: u32,
-    ) -> Validator<'b> {
+        function_type: &'b FunctionType,
+    ) -> CodeValidator<'b> {
         // TODO: should we Result<> this?
-        let ftype = function_type(types, functions, function_index).unwrap();
+        // let ftype: &FunctionType = function_type(types, functions, function_index).unwrap();
 
-        let mut v = Validator {
+        let mut v = CodeValidator {
             types,
             functions,
             globals,
             data_count,
             locals,
-            params: ftype.parameters.clone(),
+            params: function_type.parameters.clone(),
             vals: vec![],
             ctrls: vec![],
             need_end: false,
@@ -135,7 +209,7 @@ impl<'a> Validator<'a> {
 
         // push the return types but leave the parameters blank as they aren't on the stack
         // until explicitly loaded with local.get
-        let end_types = ftype.return_types.iter().map(|v| Val(*v)).collect();
+        let end_types = function_type.return_types.iter().map(|v| Val(*v)).collect();
         v.push_ctrl(Block, vec![], end_types);
 
         v
@@ -276,7 +350,7 @@ impl<'a> Validator<'a> {
     fn global(&mut self, global_index: u32) -> Result<&GlobalType, ValidationError> {
         self.globals
             .get(global_index as usize)
-            .ok_or(ValidationError::UnknownLocal)
+            .ok_or(ValidationError::UnknownGlobal)
     }
 
     fn label_types_at(&mut self, li: u32) -> Result<Vec<MaybeValue>, ValidationError> {
@@ -295,8 +369,10 @@ impl<'a> Validator<'a> {
     fn function_type(&mut self, fi: u32) -> Result<&FunctionType, ValidationError> {
         return function_type(self.types, self.functions, fi);
     }
+}
 
-    pub fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError> {
+impl Validator for CodeValidator<'_> {
+    fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError> {
         match inst.get_type() {
             I32Const => self
                 .push_val(Val(I32_VALUE))
@@ -604,6 +680,12 @@ impl<'a> Validator<'a> {
                 Ok(())
             }
 
+            MemoryFill | MemoryCopy => {
+                self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
+                    .ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
+            }
+
             MemoryInit => {
                 // TODO: check that the memory index exists
                 if self.data_count == 0 {
@@ -611,6 +693,21 @@ impl<'a> Validator<'a> {
                 }
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
+            }
+
+            TableInit | TableCopy => {
+                // TODO: check that the destination table index exists
+                // TODO: check that the source element index exists (for TableInit)
+                // TODO: check that the source table index exists (for TableInit)
+                // TODO: check that the reference type of the source and destination match
+                self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
+                    .ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
+            }
+
+            ElemDrop => {
+                // TODO: check that the element index exists
                 Ok(())
             }
 
@@ -883,7 +980,7 @@ impl<'a> Validator<'a> {
         }
     }
 
-    pub fn ended(&mut self) -> bool {
+    fn ended(&mut self) -> bool {
         self.need_end && self.ctrls.is_empty()
     }
 }

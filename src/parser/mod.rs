@@ -114,6 +114,13 @@ fn read_sections(
                 )
                 .into());
             }
+            if unit.data.has_position() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "data section before types section",
+                )
+                .into());
+            }
             read_section_type(bytes, &mut unit.types)?;
             &mut unit.types as &mut dyn module::Positional
         }
@@ -133,6 +140,13 @@ fn read_sections(
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unexpected content after last section",
+                )
+                .into());
+            }
+            if unit.data.has_position() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "data section before functions section",
                 )
                 .into());
             }
@@ -202,11 +216,11 @@ fn read_sections(
                 )
                 .into());
             }
-            read_section_elements(bytes, &mut unit.elements)?;
+            read_section_elements(bytes, &unit.globals, &mut unit.elements)?;
             &mut unit.elements as &mut dyn module::Positional
         }
         10 => {
-            if unit.data_count.has_position() {
+            if unit.code.has_position() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unexpected content after last section",
@@ -231,7 +245,7 @@ fn read_sections(
                 )
                 .into());
             }
-            read_section_data(bytes, &mut unit.data)?;
+            read_section_data(bytes, &unit.globals, &mut unit.data)?;
             &mut unit.data as &mut dyn module::Positional
         }
         12 => {
@@ -468,11 +482,7 @@ fn read_section_code(
         let instructions: Vec<ast::Instruction> = ast::Instruction::decode_function(
             &types,
             &functions,
-            &globals
-                .globals
-                .iter()
-                .map(|g| g.global_type.clone())
-                .collect::<Vec<_>>(),
+            &&globals.into(),
             data_count,
             &locals,
             code.len() as u32,
@@ -517,21 +527,32 @@ fn read_section_code(
 }
 
 impl module::Data {
-    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+    pub fn decode(
+        bytes: &mut reader::Reader,
+        globals: &module::GlobalSection,
+    ) -> Result<Self, ast::DecodeError> {
         let mut mode = module::DataMode::Passive;
         let typ = bytes.read_vu32()?;
         match typ {
             0 => {
                 mode = module::DataMode::Active {
                     memory_index: 0,
-                    offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm this should be constant expr & signature type
+                    offset: ast::Instruction::decode_constant_expression(
+                        bytes,
+                        &globals.into(),
+                        module::ValueType::I32,
+                    )?, // TODO: confirm this should be constant expr & signature type
                 };
             }
             1 => {} // nothing else needed
             2 => {
                 mode = module::DataMode::Active {
                     memory_index: bytes.read_vu32()?,
-                    offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm this should be constant expr & signature type
+                    offset: ast::Instruction::decode_constant_expression(
+                        bytes,
+                        &globals.into(),
+                        module::ValueType::I32,
+                    )?, // TODO: confirm this should be constant expr & signature type
                 };
             }
             _ => Err(io::Error::new(
@@ -549,12 +570,13 @@ impl module::Data {
 
 fn read_section_data(
     bytes: &mut reader::Reader,
+    globals: &module::GlobalSection,
     datas: &mut module::DataSection,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let data = module::Data::decode(bytes)?;
+        let data = module::Data::decode(bytes, globals)?;
         println!("data type: {:?}", data);
         datas.data.push(data);
     }
@@ -630,11 +652,18 @@ impl module::GlobalType {
 }
 
 impl module::Global {
-    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+    pub fn decode(
+        bytes: &mut reader::Reader,
+        globals: &module::GlobalSection,
+    ) -> Result<Self, ast::DecodeError> {
         let global_type = module::GlobalType::decode(bytes)?;
         Ok(module::Global {
             global_type,
-            init: consume_constant_expr(bytes, global_type.value_type)?, // TODO: confirm this should be constant expr & signature type
+            init: ast::Instruction::decode_constant_expression(
+                bytes,
+                &globals.into(),
+                global_type.value_type,
+            )?,
         })
     }
 }
@@ -646,7 +675,7 @@ fn read_section_global(
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let data = module::Global::decode(bytes)?;
+        let data = module::Global::decode(bytes, globals)?;
         println!("global: {:?}", data);
         globals.globals.push(data);
     }
@@ -719,7 +748,10 @@ fn read_section_start(
 }
 
 impl module::Element {
-    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+    pub fn decode(
+        bytes: &mut reader::Reader,
+        globals: &module::GlobalSection,
+    ) -> Result<Self, ast::DecodeError> {
         let read_type = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
             let byte = bytes.read_byte()?;
             match byte {
@@ -751,7 +783,11 @@ impl module::Element {
             let mut init: Vec<Vec<ast::Instruction>> = vec![];
             for _ in 0..count {
                 // TODO: does this need to be a constant expression? probably, also confirm signautre
-                init.push(consume_constant_expr(bytes, return_type)?);
+                init.push(ast::Instruction::decode_constant_expression(
+                    bytes,
+                    &globals.into(),
+                    return_type,
+                )?);
             }
             Ok(init)
         };
@@ -801,7 +837,11 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: consume_constant_expr(bytes, module::ValueType::I32)?,
+                        offset: ast::Instruction::decode_constant_expression(
+                            bytes,
+                            &globals.into(),
+                            module::ValueType::I32,
+                        )?,
                     },
                     init: read_func_index_init(bytes)?,
                 })
@@ -821,7 +861,11 @@ impl module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
-                        offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm is constant expr && signautre type
+                        offset: ast::Instruction::decode_constant_expression(
+                            bytes,
+                            &globals.into(),
+                            module::ValueType::I32,
+                        )?, // TODO: confirm is constant expr && signautre type
                     },
                     ref_type: read_element_kind(bytes)?,
                     init: read_func_index_init(bytes)?,
@@ -843,7 +887,11 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: consume_constant_expr(bytes, module::ValueType::I32)?, // TODO: confirm is constant expr && signautre type
+                        offset: ast::Instruction::decode_constant_expression(
+                            bytes,
+                            &globals.into(),
+                            module::ValueType::I32,
+                        )?, // TODO: confirm is constant expr && signautre type
                     },
                     init: read_init(bytes, module::ValueType::FuncRef)?,
                 })
@@ -862,7 +910,11 @@ impl module::Element {
             6 => {
                 // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
                 let table_index = read_table_index(bytes)?;
-                let offset = consume_constant_expr(bytes, module::ValueType::I32)?;
+                let offset = ast::Instruction::decode_constant_expression(
+                    bytes,
+                    &globals.into(),
+                    module::ValueType::I32,
+                )?;
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, (&ref_type).into())?;
                 Ok(module::Element {
@@ -897,22 +949,16 @@ impl module::Element {
 
 fn read_section_elements(
     bytes: &mut reader::Reader,
+    globals: &module::GlobalSection,
     elements: &mut module::ElementSection,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let element = module::Element::decode(bytes)?;
+        let element = module::Element::decode(bytes, globals)?;
         println!("table type: {:?}", element);
         elements.push(element);
     }
 
     Ok(())
-}
-
-fn consume_constant_expr(
-    bytes: &mut reader::Reader,
-    return_type: module::ValueType,
-) -> Result<Vec<ast::Instruction>, ast::DecodeError> {
-    ast::Instruction::decode_expression(bytes, return_type)
 }

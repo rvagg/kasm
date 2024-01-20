@@ -2583,15 +2583,16 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfc, 0x8];
+                    let mut bytes = vec![0xfc];
                     if let InstructionData::DataInstruction {
                         subopcode_bytes,
                         data_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut data_index_bytes = reader::emit_vu32(*data_index);
                         bytes.append(&mut data_index_bytes);
-                        bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(0x0);
                     } else {
                         panic!("expected data instruction");
                     }
@@ -2625,15 +2626,15 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfc, 0x9];
+                    let mut bytes = vec![0xfc];
                     if let InstructionData::DataInstruction {
                         subopcode_bytes,
                         data_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut data_index_bytes = reader::emit_vu32(*data_index);
                         bytes.append(&mut data_index_bytes);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected data instruction");
                     }
@@ -2645,7 +2646,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         data_index,
                     } = &data
                     {
-                        format!("data.drop {} 0", data_index)
+                        format!("data.drop {}", data_index)
                     } else {
                         panic!("expected data instruction");
                     }
@@ -2663,24 +2664,55 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         if bytes.read_byte()? != 0x0 || bytes.read_byte()? != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
-                                "expected 0x0 0x0 for memory copy",
+                                "expected 0x0 0x0 for memory.copy",
                             ));
                         }
                         Ok(InstructionData::SimpleInstruction { subopcode_bytes })
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfc, 0xa, 0x0, 0x0];
+                    let mut bytes = vec![0xfc];
                     if let InstructionData::SimpleInstruction { subopcode_bytes } = &data {
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(0x0);
+                        bytes.push(0x0);
                     } else {
                         panic!("expected simple instruction");
                     }
                     bytes
                 }),
-                Arc::new(|_| format!("memory.copy")),
+                Arc::new(|_| format!("memory.copy 0 0")),
             ),
-            InstructionCoding::new_simple_sub(InstructionType::MemoryFill, 0xfc, 11, "memory.fill"),
+            InstructionCoding::new_with_options(
+                InstructionType::MemoryFill,
+                0xfc,
+                11,
+                "memory.fill",
+                Arc::new(
+                    |bytes: &mut super::reader::Reader,
+                     subopcode_bytes: Vec<u8>|
+                     -> Result<InstructionData, io::Error> {
+                        if bytes.read_byte()? != 0x0 {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "expected 0x0 for memory.fill",
+                            ));
+                        }
+                        Ok(InstructionData::SimpleInstruction { subopcode_bytes })
+                    },
+                ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0xfc];
+                    if let InstructionData::SimpleInstruction { subopcode_bytes } = &data {
+                        bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(0x0);
+                    } else {
+                        panic!("expected simple instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|_| format!("memory.fill 0")),
+            ),
             // Numeric instructions¶ -------------------------------------------
             InstructionCoding::new_with_options(
                 InstructionType::I32Const,
@@ -3118,19 +3150,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x54];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3166,19 +3198,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x55];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3214,19 +3246,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x56];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3262,19 +3294,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x57];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3310,19 +3342,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x58];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3358,19 +3390,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x59];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3406,19 +3438,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x5a];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3454,19 +3486,19 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     },
                 ),
                 Arc::new(|data| {
-                    let mut bytes = vec![0xfd, 0x5b];
+                    let mut bytes = vec![0xfd];
                     if let InstructionData::V128MemoryLaneInstruction {
                         subopcode_bytes,
                         memarg,
                         lane_index,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut memarg_bytes = reader::emit_vu32(memarg.0);
                         bytes.append(&mut memarg_bytes);
                         let mut memarg_bytes = reader::emit_vu32(memarg.1);
                         bytes.append(&mut memarg_bytes);
                         bytes.push(*lane_index);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected memory instruction");
                     }
@@ -3507,9 +3539,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         value,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut value_bytes = reader::emit_v128(*value);
                         bytes.append(&mut value_bytes);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected v128 instruction");
                     }
@@ -3556,9 +3588,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_indices,
                     } = &data
                     {
+                        bytes.append(&mut subopcode_bytes.clone());
                         let mut lane_indices_bytes = reader::emit_u8vec(lane_indices);
                         bytes.append(&mut lane_indices_bytes);
-                        bytes.append(&mut subopcode_bytes.clone());
                     } else {
                         panic!("expected v128 lanes instruction");
                     }
@@ -3605,8 +3637,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3646,8 +3678,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3687,8 +3719,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3728,8 +3760,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3769,8 +3801,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3810,8 +3842,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3851,8 +3883,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3892,8 +3924,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3933,8 +3965,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3974,8 +4006,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4015,8 +4047,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4056,8 +4088,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4097,8 +4129,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4138,8 +4170,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        bytes.push(*lane_index);
                         bytes.append(&mut subopcode_bytes.clone());
+                        bytes.push(*lane_index);
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4876,40 +4908,14 @@ impl From<super::validate::ValidationError> for DecodeError {
 }
 
 impl Instruction {
-    pub fn decode_expression(
+    pub fn decode_constant_expression(
         bytes: &mut super::reader::Reader,
+        globals: &Vec<super::module::GlobalType>,
         return_type: super::module::ValueType,
-        // TODO: accpet maximum length here
     ) -> Result<Vec<Instruction>, DecodeError> {
-        let mut types = super::module::TypeSection::new();
-        let mut functions = super::module::FunctionSection::new();
-        let locals = super::module::Locals::empty();
-        let globals = &vec![];
-        let ftype = super::module::FunctionType {
-            // TODO: confirm this is the right signature for these: [0,n]=>[x]
-            parameters: vec![],
-            return_types: vec![return_type],
-        };
-        types.types.push(ftype);
-        functions
-            .functions
-            .push(super::module::Function { ftype_index: 0 });
-
-        let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadTillEnd);
-        let mut instructions: Vec<Instruction> = vec![];
-        let mut validator =
-            super::validate::Validator::new(&types, &functions, &globals, 0, &locals, 0);
-        for result in instruction_iter {
-            let instruction = result?;
-            validator
-                .validate(&instruction)
-                .map_err(|e| DecodeError::from(e))?;
-            instructions.push(instruction);
-            if validator.ended() {
-                return Ok(instructions);
-            }
-        }
-        Err(io::Error::new(io::ErrorKind::UnexpectedEof, "END opcode expected").into())
+        let mut validator: super::validate::ConstantExpressionValidator<'_> =
+            super::validate::ConstantExpressionValidator::new(&globals, return_type);
+        decode_validate(&mut validator, ParseType::ReadTillEnd, bytes)
     }
 
     pub fn decode_function(
@@ -4921,30 +4927,33 @@ impl Instruction {
         function_index: u32,
         bytes: &mut super::reader::Reader,
     ) -> Result<Vec<Instruction>, DecodeError> {
-        // let end_pos = start_pos + byte_length as usize;
-        let instruction_iter = InstructionIterator::new(bytes, ParseType::ReadAll);
-        let mut instructions: Vec<Instruction> = vec![];
-        let mut validator = super::validate::Validator::new(
-            &types,
-            &functions,
-            &globals,
-            data_count,
-            &locals,
-            function_index,
+        let ftype = super::validate::function_type(types, functions, function_index)?;
+        let mut validator = super::validate::CodeValidator::new(
+            &types, &functions, &globals, data_count, &locals, &ftype,
         );
-        for result in instruction_iter {
-            let instruction = result?;
-            // current_pos = instruction.byte_offset + instruction.byte_length;
-            validator
-                .validate(&instruction)
-                .map_err(|e| DecodeError::from(e))?;
-            instructions.push(instruction);
-            if validator.ended() {
-                return Ok(instructions);
-            }
-        }
-        Err(io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into())
+        decode_validate(&mut validator, ParseType::ReadAll, bytes)
     }
+}
+
+fn decode_validate<T: super::validate::Validator>(
+    validator: &mut T,
+    parse_type: ParseType,
+    bytes: &mut super::reader::Reader,
+) -> Result<Vec<Instruction>, DecodeError> {
+    let instruction_iter = InstructionIterator::new(bytes, parse_type);
+    let mut instructions: Vec<Instruction> = vec![];
+    for result in instruction_iter {
+        let instruction = result?;
+        // current_pos = instruction.byte_offset + instruction.byte_length;
+        validator
+            .validate(&instruction)
+            .map_err(|e| DecodeError::from(e))?;
+        instructions.push(instruction);
+        if validator.ended() {
+            return Ok(instructions);
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end").into())
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]

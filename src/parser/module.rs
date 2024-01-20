@@ -378,6 +378,16 @@ impl GlobalSection {
     }
 }
 
+impl From<&GlobalSection> for Vec<GlobalType> {
+    fn from(section: &GlobalSection) -> Self {
+        section
+            .globals
+            .iter()
+            .map(|g| g.global_type.clone())
+            .collect()
+    }
+}
+
 impl SectionToString for GlobalSection {
     fn to_header_string(&self) -> String {
         format!(
@@ -845,7 +855,15 @@ impl CodeSection {
                 // a bug in wabt when it comes to printing subopcodes that are encoded with more
                 // bytes than necessary, as per binary-leb128.81.wasm.
                 // TODO: figure out why and maybe fix upstream so we can ditch this garbage
-                let crop_last_2 = coding_bytes.len() > 2 && coding_bytes[0] >= 0xfc;
+                let crop_last_2 = coding_bytes.len() > 2
+                    && coding_bytes[0] >= 0xfc
+                    && coding.subopcode != /* memory.init gets an out */ 8
+                    && coding.subopcode != /* data.drop gets an out */ 9
+                    && coding.subopcode != /* memory.copy gets an out */ 10
+                    && coding.subopcode != /* memory.fill gets an out */ 11
+                    && coding.subopcode != /* table.init gets an out */ 12
+                    && coding.subopcode != /* elem.drop gets an out */ 13
+                    && coding.subopcode != /* table.copy gets an out */ 14;
                 let mut p = pos as u32;
                 // if crop_last_2, correct p to account for the skipped bytes
                 if crop_last_2 {
@@ -915,6 +933,18 @@ impl DataCountSection {
             count: 0,
             position: SectionPosition::new(0, 0),
         }
+    }
+}
+
+impl SectionToString for DataCountSection {
+    fn to_header_string(&self) -> String {
+        format!("{} count: {}", self.position.to_string(), self.count)
+    }
+
+    fn to_details_string(&self, _: &Module) -> String {
+        let mut result = String::new();
+        result.push_str(&format!("DataCount:\n - data count: {}\n", self.count));
+        result
     }
 }
 
@@ -1451,6 +1481,12 @@ impl Module {
         if self.elements.has_position() {
             result.push_str(&format!("     Elem {}\n", self.elements.to_header_string()));
         }
+        if self.data_count.has_position() {
+            result.push_str(&format!(
+                "DataCount {}\n",
+                self.data_count.to_header_string()
+            ));
+        }
         if self.code.has_position() {
             result.push_str(&format!("     Code {}\n", self.code.to_header_string()));
         }
@@ -1493,6 +1529,9 @@ impl Module {
         }
         if self.elements.has_position() {
             result.push_str(self.elements.to_details_string(&self).as_str());
+        }
+        if self.data_count.has_position() {
+            result.push_str(self.data_count.to_details_string(&self).as_str());
         }
         if self.code.has_position() {
             result.push_str(self.code.to_details_string(&self).as_str());
