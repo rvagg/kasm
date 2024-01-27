@@ -23,7 +23,7 @@ pub struct Module {
     pub code: CodeSection,
     pub data: DataSection,
     pub data_count: DataCountSection,
-    pub custom: CustomSection,
+    pub custom: Vec<CustomSection>,
 }
 
 impl Module {
@@ -138,6 +138,7 @@ impl ToString for SectionPosition {
 pub trait Positional {
     fn set_position(&mut self, start: u32, end: u32);
     fn has_position(&self) -> bool;
+    fn get_position(&self) -> Option<SectionPosition>;
 }
 
 macro_rules! impl_positional {
@@ -151,6 +152,13 @@ macro_rules! impl_positional {
 
                 fn has_position(&self) -> bool {
                     self.position.start != 0 || self.position.end != 0
+                }
+                fn get_position(&self) -> Option<SectionPosition> {
+                    if self.has_position() {
+                        Some(SectionPosition::new(self.position.start, self.position.end))
+                    } else {
+                        None
+                    }
                 }
             }
         )*
@@ -174,6 +182,7 @@ impl_positional!(
 );
 
 pub trait SectionToString {
+    fn header_prefix(&self) -> &'static str;
     fn to_header_string(&self) -> String;
     fn to_details_string(&self, unit: &Module) -> String;
 }
@@ -206,6 +215,10 @@ impl TypeSection {
 }
 
 impl SectionToString for TypeSection {
+    fn header_prefix(&self) -> &'static str {
+        "Type"
+    }
+
     fn to_header_string(&self) -> String {
         format!("{} count: {}", self.position.to_string(), self.types.len())
     }
@@ -240,6 +253,10 @@ impl ImportSection {
 }
 
 impl SectionToString for ImportSection {
+    fn header_prefix(&self) -> &'static str {
+        "Import"
+    }
+
     fn to_header_string(&self) -> String {
         format!(
             "{} count: {}",
@@ -282,6 +299,10 @@ impl FunctionSection {
 }
 
 impl SectionToString for FunctionSection {
+    fn header_prefix(&self) -> &'static str {
+        "Function"
+    }
+
     fn to_header_string(&self) -> String {
         format!(
             "{} count: {}",
@@ -324,6 +345,10 @@ impl TableSection {
 }
 
 impl SectionToString for TableSection {
+    fn header_prefix(&self) -> &'static str {
+        "Table"
+    }
+
     fn to_header_string(&self) -> String {
         format!("{} count: {}", self.position.to_string(), self.table.len())
     }
@@ -358,6 +383,10 @@ impl MemorySection {
 }
 
 impl SectionToString for MemorySection {
+    fn header_prefix(&self) -> &'static str {
+        "Memory"
+    }
+
     fn to_header_string(&self) -> String {
         format!("{} count: {}", self.position.to_string(), self.memory.len())
     }
@@ -407,6 +436,10 @@ impl From<&GlobalSection> for Vec<GlobalType> {
 }
 
 impl SectionToString for GlobalSection {
+    fn header_prefix(&self) -> &'static str {
+        "Global"
+    }
+
     fn to_header_string(&self) -> String {
         format!(
             "{} count: {}",
@@ -500,6 +533,10 @@ impl ExportSection {
 }
 
 impl SectionToString for ExportSection {
+    fn header_prefix(&self) -> &'static str {
+        "Export"
+    }
+
     fn to_header_string(&self) -> String {
         format!(
             "{} count: {}",
@@ -543,6 +580,10 @@ impl StartSection {
 }
 
 impl SectionToString for StartSection {
+    fn header_prefix(&self) -> &'static str {
+        "Start"
+    }
+
     fn to_header_string(&self) -> String {
         format!("{} start: {}", self.position.to_string(), self.start)
     }
@@ -735,6 +776,10 @@ fn init_expr_to_string(
 }
 
 impl SectionToString for ElementSection {
+    fn header_prefix(&self) -> &'static str {
+        "Elem"
+    }
+
     fn to_header_string(&self) -> String {
         format!(
             "{} count: {}",
@@ -799,6 +844,10 @@ impl CodeSection {
 }
 
 impl SectionToString for CodeSection {
+    fn header_prefix(&self) -> &'static str {
+        "Code"
+    }
+
     fn to_header_string(&self) -> String {
         format!("{} count: {}", self.position.to_string(), self.code.len())
     }
@@ -1011,6 +1060,10 @@ impl DataCountSection {
 }
 
 impl SectionToString for DataCountSection {
+    fn header_prefix(&self) -> &'static str {
+        "DataCount"
+    }
+
     fn to_header_string(&self) -> String {
         format!("{} count: {}", self.position.to_string(), self.count)
     }
@@ -1040,17 +1093,30 @@ impl CustomSection {
 }
 
 impl SectionToString for CustomSection {
+    fn header_prefix(&self) -> &'static str {
+        "Custom"
+    }
+
     fn to_header_string(&self) -> String {
         format!(
             "{} \"{}\"",
             self.position.to_string(),
-            self.name.to_string()
+            self.name
+                .split('\0') // TODO: this is a hack to replicate C++ printing behaviour to match wabt output
+                .next()
+                .unwrap_or(&self.name)
         )
     }
 
     fn to_details_string(&self, _: &Module) -> String {
         let mut result = String::new();
-        result.push_str(&format!("Custom:\n - name: \"{}\"\n", self.name));
+        result.push_str(&format!(
+            "Custom:\n - name: \"{}\"\n",
+            self.name
+                .split('\0') // TODO: this is a hack to replicate C++ printing behaviour to match wabt output
+                .next()
+                .unwrap_or(&self.name)
+        ));
         result
     }
 }
@@ -1342,6 +1408,10 @@ impl fmt::Display for Data {
 }
 
 impl SectionToString for DataSection {
+    fn header_prefix(&self) -> &'static str {
+        "Data"
+    }
+
     fn to_header_string(&self) -> String {
         format!("{} count: {}", self.position.to_string(), self.data.len())
     }
@@ -1500,7 +1570,7 @@ impl Module {
             code: CodeSection::new(),
             data: DataSection::new(),
             data_count: DataCountSection::new(),
-            custom: CustomSection::new(),
+            custom: Vec::new(),
         }
     }
 }
@@ -1523,52 +1593,37 @@ impl Module {
     }
 
     fn to_header_string(&self) -> String {
-        let mut result = String::new();
+        let mut components: Vec<(&dyn Positional, &dyn SectionToString)> = vec![
+            (&self.types, &self.types),
+            (&self.imports, &self.imports),
+            (&self.functions, &self.functions),
+            (&self.table, &self.table),
+            (&self.memory, &self.memory),
+            (&self.globals, &self.globals),
+            (&self.exports, &self.exports),
+            (&self.start, &self.start),
+            (&self.elements, &self.elements),
+            (&self.data_count, &self.data_count),
+            (&self.code, &self.code),
+            (&self.data, &self.data),
+        ];
+        components.extend(
+            self.custom
+                .iter()
+                .map(|custom| (custom as &dyn Positional, custom as &dyn SectionToString)),
+        );
 
-        if self.types.has_position() {
-            result.push_str(&format!("     Type {}\n", self.types.to_header_string()));
-        }
-        if self.functions.has_position() {
-            result.push_str(&format!(
-                " Function {}\n",
-                self.functions.to_header_string()
-            ));
-        }
-        if self.table.has_position() {
-            result.push_str(&format!("    Table {}\n", self.table.to_header_string()));
-        }
-        if self.imports.has_position() {
-            result.push_str(&format!("   Import {}\n", self.imports.to_header_string()));
-        }
-        if self.memory.has_position() {
-            result.push_str(&format!("   Memory {}\n", self.memory.to_header_string()));
-        }
-        if self.globals.has_position() {
-            result.push_str(&format!("   Global {}\n", self.globals.to_header_string()));
-        }
-        if self.exports.has_position() {
-            result.push_str(&format!("   Export {}\n", self.exports.to_header_string()));
-        }
-        if self.start.has_position() {
-            result.push_str(&format!("    Start {}\n", self.start.to_header_string()));
-        }
-        if self.elements.has_position() {
-            result.push_str(&format!("     Elem {}\n", self.elements.to_header_string()));
-        }
-        if self.data_count.has_position() {
-            result.push_str(&format!(
-                "DataCount {}\n",
-                self.data_count.to_header_string()
-            ));
-        }
-        if self.code.has_position() {
-            result.push_str(&format!("     Code {}\n", self.code.to_header_string()));
-        }
-        if self.data.has_position() {
-            result.push_str(&format!("     Data {}\n", self.data.to_header_string()));
-        }
-        if self.custom.has_position() {
-            result.push_str(&format!("   Custom {}\n", self.custom.to_header_string()));
+        components.sort_by_key(|(p, _)| p.get_position().map(|pos| pos.start));
+
+        let mut result = String::new();
+        for (p, s) in components {
+            if p.has_position() {
+                result.push_str(&format!(
+                    "{:>9} {}\n",
+                    s.header_prefix(),
+                    s.to_header_string()
+                ));
+            }
         }
 
         result
@@ -1577,44 +1632,32 @@ impl Module {
     fn to_details_string(&self) -> String {
         let mut result = String::new();
 
-        if self.types.has_position() {
-            result.push_str(self.types.to_details_string(&self).as_str());
-        }
-        if self.imports.has_position() {
-            result.push_str(self.imports.to_details_string(&self).as_str());
-        }
-        if self.functions.has_position() {
-            result.push_str(self.functions.to_details_string(&self).as_str());
-        }
-        if self.table.has_position() {
-            result.push_str(self.table.to_details_string(&self).as_str());
-        }
-        if self.memory.has_position() {
-            result.push_str(self.memory.to_details_string(&self).as_str());
-        }
-        if self.globals.has_position() {
-            result.push_str(self.globals.to_details_string(&self).as_str());
-        }
-        if self.exports.has_position() {
-            result.push_str(self.exports.to_details_string(&self).as_str());
-        }
-        if self.start.has_position() {
-            result.push_str(self.start.to_details_string(&self).as_str());
-        }
-        if self.elements.has_position() {
-            result.push_str(self.elements.to_details_string(&self).as_str());
-        }
-        if self.data_count.has_position() {
-            result.push_str(self.data_count.to_details_string(&self).as_str());
-        }
-        if self.code.has_position() {
-            result.push_str(self.code.to_details_string(&self).as_str());
-        }
-        if self.data.has_position() {
-            result.push_str(self.data.to_details_string(&self).as_str());
-        }
-        if self.custom.has_position() {
-            result.push_str(self.custom.to_details_string(&self).as_str());
+        let mut components: Vec<(&dyn Positional, &dyn SectionToString)> = vec![
+            (&self.types, &self.types),
+            (&self.imports, &self.imports),
+            (&self.functions, &self.functions),
+            (&self.table, &self.table),
+            (&self.memory, &self.memory),
+            (&self.globals, &self.globals),
+            (&self.exports, &self.exports),
+            (&self.start, &self.start),
+            (&self.elements, &self.elements),
+            (&self.data_count, &self.data_count),
+            (&self.code, &self.code),
+            (&self.data, &self.data),
+        ];
+        components.extend(
+            self.custom
+                .iter()
+                .map(|custom| (custom as &dyn Positional, custom as &dyn SectionToString)),
+        );
+
+        components.sort_by_key(|(p, _)| p.get_position().map(|pos| pos.start));
+
+        for (p, s) in components {
+            if p.has_position() {
+                result.push_str(s.to_details_string(&self).as_str());
+            }
         }
 
         result

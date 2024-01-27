@@ -254,8 +254,8 @@ fn read_sections(
             &mut unit.data_count as &mut dyn module::Positional
         }
         0 => {
-            read_section_custom(bytes, section_len, &mut unit.custom)?;
-            &mut unit.custom as &mut dyn module::Positional
+            let custom = read_section_custom(bytes, section_len, &mut unit.custom)?;
+            custom as &mut dyn module::Positional
         }
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "malformed section id").into()),
     };
@@ -566,15 +566,25 @@ fn read_section_data(
     Ok(())
 }
 
-fn read_section_custom(
+fn read_section_custom<'a>(
     bytes: &mut reader::Reader,
     read_len: u32,
-    custom: &mut module::CustomSection,
-) -> Result<(), ast::DecodeError> {
+    customs: &'a mut Vec<module::CustomSection>,
+) -> Result<&'a mut module::CustomSection, ast::DecodeError> {
+    let mut custom = module::CustomSection::new();
     let start_pos = bytes.pos();
     custom.name = bytes.read_string()?;
-    custom.data = bytes.read_bytes(read_len as usize - (bytes.pos() - start_pos) as usize)?;
-    Ok(())
+    if bytes.pos() >= start_pos && read_len as usize >= (bytes.pos() - start_pos) as usize {
+        custom.data = bytes.read_bytes(read_len as usize - (bytes.pos() - start_pos) as usize)?;
+        customs.push(custom);
+        if let Some(last_custom) = customs.last_mut() {
+            Ok(last_custom)
+        } else {
+            panic!("custom section not found");
+        }
+    } else {
+        Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end").into())
+    }
 }
 
 fn read_section_datacount(

@@ -34,7 +34,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         }
     }
@@ -86,7 +86,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -96,7 +96,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -106,7 +106,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -116,7 +116,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         }
     }
@@ -126,7 +126,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -136,7 +136,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -146,7 +146,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -156,7 +156,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -166,7 +166,7 @@ impl Reader {
             Some(byte) => Ok(byte),
             None => Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "no more bytes to read",
+                "unexpected end",
             )),
         })
     }
@@ -187,7 +187,7 @@ impl Reader {
                 None => {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
-                        "no more bytes to read",
+                        "unexpected end",
                     ))
                 }
             }
