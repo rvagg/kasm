@@ -10,8 +10,14 @@ pub enum ValidationError {
     #[error("type mismatch")]
     TypeMismatch,
 
-    #[error("unknown function type")]
+    #[error("unknown type")]
     UnknownFunctionType,
+
+    #[error("unknown function")]
+    UnknownFunction,
+
+    #[error("unknown table")]
+    UnknownTable,
 
     #[error("unexpected token")]
     UnexpectedToken,
@@ -160,10 +166,7 @@ struct CtrlFrame {
 
 // TODO: this should probably just augment the Module Unit itself so we have access to all of this
 pub struct CodeValidator<'a> {
-    types: &'a super::module::TypeSection,
-    functions: &'a super::module::FunctionSection,
-    globals: &'a Vec<GlobalType>,
-    data_count: u32,
+    module: &'a super::module::Module,
     locals: &'a super::module::Locals,
     params: Vec<ValueType>,
     vals: Vec<MaybeValue>,
@@ -171,35 +174,14 @@ pub struct CodeValidator<'a> {
     need_end: bool,
 }
 
-pub fn function_type<'a>(
-    types: &'a super::module::TypeSection,
-    functions: &'a super::module::FunctionSection,
-    fi: u32,
-) -> Result<&'a super::module::FunctionType, ValidationError> {
-    let ftype = functions
-        .get(fi as u8)
-        .and_then(|f| types.get(f.ftype_index as u8))
-        .ok_or(ValidationError::UnknownFunctionType)?;
-    Ok(ftype)
-}
-
 impl<'a> CodeValidator<'a> {
-    pub fn new<'b>(
-        types: &'b super::module::TypeSection,
-        functions: &'b super::module::FunctionSection,
-        globals: &'b Vec<GlobalType>,
-        data_count: u32,
-        locals: &'b super::module::Locals,
-        function_type: &'b FunctionType,
-    ) -> CodeValidator<'b> {
-        // TODO: should we Result<> this?
-        // let ftype: &FunctionType = function_type(types, functions, function_index).unwrap();
-
+    pub fn new(
+        module: &'a super::module::Module,
+        locals: &'a super::module::Locals,
+        function_type: &'a FunctionType,
+    ) -> CodeValidator<'a> {
         let mut v = CodeValidator {
-            types,
-            functions,
-            globals,
-            data_count,
+            module,
             locals,
             params: function_type.parameters.clone(),
             vals: vec![],
@@ -348,9 +330,10 @@ impl<'a> CodeValidator<'a> {
     }
 
     fn global(&mut self, global_index: u32) -> Result<&GlobalType, ValidationError> {
-        self.globals
-            .get(global_index as usize)
-            .ok_or(ValidationError::UnknownGlobal)
+        match self.module.globals.globals.get(global_index as usize) {
+            Some(global) => Ok(&global.global_type),
+            None => Err(ValidationError::UnknownGlobal),
+        }
     }
 
     fn label_types_at(&mut self, li: u32) -> Result<Vec<MaybeValue>, ValidationError> {
@@ -366,8 +349,19 @@ impl<'a> CodeValidator<'a> {
         Ok(self.frame_types(frame))
     }
 
-    fn function_type(&mut self, fi: u32) -> Result<&FunctionType, ValidationError> {
-        return function_type(self.types, self.functions, fi);
+    fn get_function_type(&self, fi: u32) -> Result<&FunctionType, ValidationError> {
+        self.module
+            .functions
+            .get(fi as u8)
+            .ok_or(ValidationError::UnknownFunction)
+            .and_then(|f| self.get_type(f.ftype_index))
+    }
+
+    fn get_type(&self, ti: u32) -> Result<&FunctionType, ValidationError> {
+        self.module
+            .types
+            .get(ti as u8)
+            .ok_or(ValidationError::UnknownFunctionType)
     }
 }
 
@@ -688,7 +682,7 @@ impl Validator for CodeValidator<'_> {
 
             MemoryInit => {
                 // TODO: check that the memory index exists
-                if self.data_count == 0 {
+                if self.module.data_count.count == 0 {
                     return Err(ValidationError::DataCountSectionRequired);
                 }
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
@@ -712,7 +706,7 @@ impl Validator for CodeValidator<'_> {
             }
 
             DataDrop => {
-                if self.data_count == 0 {
+                if self.module.data_count.count == 0 {
                     Err(ValidationError::DataCountSectionRequired)
                 } else {
                     Ok(())
@@ -739,6 +733,7 @@ impl Validator for CodeValidator<'_> {
                         // complex [type*]->[type*] version
                         BlockType::TypeIndex(ti) => {
                             let ftype = self
+                                .module
                                 .types
                                 .get(ti as u8)
                                 .ok_or(ValidationError::UnknownBlockType)?;
@@ -861,7 +856,7 @@ impl Validator for CodeValidator<'_> {
                 if let InstructionData::FunctionInstruction { function_index: fi } =
                     *inst.get_data()
                 {
-                    let ftype: &FunctionType = self.function_type(fi)?;
+                    let ftype: &FunctionType = self.get_function_type(fi)?;
                     let parameters: Vec<_> = ftype.parameters.iter().cloned().collect();
                     let return_types: Vec<_> = ftype.return_types.iter().cloned().collect();
 
@@ -887,26 +882,36 @@ impl Validator for CodeValidator<'_> {
 
             CallIndirect => {
                 if let InstructionData::IndirectInstruction {
-                    type_index: ti,
-                    table_index: _,
+                    type_index: typi,
+                    table_index: tabi,
                 } = *inst.get_data()
                 {
                     // TOOD: this probably should check that table_index exists in the table space
+
+                    let table: &super::module::TableType = self
+                        .module
+                        .table
+                        .table
+                        .get(tabi as usize)
+                        .ok_or(ValidationError::UnknownTable)?;
+
+                    if ValueType::from(table.ref_type) != FuncRef {
+                        return Err(ValidationError::TypeMismatch);
+                    }
 
                     // operand that directs us to the table entry
                     self.pop_expected(Val(I32))
                         .ok_or(ValidationError::TypeMismatch)?;
 
                     // table entry must have this function signature
-                    let ftype = self
-                        .types
-                        .get(ti as u8)
-                        .ok_or(ValidationError::UnknownFunctionType)?;
+                    let ftype = self.get_type(typi as u32)?;
                     let parameters: Vec<_> = ftype.parameters.iter().cloned().collect();
                     let return_types: Vec<_> = ftype.return_types.iter().cloned().collect();
 
+                    // parameters are stack ordered, so pick them in reverse
                     parameters
                         .iter()
+                        .rev()
                         .try_for_each(|v| match self.pop_expected(Val(*v)) {
                             Some(_) => Ok(()),
                             None => Err(ValidationError::TypeMismatch),
@@ -949,7 +954,7 @@ impl Validator for CodeValidator<'_> {
                 if let InstructionData::FunctionInstruction { function_index: fi } =
                     *inst.get_data()
                 {
-                    self.function_type(fi)?;
+                    self.get_function_type(fi)?;
                     self.push_val(Val(FuncRef))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())

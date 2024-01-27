@@ -4928,18 +4928,15 @@ impl Instruction {
     }
 
     pub fn decode_function(
-        types: &super::module::TypeSection,
-        functions: &super::module::FunctionSection,
-        globals: &Vec<super::module::GlobalType>,
-        data_count: u32,
+        module: &super::module::Module,
         locals: &super::module::Locals,
         function_index: u32,
         bytes: &mut super::reader::Reader,
     ) -> Result<Vec<Instruction>, DecodeError> {
-        let ftype = super::validate::function_type(types, functions, function_index)?;
-        let mut validator = super::validate::CodeValidator::new(
-            &types, &functions, &globals, data_count, &locals, &ftype,
-        );
+        let ftype = module
+            .get_function_type(function_index)
+            .ok_or(super::validate::ValidationError::UnknownFunctionType)?;
+        let mut validator = super::validate::CodeValidator::new(&module, &locals, &ftype);
         decode_validate(&mut validator, ParseType::ReadAll, bytes)
     }
 }

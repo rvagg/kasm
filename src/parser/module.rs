@@ -1,6 +1,8 @@
 use std::fmt;
 use std::io;
 
+use fhex::ToHex;
+
 use crate::parser::ast;
 
 #[derive(Debug)]
@@ -25,6 +27,12 @@ pub struct Module {
 }
 
 impl Module {
+    pub fn get_function_type(&self, index: u32) -> Option<&FunctionType> {
+        self.functions
+            .get(index as u8)
+            .and_then(|f| self.types.get(f.ftype_index as u8))
+    }
+
     pub fn get_function_name(&self, index: u32) -> Option<&String> {
         for export in &self.exports.exports {
             match export.index {
@@ -443,6 +451,26 @@ impl SectionToString for GlobalSection {
                                     acc
                                 }
                             }
+                            ast::InstructionType::F32Const => {
+                                if let ast::InstructionData::F32Instruction { value } =
+                                    *instruction.get_data()
+                                {
+                                    acc.push_str(value.to_hex().as_str());
+                                    acc
+                                } else {
+                                    acc
+                                }
+                            }
+                            ast::InstructionType::F64Const => {
+                                if let ast::InstructionData::F64Instruction { value } =
+                                    *instruction.get_data()
+                                {
+                                    acc.push_str(value.to_hex().as_str());
+                                    acc
+                                } else {
+                                    acc
+                                }
+                            }
                             _ => acc,
                         }
                     }),
@@ -545,7 +573,33 @@ impl ElementSection {
     }
 }
 
+fn init_expr_to_offset(init: &Vec<ast::Instruction>) -> u32 {
+    if init.len() != 2 {
+        // const + end
+        return 0;
+    }
+    match init[0].get_type() {
+        // include instruction + end
+        ast::InstructionType::I32Const => {
+            if let ast::InstructionData::I32Instruction { value } = *init[0].get_data() {
+                value as u32
+            } else {
+                0
+            }
+        }
+        ast::InstructionType::I64Const => {
+            if let ast::InstructionData::I64Instruction { value } = *init[0].get_data() {
+                value as u32
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
 fn init_expr_to_string(
+    unit: &Module,
     init: &Vec<ast::Instruction>,
     as_unsigned: bool,
     with_prefix: bool,
@@ -581,12 +635,12 @@ fn init_expr_to_string(
             }
             ast::InstructionType::F32Const => {
                 if let ast::InstructionData::F32Instruction { value } = *init[0].get_data() {
-                    result.push_str(&format!("f32={}", value));
+                    result.push_str(&format!("f32={}", value.to_hex()));
                 }
             }
             ast::InstructionType::F64Const => {
                 if let ast::InstructionData::F64Instruction { value } = *init[0].get_data() {
-                    result.push_str(&format!("f64={}", value));
+                    result.push_str(&format!("f64={}", value.to_hex()));
                 }
             }
             // TODO: v128
@@ -601,7 +655,14 @@ fn init_expr_to_string(
                 if let ast::InstructionData::FunctionInstruction { function_index } =
                     *init[0].get_data()
                 {
-                    result.push_str(&format!("ref.func:{}", function_index));
+                    result.push_str(&format!(
+                        "ref.func:{}{}",
+                        function_index,
+                        match unit.get_function_name(function_index) {
+                            Some(name) => format!(" <{}>", name),
+                            None => "".to_string(),
+                        }
+                    ));
                 }
             }
             ast::InstructionType::RefNull => {
@@ -682,10 +743,11 @@ impl SectionToString for ElementSection {
         )
     }
 
-    fn to_details_string(&self, _: &Module) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result: String = String::new();
         result.push_str(&format!("Elem[{}]:\n", self.elements.len()));
         for (i, element) in self.elements.iter().enumerate() {
+            let mut off = 0;
             result.push_str(&format!(
                 " - segment[{}] flags={} table={} count={}{}\n",
                 i,
@@ -697,8 +759,10 @@ impl SectionToString for ElementSection {
                 },
                 element.init.len(),
                 match element.mode {
-                    ElementMode::Active { ref offset, .. } =>
-                        init_expr_to_string(offset, true, true),
+                    ElementMode::Active { ref offset, .. } => {
+                        off = init_expr_to_offset(offset);
+                        init_expr_to_string(unit, offset, true, true)
+                    }
                     _ => "".to_string(),
                 }
             ));
@@ -706,8 +770,8 @@ impl SectionToString for ElementSection {
                 // TODO: probably not .. this is simplistic for now, more work to do, i.e. not even printing constant expressions yet
                 result.push_str(&format!(
                     "  - elem[{}] = {}\n",
-                    i,
-                    init_expr_to_string(&element.init[i], false, false),
+                    off as usize + i,
+                    init_expr_to_string(unit, &element.init[i], false, false),
                 ));
             });
         }
@@ -1123,14 +1187,14 @@ pub struct FunctionBody {
     pub position: SectionPosition, // sub-section position
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum RefType {
     FuncRef,
     ExternRef,
 }
 
-impl From<&RefType> for ValueType {
-    fn from(rt: &RefType) -> Self {
+impl From<RefType> for ValueType {
+    fn from(rt: RefType) -> Self {
         match rt {
             RefType::FuncRef => ValueType::FuncRef,
             RefType::ExternRef => ValueType::ExternRef,

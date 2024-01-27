@@ -216,7 +216,7 @@ fn read_sections(
                 )
                 .into());
             }
-            read_section_elements(bytes, &unit.globals, &mut unit.elements)?;
+            read_section_elements(bytes, &unit.globals, &mut unit.elements, &unit.functions)?;
             &mut unit.elements as &mut dyn module::Positional
         }
         10 => {
@@ -227,14 +227,7 @@ fn read_sections(
                 )
                 .into());
             }
-            read_section_code(
-                bytes,
-                &mut unit.code,
-                &unit.types,
-                &unit.functions,
-                &unit.globals,
-                unit.data_count.count,
-            )?;
+            read_section_code(bytes, unit)?;
             &mut unit.code as &mut dyn module::Positional
         }
         11 => {
@@ -442,15 +435,11 @@ fn read_section_export(
 
 fn read_section_code(
     bytes: &mut reader::Reader,
-    code: &mut module::CodeSection,
-    types: &module::TypeSection,
-    functions: &module::FunctionSection,
-    globals: &module::GlobalSection,
-    data_count: u32,
+    module: &mut module::Module,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
-    if count != functions.functions.len() as u32 {
+    if count != module.functions.functions.len() as u32 {
         // TODO: this error is repeated twice, make it a single error type?
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -479,31 +468,24 @@ fn read_section_code(
             return Err(io::Error::new(io::ErrorKind::InvalidData, "too many locals").into());
         }
 
-        let instructions: Vec<ast::Instruction> = ast::Instruction::decode_function(
-            &types,
-            &functions,
-            &&globals.into(),
-            data_count,
-            &locals,
-            code.len() as u32,
-            bytes,
-        )
-        .map_err(|err| {
-            if bytes.pos() > end_pos {
-                io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
-            } else if ii == count - 1 && bytes.pos() == end_pos {
-                match err {
-                    ast::DecodeError::Validation(_) => err,
-                    _ => io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unexpected end of section or function",
-                    )
-                    .into(),
-                }
-            } else {
-                err
-            }
-        })?;
+        let instructions: Vec<ast::Instruction> =
+            ast::Instruction::decode_function(&module, &locals, module.code.len() as u32, bytes)
+                .map_err(|err| {
+                    if bytes.pos() > end_pos {
+                        io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
+                    } else if ii == count - 1 && bytes.pos() == end_pos {
+                        match err {
+                            ast::DecodeError::Validation(_) => err,
+                            _ => io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "unexpected end of section or function",
+                            )
+                            .into(),
+                        }
+                    } else {
+                        err
+                    }
+                })?;
         if bytes.pos() < end_pos {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -520,7 +502,7 @@ fn read_section_code(
                 end: (start_pos + size) as u32,
             },
         };
-        code.code.push(function_body);
+        module.code.code.push(function_body);
     }
 
     Ok(())
@@ -751,6 +733,7 @@ impl module::Element {
     pub fn decode(
         bytes: &mut reader::Reader,
         globals: &module::GlobalSection,
+        functions: &module::FunctionSection,
     ) -> Result<Self, ast::DecodeError> {
         let read_type = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
             let byte = bytes.read_byte()?;
@@ -782,7 +765,6 @@ impl module::Element {
             let count = bytes.read_vu32()?;
             let mut init: Vec<Vec<ast::Instruction>> = vec![];
             for _ in 0..count {
-                // TODO: does this need to be a constant expression? probably, also confirm signautre
                 init.push(ast::Instruction::decode_constant_expression(
                     bytes,
                     &globals.into(),
@@ -796,6 +778,12 @@ impl module::Element {
             let mut func_indexes: Vec<u32> = vec![];
             for _ in 0..count {
                 let func_index = bytes.read_vu32()?;
+                if func_index >= functions.functions.len() as u32 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unknown function",
+                    ));
+                }
                 func_indexes.push(func_index);
             }
             Ok(func_indexes)
@@ -899,7 +887,7 @@ impl module::Element {
             5 => {
                 // 5:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode passive}
                 let ref_type = read_type(bytes)?;
-                let init = read_init(bytes, (&ref_type).into())?;
+                let init = read_init(bytes, ref_type.into())?;
                 Ok(module::Element {
                     flags: typ,
                     ref_type,
@@ -916,7 +904,7 @@ impl module::Element {
                     module::ValueType::I32,
                 )?;
                 let ref_type = read_type(bytes)?;
-                let init = read_init(bytes, (&ref_type).into())?;
+                let init = read_init(bytes, ref_type.into())?;
                 Ok(module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
@@ -930,7 +918,7 @@ impl module::Element {
             7 => {
                 // 7:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode declarative}
                 let ref_type = read_type(bytes)?;
-                let init = read_init(bytes, (&ref_type).into())?;
+                let init = read_init(bytes, ref_type.into())?;
                 Ok(module::Element {
                     flags: typ,
                     ref_type,
@@ -951,12 +939,13 @@ fn read_section_elements(
     bytes: &mut reader::Reader,
     globals: &module::GlobalSection,
     elements: &mut module::ElementSection,
+    functions: &module::FunctionSection,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let element = module::Element::decode(bytes, globals)?;
-        println!("table type: {:?}", element);
+        let element = module::Element::decode(bytes, globals, functions)?;
+        println!("element type: {:?}", element);
         elements.push(element);
     }
 
