@@ -250,6 +250,61 @@ impl ImportSection {
     pub fn push(&mut self, import: Import) {
         self.imports.push(import);
     }
+
+    pub fn function_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|i| match i.external_kind {
+                ExternalKind::Function(_) => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn table_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|i| match i.external_kind {
+                ExternalKind::Table(_) => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn memory_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|i| match i.external_kind {
+                ExternalKind::Memory(_) => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn global_count(&self) -> usize {
+        self.imports
+            .iter()
+            .filter(|i| match i.external_kind {
+                ExternalKind::Global(_) => true,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn get_global_import(&self, index: u32) -> Option<&Import> {
+        // return the index'th global, if we have that many
+        self.imports
+            .iter()
+            .filter(|i| match i.external_kind {
+                ExternalKind::Global(_) => true,
+                _ => false,
+            })
+            .nth(index as usize)
+            .and_then(|i| match i.external_kind {
+                ExternalKind::Global(_) => Some(i),
+                _ => None,
+            })
+    }
 }
 
 impl SectionToString for ImportSection {
@@ -268,8 +323,54 @@ impl SectionToString for ImportSection {
     fn to_details_string(&self, _: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Import[{}]:\n", self.imports.len()));
-        for (index, import) in self.imports.iter().enumerate() {
-            result.push_str(&format!(" - func[{}] {}\n", index, import));
+        let mut function_count = 0;
+        let mut table_count = 0;
+        let mut memory_count = 0;
+        let mut global_count = 0;
+
+        for import in &self.imports {
+            match import.external_kind {
+                ExternalKind::Function(ref f) => {
+                    result.push_str(&format!(
+                        " - func[{}] sig={} <{}.{}> <- {}.{}\n",
+                        function_count, f, import.module, import.name, import.module, import.name
+                    ));
+                    function_count += 1;
+                }
+                ExternalKind::Table(ref t) => {
+                    result.push_str(&format!(
+                        " - table[{}] module=\"{}\" name=\"{}\" type={}\n",
+                        table_count, import.module, import.name, t
+                    ));
+                    table_count += 1;
+                }
+                ExternalKind::Memory(ref m) => {
+                    result.push_str(&format!(
+                        " - memory[{}] pages: initial={}{} <- {}.{}\n",
+                        memory_count,
+                        m.min,
+                        if m.max < u32::MAX {
+                            format!(" max={}", m.max)
+                        } else {
+                            "".to_string()
+                        },
+                        import.module,
+                        import.name
+                    ));
+                    memory_count += 1;
+                }
+                ExternalKind::Global(ref g) => {
+                    result.push_str(&format!(
+                        " - global[{}] {} mutable={} <- {}.{}\n",
+                        global_count,
+                        g.value_type,
+                        if g.mutable { 1 } else { 0 },
+                        import.module,
+                        import.name
+                    ));
+                    global_count += 1;
+                }
+            }
         }
         result
     }
@@ -448,65 +549,16 @@ impl SectionToString for GlobalSection {
         )
     }
 
-    fn to_details_string(&self, _: &Module) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Global[{}]:\n", self.globals.len()));
         for (i, global) in self.globals.iter().enumerate() {
             result.push_str(&format!(
-                " - global[{}] {} mutable={} - init {}={}\n",
+                " - global[{}] {} mutable={}{}\n",
                 i,
                 global.global_type.value_type,
                 if global.global_type.mutable { 1 } else { 0 },
-                global.global_type.value_type,
-                global
-                    .init
-                    .iter()
-                    .fold(String::new(), |mut acc, instruction| {
-                        // TODO: this doesn't scale .. need to figure out how to handle
-                        match instruction.get_type() {
-                            ast::InstructionType::I32Const => {
-                                if let ast::InstructionData::I32Instruction { value } =
-                                    *instruction.get_data()
-                                {
-                                    acc.push_str(&format!("{}", value as i32));
-                                    acc
-                                } else {
-                                    acc
-                                }
-                            }
-                            ast::InstructionType::I64Const => {
-                                if let ast::InstructionData::I64Instruction { value } =
-                                    *instruction.get_data()
-                                {
-                                    acc.push_str(&format!("{}", value as i32));
-                                    acc
-                                } else {
-                                    acc
-                                }
-                            }
-                            ast::InstructionType::F32Const => {
-                                if let ast::InstructionData::F32Instruction { value } =
-                                    *instruction.get_data()
-                                {
-                                    acc.push_str(value.to_hex().as_str());
-                                    acc
-                                } else {
-                                    acc
-                                }
-                            }
-                            ast::InstructionType::F64Const => {
-                                if let ast::InstructionData::F64Instruction { value } =
-                                    *instruction.get_data()
-                                {
-                                    acc.push_str(value.to_hex().as_str());
-                                    acc
-                                } else {
-                                    acc
-                                }
-                            }
-                            _ => acc,
-                        }
-                    }),
+                init_expr_to_string(unit, &global.init, false, true),
             ));
         }
         result
@@ -614,28 +666,22 @@ impl ElementSection {
     }
 }
 
-fn init_expr_to_offset(init: &Vec<ast::Instruction>) -> u32 {
+fn init_expr_to_offset(init: &Vec<ast::Instruction>) -> Option<u32> {
     if init.len() != 2 {
         // const + end
-        return 0;
+        return None;
     }
     match init[0].get_type() {
         // include instruction + end
         ast::InstructionType::I32Const => {
             if let ast::InstructionData::I32Instruction { value } = *init[0].get_data() {
-                value as u32
+                Some(value as u32)
             } else {
-                0
+                None
             }
         }
-        ast::InstructionType::I64Const => {
-            if let ast::InstructionData::I64Instruction { value } = *init[0].get_data() {
-                value as u32
-            } else {
-                0
-            }
-        }
-        _ => 0,
+        ast::InstructionType::GlobalGet => Some(0),
+        _ => None,
     }
 }
 
@@ -689,7 +735,17 @@ fn init_expr_to_string(
                 if let ast::InstructionData::GlobalInstruction { global_index } =
                     *init[0].get_data()
                 {
-                    result.push_str(&format!("global={}", global_index));
+                    match unit.imports.get_global_import(global_index) {
+                        Some(import) => {
+                            result.push_str(&format!(
+                                "global={} <{}.{}>",
+                                global_index, import.module, import.name
+                            ));
+                        }
+                        None => {
+                            result.push_str(&format!("global={} <INVALID>", global_index));
+                        }
+                    }
                 }
             }
             ast::InstructionType::RefFunc => {
@@ -792,7 +848,16 @@ impl SectionToString for ElementSection {
         let mut result: String = String::new();
         result.push_str(&format!("Elem[{}]:\n", self.elements.len()));
         for (i, element) in self.elements.iter().enumerate() {
-            let mut off = 0;
+            let (expr_str, elem_offset) = match element.mode {
+                ElementMode::Active { ref offset, .. } => (
+                    init_expr_to_string(unit, offset, true, true),
+                    match init_expr_to_offset(offset) {
+                        Some(o) => o as i32,
+                        None => -1,
+                    },
+                ),
+                _ => (String::new(), i as i32),
+            };
             result.push_str(&format!(
                 " - segment[{}] flags={} table={} count={}{}\n",
                 i,
@@ -803,19 +868,16 @@ impl SectionToString for ElementSection {
                     ElementMode::Active { table_index, .. } => table_index,
                 },
                 element.init.len(),
-                match element.mode {
-                    ElementMode::Active { ref offset, .. } => {
-                        off = init_expr_to_offset(offset);
-                        init_expr_to_string(unit, offset, true, true)
-                    }
-                    _ => "".to_string(),
-                }
+                expr_str,
             ));
             element.init.iter().enumerate().for_each(|(i, _)| {
                 // TODO: probably not .. this is simplistic for now, more work to do, i.e. not even printing constant expressions yet
                 result.push_str(&format!(
                     "  - elem[{}] = {}\n",
-                    off as usize + i,
+                    match elem_offset {
+                        -1 => "<INVALID_OFFSET>".to_string(),
+                        _ => format!("{}", elem_offset + i as i32),
+                    },
                     init_expr_to_string(unit, &element.init[i], false, false),
                 ));
             });
@@ -1268,7 +1330,7 @@ impl From<RefType> for ValueType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Limits {
     pub min: u32,
     pub max: u32, // TODO: is u32::MAX ok for unlimited?
@@ -1280,7 +1342,7 @@ impl fmt::Display for Limits {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct TableType {
     pub ref_type: RefType,
     pub limits: Limits,
@@ -1416,9 +1478,10 @@ impl SectionToString for DataSection {
         format!("{} count: {}", self.position.to_string(), self.data.len())
     }
 
-    fn to_details_string(&self, _: &Module) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result: String = String::new();
         result.push_str(&format!("Data[{}]:\n", self.data.len()));
+        let mut data_offset = 0;
         for (i, data) in self.data.iter().enumerate() {
             result.push_str(&format!(
                 " - segment[{}] {} size={}{}\n",
@@ -1430,9 +1493,13 @@ impl SectionToString for DataSection {
                 data.init.len(),
                 match data.mode {
                     DataMode::Passive => "".to_string(),
-                    DataMode::Active { .. } => {
-                        // TODO: need const expression support to do this properly
-                        format!(" - init i32=0")
+                    DataMode::Active { ref offset, .. } => {
+                        if let Some(o) = init_expr_to_offset(offset) {
+                            data_offset = o as i32
+                        } else {
+                            data_offset = -1
+                        }
+                        init_expr_to_string(unit, offset, false, true)
                     }
                 }
             ));
@@ -1467,7 +1534,11 @@ impl SectionToString for DataSection {
                     }
                 }
 
-                result.push_str(&format!("  - {:07x}: {} {}\n", pos, byts, chars));
+                let offset_str = match data_offset {
+                    -1 => "<INVALID OFFSET>".to_string(),
+                    _ => format!("{:07x}", pos as i32 + data_offset),
+                };
+                result.push_str(&format!("  - {}: {} {}\n", offset_str, byts, chars));
                 pos += 16;
             }
         }

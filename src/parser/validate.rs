@@ -7,6 +7,9 @@ use MaybeValue::{Unknown, Val};
 
 #[derive(Error, Debug)]
 pub enum ValidationError {
+    #[error("constant expression required")]
+    ConstantExpressionRequired,
+
     #[error("type mismatch")]
     TypeMismatch,
 
@@ -22,11 +25,11 @@ pub enum ValidationError {
     #[error("unexpected token")]
     UnexpectedToken,
 
-    #[error("unknown local")]
-    UnknownLocal,
+    #[error("unknown local {0}")]
+    UnknownLocal(u32),
 
-    #[error("unknown global")]
-    UnknownGlobal,
+    #[error("unknown global {0}")]
+    UnknownGlobal(u32),
 
     #[error("unknown label")]
     UnknownLabel,
@@ -53,21 +56,38 @@ pub trait Validator {
 }
 
 pub struct ConstantExpressionValidator<'a> {
-    globals: &'a Vec<GlobalType>,
+    // globals: &'a Vec<GlobalType>,
+    imports: &'a super::module::ImportSection,
     return_type: ValueType,
     has_end: bool,
 }
 
 impl ConstantExpressionValidator<'_> {
     pub fn new<'a>(
-        globals: &'a Vec<GlobalType>,
+        imports: &'a super::module::ImportSection,
         return_type: super::module::ValueType,
     ) -> ConstantExpressionValidator<'a> {
         ConstantExpressionValidator {
-            globals,
+            imports,
             return_type,
             has_end: false,
         }
+    }
+
+    fn global(&mut self, global_index: u32) -> Result<&GlobalType, ValidationError> {
+        self.imports
+            .get_global_import(global_index)
+            .map(|global_type| match global_type.external_kind {
+                super::module::ExternalKind::Global(ref global_type) => {
+                    if global_type.mutable {
+                        Err(ValidationError::ConstantExpressionRequired)
+                    } else {
+                        Ok(global_type)
+                    }
+                }
+                _ => Err(ValidationError::ConstantExpressionRequired),
+            })
+            .unwrap_or(Err(ValidationError::UnknownGlobal(global_index)))
     }
 }
 
@@ -94,12 +114,12 @@ impl Validator for ConstantExpressionValidator<'_> {
                 .then(|| ())
                 .ok_or(ValidationError::TypeMismatch), // TODO: should check that the function index exists? but this implies the functions section is required
             GlobalGet => {
-                // TODO: globals are further constrained in that they must be imported, do that here by requiring imports too?
                 if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
-                    match self.globals.get(gi as usize) {
-                        Some(global) if !global.mutable => Ok(()),
-                        Some(_) => Err(ValidationError::InvalidInstruction),
-                        None => Err(ValidationError::UnknownGlobal),
+                    let value_type = self.global(gi)?.value_type;
+                    if value_type == self.return_type {
+                        Ok(())
+                    } else {
+                        Err(ValidationError::TypeMismatch)
                     }
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -109,7 +129,7 @@ impl Validator for ConstantExpressionValidator<'_> {
                 self.has_end = true;
                 Ok(())
             }
-            _ => Err(ValidationError::InvalidInstruction),
+            _ => Err(ValidationError::ConstantExpressionRequired),
         }
     }
 
@@ -326,13 +346,13 @@ impl<'a> CodeValidator<'a> {
             self.locals.get(li)
         };
 
-        local.ok_or(ValidationError::UnknownLocal)
+        local.ok_or(ValidationError::UnknownLocal(local_index))
     }
 
     fn global(&mut self, global_index: u32) -> Result<&GlobalType, ValidationError> {
         match self.module.globals.globals.get(global_index as usize) {
             Some(global) => Ok(&global.global_type),
-            None => Err(ValidationError::UnknownGlobal),
+            None => Err(ValidationError::UnknownGlobal(global_index)),
         }
     }
 

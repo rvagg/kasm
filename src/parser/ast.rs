@@ -4919,11 +4919,11 @@ impl From<super::validate::ValidationError> for DecodeError {
 impl Instruction {
     pub fn decode_constant_expression(
         bytes: &mut super::reader::Reader,
-        globals: &Vec<super::module::GlobalType>,
+        imports: &super::module::ImportSection,
         return_type: super::module::ValueType,
     ) -> Result<Vec<Instruction>, DecodeError> {
         let mut validator: super::validate::ConstantExpressionValidator<'_> =
-            super::validate::ConstantExpressionValidator::new(&globals, return_type);
+            super::validate::ConstantExpressionValidator::new(&imports, return_type);
         decode_validate(&mut validator, ParseType::ReadTillEnd, bytes)
     }
 

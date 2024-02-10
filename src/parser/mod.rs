@@ -13,6 +13,8 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, a
 
     read_header(bytes, &mut unit.magic, &mut unit.version)?;
 
+    let mut last_section_id = 0;
+
     loop {
         if !bytes.has_at_least(1) {
             //TODO: assert we got the length we expected
@@ -22,6 +24,23 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, a
         let sec_id = bytes
             .read_byte()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "malformed section id"))?;
+        if sec_id != 0 {
+            // handle the reordering of datacount to be before code, make datacount 10, and shuffle 10+ up one
+            let mapped_section_id = match sec_id {
+                10 => 11,
+                11 => 12,
+                12 => 10,
+                _ => sec_id,
+            };
+            if mapped_section_id <= last_section_id {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected content after last section",
+                )
+                .into());
+            }
+            last_section_id = mapped_section_id;
+        }
         let sec_len = bytes.read_vu32()?;
 
         if !bytes.has_at_least(sec_len as usize) {
@@ -45,6 +64,7 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, a
                 9 => "element",
                 10 => "code",
                 11 => "data",
+                12 => "datacount",
                 _ => "unknown",
             },
             sec_len
@@ -77,18 +97,11 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, a
         }
     }
 
+    // TODO: this check is duplicated in code section read
     if unit.functions.functions.len() != unit.code.code.len() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "function and code section have inconsistent lengths",
-        )
-        .into());
-    }
-
-    if unit.data_count.has_position() && unit.data_count.count != unit.data.data.len() as u32 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "data count and data section have inconsistent lengths",
         )
         .into());
     }
@@ -107,150 +120,66 @@ fn read_sections(
     let start_pos: usize = bytes.pos();
     let positional: &mut dyn module::Positional = match sec_id {
         1 => {
-            if unit.types.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
-            if unit.data.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "data section before types section",
-                )
-                .into());
-            }
             read_section_type(bytes, &mut unit.types)?;
             &mut unit.types as &mut dyn module::Positional
         }
         2 => {
-            if unit.imports.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
             read_section_import(bytes, &mut unit.imports)?;
             &mut unit.imports as &mut dyn module::Positional
         }
         3 => {
-            if unit.functions.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
-            if unit.data.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "data section before functions section",
-                )
-                .into());
-            }
             read_section_function(bytes, &mut unit.functions, &unit.types)?;
             &mut unit.functions as &mut dyn module::Positional
         }
         4 => {
-            if unit.table.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
             read_section_table(bytes, &mut unit.table)?;
             &mut unit.table as &mut dyn module::Positional
         }
         5 => {
-            if unit.memory.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
             read_section_memory(bytes, &mut unit.memory)?;
             &mut unit.memory as &mut dyn module::Positional
         }
         6 => {
-            if unit.globals.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
-            read_section_global(bytes, &mut unit.globals)?;
+            read_section_global(bytes, &mut unit.globals, &unit.imports)?;
             &mut unit.globals as &mut dyn module::Positional
         }
         7 => {
-            if unit.exports.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
             read_section_export(bytes, &mut unit.exports)?;
             &mut unit.exports as &mut dyn module::Positional
         }
         8 => {
-            if unit.start.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
             read_section_start(bytes, &mut unit.start)?;
             &mut unit.start as &mut dyn module::Positional
         }
         9 => {
-            if unit.elements.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
-            read_section_elements(bytes, &unit.globals, &mut unit.elements, &unit.functions)?;
+            read_section_elements(
+                bytes,
+                &unit.imports,
+                &mut unit.elements,
+                (unit.imports.function_count() + unit.functions.functions.len()) as u32,
+            )?;
             &mut unit.elements as &mut dyn module::Positional
         }
         10 => {
-            if unit.code.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
             read_section_code(bytes, unit)?;
             &mut unit.code as &mut dyn module::Positional
         }
         11 => {
-            if unit.data.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
-            read_section_data(bytes, &unit.globals, &mut unit.data)?;
+            read_section_data(
+                bytes,
+                &unit.imports,
+                &mut unit.data,
+                if unit.data_count.has_position() {
+                    Some(unit.data_count.count)
+                } else {
+                    None
+                },
+                unit.memory.memory.len() as u32,
+            )?;
             &mut unit.data as &mut dyn module::Positional
         }
         12 => {
-            if unit.data_count.has_position() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
-            }
             read_section_datacount(bytes, &mut unit.data_count)?;
-            // TODO: unit.data's positional settings are updated twice, introduce a new DataCount section?
             &mut unit.data_count as &mut dyn module::Positional
         }
         0 => {
@@ -348,25 +277,25 @@ fn read_section_import(
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let module = bytes.read_string()?;
-        let name = bytes.read_string()?;
-        let external_kind = module::ExternalKind::decode(bytes)?;
-
-        println!(
-            "module = {}, name = {}, kind = {}",
-            module, name, external_kind
-        );
-
-        let import = module::Import {
-            external_kind,
-            module,
-            name,
-        };
-
+        let import = module::Import::decode(bytes)?;
         imports.push(import);
     }
 
     Ok(())
+}
+
+impl module::Import {
+    pub fn decode(reader: &mut reader::Reader) -> Result<module::Import, ast::DecodeError> {
+        let module = reader.read_string()?;
+        let name = reader.read_string()?;
+        let external_kind = module::ExternalKind::decode(reader)?;
+        println!("import: {}::{} {:?}", module, name, external_kind);
+        Ok(module::Import {
+            external_kind,
+            module,
+            name,
+        })
+    }
 }
 
 fn read_section_function(
@@ -410,6 +339,8 @@ fn read_section_memory(
         })
     }
 
+    println!("memory: {:?}", memory);
+
     Ok(())
 }
 
@@ -439,8 +370,8 @@ fn read_section_code(
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
+    // TODO: this check is duplicated after the section read loop
     if count != module.functions.functions.len() as u32 {
-        // TODO: this error is repeated twice, make it a single error type?
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "function and code section have inconsistent lengths",
@@ -511,7 +442,8 @@ fn read_section_code(
 impl module::Data {
     pub fn decode(
         bytes: &mut reader::Reader,
-        globals: &module::GlobalSection,
+        imports: &module::ImportSection,
+        memory_count: u32,
     ) -> Result<Self, ast::DecodeError> {
         let mut mode = module::DataMode::Passive;
         let typ = bytes.read_vu32()?;
@@ -521,9 +453,9 @@ impl module::Data {
                     memory_index: 0,
                     offset: ast::Instruction::decode_constant_expression(
                         bytes,
-                        &globals.into(),
+                        &imports,
                         module::ValueType::I32,
-                    )?, // TODO: confirm this should be constant expr & signature type
+                    )?,
                 };
             }
             1 => {} // nothing else needed
@@ -532,9 +464,9 @@ impl module::Data {
                     memory_index: bytes.read_vu32()?,
                     offset: ast::Instruction::decode_constant_expression(
                         bytes,
-                        &globals.into(),
+                        &imports,
                         module::ValueType::I32,
-                    )?, // TODO: confirm this should be constant expr & signature type
+                    )?,
                 };
             }
             _ => Err(io::Error::new(
@@ -542,6 +474,24 @@ impl module::Data {
                 format!("unknown data type: 0x{:02x}", typ),
             ))?,
         };
+
+        if let module::DataMode::Active {
+            memory_index,
+            ref offset,
+        } = mode
+        {
+            if memory_index != 0 || imports.memory_count() as u32 + memory_count == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown memory {}", memory_index),
+                )
+                .into());
+            }
+            // we expect a constant and an End
+            if offset.len() != 2 {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "type mismatch").into());
+            }
+        }
 
         Ok(module::Data {
             init: bytes.read_u8vec()?, // TODO: this needs to trigger a 'unexpected end of section or function' rather than 'length out of bounds'
@@ -552,13 +502,25 @@ impl module::Data {
 
 fn read_section_data(
     bytes: &mut reader::Reader,
-    globals: &module::GlobalSection,
+    imports: &module::ImportSection,
     datas: &mut module::DataSection,
+    data_count: Option<u32>,
+    memory_count: u32,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
+    if let Some(expected_count) = data_count {
+        if expected_count != count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "data count and data section have inconsistent lengths",
+            )
+            .into());
+        }
+    }
+
     for _ in 0..count {
-        let data = module::Data::decode(bytes, globals)?;
+        let data = module::Data::decode(bytes, imports, memory_count)?;
         println!("data type: {:?}", data);
         datas.data.push(data);
     }
@@ -646,14 +608,14 @@ impl module::GlobalType {
 impl module::Global {
     pub fn decode(
         bytes: &mut reader::Reader,
-        globals: &module::GlobalSection,
+        imports: &module::ImportSection,
     ) -> Result<Self, ast::DecodeError> {
         let global_type = module::GlobalType::decode(bytes)?;
         Ok(module::Global {
             global_type,
             init: ast::Instruction::decode_constant_expression(
                 bytes,
-                &globals.into(),
+                &imports,
                 global_type.value_type,
             )?,
         })
@@ -663,11 +625,12 @@ impl module::Global {
 fn read_section_global(
     bytes: &mut reader::Reader,
     globals: &mut module::GlobalSection,
+    imports: &module::ImportSection,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let data = module::Global::decode(bytes, globals)?;
+        let data = module::Global::decode(bytes, imports)?;
         println!("global: {:?}", data);
         globals.globals.push(data);
     }
@@ -742,8 +705,8 @@ fn read_section_start(
 impl module::Element {
     pub fn decode(
         bytes: &mut reader::Reader,
-        globals: &module::GlobalSection,
-        functions: &module::FunctionSection,
+        imports: &module::ImportSection,
+        function_count: u32,
     ) -> Result<Self, ast::DecodeError> {
         let read_type = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
             let byte = bytes.read_byte()?;
@@ -777,7 +740,7 @@ impl module::Element {
             for _ in 0..count {
                 init.push(ast::Instruction::decode_constant_expression(
                     bytes,
-                    &globals.into(),
+                    imports,
                     return_type,
                 )?);
             }
@@ -788,7 +751,7 @@ impl module::Element {
             let mut func_indexes: Vec<u32> = vec![];
             for _ in 0..count {
                 let func_index = bytes.read_vu32()?;
-                if func_index >= functions.functions.len() as u32 {
+                if func_index >= function_count {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "unknown function",
@@ -837,7 +800,7 @@ impl module::Element {
                         table_index: 0,
                         offset: ast::Instruction::decode_constant_expression(
                             bytes,
-                            &globals.into(),
+                            imports,
                             module::ValueType::I32,
                         )?,
                     },
@@ -861,7 +824,7 @@ impl module::Element {
                         table_index: read_table_index(bytes)?,
                         offset: ast::Instruction::decode_constant_expression(
                             bytes,
-                            &globals.into(),
+                            imports,
                             module::ValueType::I32,
                         )?, // TODO: confirm is constant expr && signautre type
                     },
@@ -887,7 +850,7 @@ impl module::Element {
                         table_index: 0,
                         offset: ast::Instruction::decode_constant_expression(
                             bytes,
-                            &globals.into(),
+                            imports,
                             module::ValueType::I32,
                         )?, // TODO: confirm is constant expr && signautre type
                     },
@@ -910,7 +873,7 @@ impl module::Element {
                 let table_index = read_table_index(bytes)?;
                 let offset = ast::Instruction::decode_constant_expression(
                     bytes,
-                    &globals.into(),
+                    imports,
                     module::ValueType::I32,
                 )?;
                 let ref_type = read_type(bytes)?;
@@ -947,14 +910,14 @@ impl module::Element {
 
 fn read_section_elements(
     bytes: &mut reader::Reader,
-    globals: &module::GlobalSection,
+    imports: &module::ImportSection,
     elements: &mut module::ElementSection,
-    functions: &module::FunctionSection,
+    function_count: u32,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let element = module::Element::decode(bytes, globals, functions)?;
+        let element = module::Element::decode(bytes, imports, function_count)?;
         println!("element type: {:?}", element);
         elements.push(element);
     }

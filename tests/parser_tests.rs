@@ -49,6 +49,7 @@ mod tests {
     enum Command {
         AssertReturn(AssertReturnCommand),
         AssertTrapCommand(AssertTrapCommand),
+        AssertUninstantiable(AssertUninstantiableCommand),
         AssertInvalid(AssertInvalidCommand),
         Module(ModuleCommand),
     }
@@ -73,6 +74,17 @@ mod tests {
         expected: Vec<TypedValue>,
     }
 
+
+    #[derive(Debug)]
+    #[allow(unused)]
+    struct AssertUninstantiableCommand {
+        command_type: String,
+        line: i32,
+        filename: String,
+        text: String,
+        module_type: String,
+    }
+
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct AssertInvalidCommand {
@@ -82,6 +94,26 @@ mod tests {
         filename: String,
         text: String,
         module_type: String,
+    }
+
+    impl<'de> Deserialize<'de> for AssertUninstantiableCommand {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let command = AssertInvalidCommand::deserialize(deserializer)?;
+            if command.command_type == "assert_uninstantiable" {
+                Ok(AssertUninstantiableCommand {
+                    command_type: "assert_uninstantiable".to_string(),
+                    line: command.line,
+                    filename: command.filename,
+                    text: command.text,
+                    module_type: command.module_type,
+                })
+            } else {
+                Err(serde::de::Error::custom("wrong type"))
+            }
+        }
     }
 
     #[derive(Deserialize, Debug)]

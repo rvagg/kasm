@@ -19,7 +19,7 @@ const parsed = await parseWast(input)
 const compiled = await compileWast(parsed, input)
 await writeFile(output, compiled)
 
-async function dumpWasm (wasmPath) {
+async function dumpWasm(wasmPath) {
   return {
     header: await dump(wasmPath, 'h'),
     details: await dump(wasmPath, 'x'),
@@ -27,7 +27,7 @@ async function dumpWasm (wasmPath) {
   }
 }
 
-async function compileWast (parsed, wastPath) {
+async function compileWast(parsed, wastPath) {
   const dir = await mkdtemp(join(tmpdir(), 'wast-'));
   await execSync(`${wast2json} ${wastPath.pathname}`, { cwd: dir })
 
@@ -78,16 +78,16 @@ async function compileWast (parsed, wastPath) {
   return compiled
 }
 
-async function dump (wasmPath, opt) {
+async function dump(wasmPath, opt) {
   const stdout = await execSync(`${wasmObjdump} -${opt} ${wasmPath}`)
   return stdout.toString('utf8')
 }
 
-function cleanJsonString (str) {
+function cleanJsonString(str) {
   return str.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"')
 }
 
-async function parseWast (wastPath) {
+async function parseWast(wastPath) {
   const wast = await readFile(wastPath, 'utf8')
 
   const units = []
@@ -99,6 +99,14 @@ async function parseWast (wastPath) {
     const ch = wast[cc]
     if (ch === ';' && cc != wast.length - 1 && wast[cc + 1] === ';') {
       while (wast[cc] !== '\n') {
+        cc++
+      }
+      continue
+    } else if (ch === '(' && cc != wast.length - 1 && wast[cc + 1] === ';') {
+      while (wast[cc] !== ';' || wast[cc + 1] !== ')') {
+        cc++
+      }
+      if (wast[cc] === ';' && wast[cc + 1] === ')') {
         cc++
       }
       continue
@@ -123,7 +131,7 @@ async function parseWast (wastPath) {
 
     if (br === 1 && word == '' && /[a-zA-Z_]/.test(ch)) {
       if (block !== '') {
-        console.log(`discarding block [${block}]`)
+        console.log(`discarding block [${block}] @ ${cc}`)
         block = ''
       }
       word = ch
