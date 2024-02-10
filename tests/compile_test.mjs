@@ -7,6 +7,11 @@ import { tmpdir } from 'node:os';
 const wast2json = new URL('../webassembly/wabt/build/wast2json', `file://${process.cwd()}/`).pathname
 const wasmObjdump = new URL('../webassembly/wabt/build/wasm-objdump', `file://${process.cwd()}/`).pathname
 
+if (process.argv.length < 4) {
+  console.error('usage: compile_test.mjs <input.wast> <output.json>')
+  process.exit(1)
+}
+
 const input = new URL(process.argv[2], `file://${process.cwd()}/`)
 console.log(`compiling ${input}...`)
 if (await stat(input.pathname).catch(() => null) === null) {

@@ -757,10 +757,14 @@ impl Validator for CodeValidator<'_> {
                                 .types
                                 .get(ti as u8)
                                 .ok_or(ValidationError::UnknownBlockType)?;
-                            ftype.parameters.iter().try_for_each(|v| {
-                                start_types.push(Val(*v));
+                            // parameters are stack ordered, so pick them in reverse
+                            ftype.parameters.iter().rev().try_for_each(|v| {
                                 match self.pop_expected(Val(*v)) {
-                                    Some(_) => Ok(()),
+                                    Some(_) => {
+                                        // insert at start because we're working in reverse
+                                        start_types.insert(0, Val(*v));
+                                        Ok(())
+                                    }
                                     None => Err(ValidationError::TypeMismatch),
                                 }
                             })?;
@@ -810,8 +814,10 @@ impl Validator for CodeValidator<'_> {
                 }
 
                 let label_types = self.label_types_at(li)?;
+                println!("label_types: {:?}", label_types);
                 self.pop_expecteds(label_types.clone())
                     .ok_or(ValidationError::TypeMismatch)?;
+                println!("vals: {:?}", self.vals);
                 match inst.get_type() {
                     &Return | &Br => {
                         self.unreachable().ok_or(ValidationError::TypeMismatch)?;
