@@ -59,8 +59,7 @@ mod tests {
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct ModuleCommand {
-        #[serde(rename = "type")]
-        command_type: String,
+        r#type: String,
         line: i32,
         filename: String,
     }
@@ -68,8 +67,7 @@ mod tests {
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct AssertReturnCommand {
-        #[serde(rename = "type")]
-        command_type: String,
+        r#type: String,
         line: i32,
         action: Action,
         expected: Vec<TypedValue>,
@@ -88,8 +86,7 @@ mod tests {
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct AssertInvalidCommand {
-        #[serde(rename = "type")]
-        command_type: String,
+        r#type: String,
         line: i32,
         filename: String,
         text: String,
@@ -102,7 +99,7 @@ mod tests {
             D: Deserializer<'de>,
         {
             let command = AssertInvalidCommand::deserialize(deserializer)?;
-            if command.command_type == "assert_uninstantiable" {
+            if command.r#type == "assert_uninstantiable" {
                 Ok(AssertUninstantiableCommand {
                     command_type: "assert_uninstantiable".to_string(),
                     line: command.line,
@@ -119,8 +116,7 @@ mod tests {
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct AssertTrapCommand {
-        #[serde(rename = "type")]
-        command_type: String,
+        r#type: String,
         line: i32,
         action: Action,
         text: String,
@@ -130,38 +126,34 @@ mod tests {
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct RegisterCommand {
-        #[serde(rename = "type")]
-        command_type: String,
+        r#type: String,
         line: i32,
         name: String,
-        #[serde(rename = "as")]
-        as_name: String,
+        r#as: String,
     }
 
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct Action {
-        #[serde(rename = "type")]
-        action_type: String,
+        r#type: String,
         #[serde(default)]
         module: String,
         field: String,
+        #[serde(default)]
         args: Vec<TypedValue>,
     }
 
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct TypedValue {
-        #[serde(rename = "type")]
-        value_type: String,
+        r#type: String,
         value: String,
     }
 
     #[derive(Deserialize, Debug)]
     #[allow(unused)]
     struct Type {
-        #[serde(rename = "type")]
-        value_type: String,
+        r#type: String,
     }
 
     #[derive(Deserialize)]

@@ -1039,8 +1039,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         format!(
                             "call {}{}",
                             function_index,
-                            match module.get_function_name(*function_index) {
-                                Some(name) => format!(" <{}>", name),
+                            match module.exports.get_function(*function_index) {
+                                Some(export) => format!(" <{}>", export.name),
                                 None => "".to_string(),
                             }
                         )

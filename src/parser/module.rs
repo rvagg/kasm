@@ -33,17 +33,6 @@ impl Module {
             .and_then(|f| self.types.get(f.ftype_index as u8))
     }
 
-    pub fn get_function_name(&self, index: u32) -> Option<&String> {
-        for export in &self.exports.exports {
-            if let ExportIndex::Function(idx) = export.index {
-                if idx == index as u64 {
-                    return Some(&export.name);
-                }
-            }
-        }
-        None
-    }
-
     pub fn get_table(&self, index: u32) -> Option<&TableType> {
         self.imports
             .get_table(index)
@@ -463,8 +452,8 @@ impl SectionToString for FunctionSection {
                 " - func[{}] sig={}{}\n",
                 i,
                 function.ftype_index,
-                match unit.get_function_name(i as u32) {
-                    Some(name) => format!(" <{}>", name),
+                match unit.exports.get_function(i as u32) {
+                    Some(export) => format!(" <{}>", export.name),
                     None => "".to_string(),
                 }
             ));
@@ -653,8 +642,15 @@ impl ExportSection {
     pub fn get_global(&self, global_index: u32) -> Option<&Export> {
         self.exports
             .iter()
-            .filter(|e| matches!(e.index, ExportIndex::Global(_)))
-            .nth(global_index as usize)
+            .rev()
+            .find(|e| matches!(e.index, ExportIndex::Global(idx) if idx == global_index))
+    }
+
+    pub fn get_function(&self, function_index: u32) -> Option<&Export> {
+        self.exports
+            .iter()
+            .rev()
+            .find(|e| matches!(e.index, ExportIndex::Function(idx) if idx == function_index))
     }
 }
 
@@ -671,14 +667,14 @@ impl SectionToString for ExportSection {
         )
     }
 
-    fn to_details_string(&self, _: &Module) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Export[{}]:\n", self.exports.len()));
         for export in &self.exports {
             let (typ, idx) = match export.index {
                 ExportIndex::Function(i) => ("func", i),
                 ExportIndex::Table(i) => ("table", i),
-                ExportIndex::Memory(i) => ("mem", i),
+                ExportIndex::Memory(i) => ("memory", i),
                 ExportIndex::Global(i) => ("global", i),
             };
             result.push_str(&format!(
@@ -686,7 +682,12 @@ impl SectionToString for ExportSection {
                 typ,
                 idx,
                 match export.index {
-                    ExportIndex::Function(_) => format!(" <{}>", export.name),
+                    ExportIndex::Function(func_idx) => {
+                        match unit.exports.get_function(func_idx) {
+                            Some(export) => format!(" <{}>", export.name),
+                            None => "".to_string(),
+                        }
+                    }
                     _ => "".to_string(),
                 },
                 export.name
@@ -843,8 +844,8 @@ fn init_expr_to_string(
                     result.push_str(&format!(
                         "ref.func:{}{}",
                         function_index,
-                        match unit.get_function_name(function_index) {
-                            Some(name) => format!(" <{}>", name),
+                        match unit.exports.get_function(function_index) {
+                            Some(export) => format!(" <{}>", export.name),
                             None => "".to_string(),
                         }
                     ));
@@ -1011,7 +1012,7 @@ impl SectionToString for CodeSection {
             let mut exp = String::new();
             for export in &unit.exports.exports {
                 if let ExportIndex::Function(idx) = export.index {
-                    if idx == i as u64 {
+                    if idx == i as u32 {
                         exp = format!(" <{}>", export.name);
                     }
                 }
@@ -1034,7 +1035,7 @@ impl CodeSection {
             let mut exp = String::new();
             for export in &unit.exports.exports {
                 if let ExportIndex::Function(idx) = export.index {
-                    if idx == i as u64 {
+                    if idx == i as u32 {
                         exp = format!(" <{}>", export.name);
                     }
                 }
@@ -1377,10 +1378,10 @@ pub struct Memory {
 
 #[derive(Debug)]
 pub enum ExportIndex {
-    Function(u64),
-    Table(u64),
-    Memory(u64),
-    Global(u64),
+    Function(u32),
+    Table(u32),
+    Memory(u32),
+    Global(u32),
 }
 
 #[derive(Debug)]
@@ -1907,10 +1908,10 @@ impl fmt::Display for FunctionBody {
 impl ExportIndex {
     pub fn decode(byte: u8, idx: u32) -> Result<ExportIndex, io::Error> {
         match byte {
-            0x00 => Ok(ExportIndex::Function(idx as u64)),
-            0x01 => Ok(ExportIndex::Table(idx as u64)),
-            0x02 => Ok(ExportIndex::Memory(idx as u64)),
-            0x03 => Ok(ExportIndex::Global(idx as u64)),
+            0x00 => Ok(ExportIndex::Function(idx)),
+            0x01 => Ok(ExportIndex::Table(idx)),
+            0x02 => Ok(ExportIndex::Memory(idx)),
+            0x03 => Ok(ExportIndex::Global(idx)),
             _ => {
                 let msg: String = format!("invalid export type: {}", byte);
                 Err(io::Error::new(io::ErrorKind::InvalidData, msg))

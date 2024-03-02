@@ -144,7 +144,14 @@ fn read_sections(
             &mut unit.globals as &mut dyn module::Positional
         }
         7 => {
-            read_section_export(bytes, &mut unit.exports)?;
+            read_section_export(
+                bytes,
+                &mut unit.exports,
+                &unit.functions,
+                &unit.globals,
+                &unit.table,
+                &unit.memory,
+            )?;
             &mut unit.exports as &mut dyn module::Positional
         }
         8 => {
@@ -346,14 +353,58 @@ fn read_section_memory(
 fn read_section_export(
     bytes: &mut reader::Reader,
     exports: &mut module::ExportSection,
+    functions: &module::FunctionSection,
+    globals: &module::GlobalSection,
+    tables: &module::TableSection,
+    memory: &module::MemorySection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
         let name = bytes.read_string()?;
+        if exports.exports.iter().any(|e| e.name == name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("duplicate export name: {}", name),
+            ));
+        }
         let typ = bytes.read_byte()?;
         let idx = bytes.read_vu32()?;
         let index = module::ExportIndex::decode(typ, idx)?;
+        match index {
+            module::ExportIndex::Function(idx) => {
+                if idx >= functions.functions.len() as u32 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown function index for export {}", idx),
+                    ));
+                }
+            }
+            module::ExportIndex::Global(idx) => {
+                if idx >= globals.globals.len() as u32 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown global index for export {}", idx),
+                    ));
+                }
+            }
+            module::ExportIndex::Table(idx) => {
+                if idx >= tables.tables.len() as u32 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown table index for export {}", idx),
+                    ));
+                }
+            }
+            module::ExportIndex::Memory(idx) => {
+                if idx >= memory.memory.len() as u32 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown memory index for export {}", idx),
+                    ));
+                }
+            }
+        }
         exports.push(module::Export { index, name })
     }
 
