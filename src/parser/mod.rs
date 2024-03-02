@@ -155,6 +155,7 @@ fn read_sections(
             read_section_elements(
                 bytes,
                 &unit.imports,
+                &unit.table,
                 &mut unit.elements,
                 (unit.imports.function_count() + unit.functions.functions.len()) as u32,
             )?;
@@ -688,7 +689,7 @@ fn read_section_table(
     for _ in 0..count {
         let table_type = module::TableType::decode(bytes)?;
         println!("table type: {:?}", table_type);
-        table.table.push(table_type);
+        table.tables.push(table_type);
     }
 
     Ok(())
@@ -706,6 +707,7 @@ impl module::Element {
     pub fn decode(
         bytes: &mut reader::Reader,
         imports: &module::ImportSection,
+        table: &module::TableSection,
         function_count: u32,
     ) -> Result<Self, ast::DecodeError> {
         let read_type = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
@@ -736,6 +738,7 @@ impl module::Element {
                          return_type: module::ValueType|
          -> Result<Vec<Vec<ast::Instruction>>, ast::DecodeError> {
             let count = bytes.read_vu32()?;
+            println!("read_init count: {}", count);
             let mut init: Vec<Vec<ast::Instruction>> = vec![];
             for _ in 0..count {
                 init.push(ast::Instruction::decode_constant_expression(
@@ -790,10 +793,11 @@ impl module::Element {
             };
 
         let typ = bytes.read_vu32()?;
-        match typ {
+        println!("element type: 0x{:02x}", typ);
+        let element = match typ {
             0 => {
                 // 0:u32 𝑒:expr 𝑦*:vec(funcidx) => {type funcref, init ((ref.func 𝑦) end)*, mode active {table 0, offset 𝑒}}
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
@@ -805,20 +809,20 @@ impl module::Element {
                         )?,
                     },
                     init: read_func_index_init(bytes)?,
-                })
+                }
             }
             1 => {
                 // 1:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode passive}
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     ref_type: read_element_kind(bytes)?,
                     mode: module::ElementMode::Passive,
                     init: read_func_index_init(bytes)?,
-                })
+                }
             }
             2 => {
                 // 2:u32 𝑥:tableidx 𝑒:expr et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode active {table 𝑥, offset 𝑒}}
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
@@ -826,24 +830,24 @@ impl module::Element {
                             bytes,
                             imports,
                             module::ValueType::I32,
-                        )?, // TODO: confirm is constant expr && signautre type
+                        )?,
                     },
                     ref_type: read_element_kind(bytes)?,
                     init: read_func_index_init(bytes)?,
-                })
+                }
             }
             3 => {
                 // 3:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode declarative}
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     ref_type: read_element_kind(bytes)?,
                     mode: module::ElementMode::Declarative,
                     init: read_func_index_init(bytes)?,
-                })
+                }
             }
             4 => {
                 // 4:u32 𝑒:expr el *:vec(expr) => {type funcref, init el *, mode active {table 0, offset 𝑒}}
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
@@ -852,21 +856,21 @@ impl module::Element {
                             bytes,
                             imports,
                             module::ValueType::I32,
-                        )?, // TODO: confirm is constant expr && signautre type
+                        )?,
                     },
                     init: read_init(bytes, module::ValueType::FuncRef)?,
-                })
+                }
             }
             5 => {
                 // 5:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode passive}
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     ref_type,
                     mode: module::ElementMode::Passive,
                     init,
-                })
+                }
             }
             6 => {
                 // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
@@ -878,7 +882,7 @@ impl module::Element {
                 )?;
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
                         table_index,
@@ -886,38 +890,69 @@ impl module::Element {
                     },
                     ref_type,
                     init,
-                })
+                }
             }
             7 => {
                 // 7:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode declarative}
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
-                Ok(module::Element {
+                module::Element {
                     flags: typ,
                     ref_type,
                     mode: module::ElementMode::Declarative,
                     init,
-                })
+                }
             }
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown element type: 0x{:02x}", typ),
-            )
-            .into()),
-        }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown element type: 0x{:02x}", typ),
+                )
+                .into());
+            }
+        };
+        match element.mode {
+            module::ElementMode::Active { table_index, .. } => {
+                let ref_type: Option<&module::TableType> = if table_index < imports.table_count() as u32 {
+                    imports.get_table(table_index)
+                } else if (table_index - imports.table_count() as u32) < table.tables.len() as u32 {
+                    table
+                        .tables
+                        .get((table_index - imports.table_count() as u32) as usize)
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown table {}", table_index),
+                    )
+                    .into());
+                };
+                if let Some(ref_type) = ref_type {
+                    if element.ref_type != ref_type.ref_type {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "element type mismatch",
+                        )
+                        .into());
+                    }
+                }
+            }
+            _ => {}
+        };
+        Ok(element)
     }
 }
 
 fn read_section_elements(
     bytes: &mut reader::Reader,
     imports: &module::ImportSection,
+    table: &module::TableSection,
     elements: &mut module::ElementSection,
     function_count: u32,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let element = module::Element::decode(bytes, imports, function_count)?;
+        let element = module::Element::decode(bytes, imports, table, function_count)?;
         println!("element type: {:?}", element);
         elements.push(element);
     }

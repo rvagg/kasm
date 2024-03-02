@@ -46,6 +46,12 @@ impl Module {
         }
         None
     }
+
+    pub fn get_table(&self, index: u32) -> Option<&TableType> {
+        self.imports
+            .get_table(index)
+            .or_else(|| self.table.tables.get(index as usize))
+    }
 }
 
 impl fmt::Display for Module {
@@ -70,7 +76,7 @@ impl fmt::Display for Module {
             .unwrap();
         write!(f, " table = ").unwrap();
         f.debug_set()
-            .entries(self.table.table.iter())
+            .entries(self.table.tables.iter())
             .finish()
             .unwrap();
         write!(f, " memory = ").unwrap();
@@ -271,6 +277,26 @@ impl ImportSection {
             .count()
     }
 
+    pub fn get_table_import(&self, index: u32) -> Option<&Import> {
+        // return the index'th table, if we have that many
+        self.imports
+            .iter()
+            .filter(|i| match i.external_kind {
+                ExternalKind::Table(_) => true,
+                _ => false,
+            })
+            .nth(index as usize)
+    }
+
+    pub fn get_table(&self, index: u32) -> Option<&TableType> {
+        // return the index'th table, if we have that many
+        self.get_table_import(index)
+            .and_then(|i| match i.external_kind {
+                ExternalKind::Table(ref t) => Some(t),
+                _ => None,
+            })
+    }
+
     pub fn memory_count(&self) -> usize {
         self.imports
             .iter()
@@ -339,8 +365,20 @@ impl SectionToString for ImportSection {
                 }
                 ExternalKind::Table(ref t) => {
                     result.push_str(&format!(
-                        " - table[{}] module=\"{}\" name=\"{}\" type={}\n",
-                        table_count, import.module, import.name, t
+                        " - table[{}] type={} initial={}{} <- {}.{}\n",
+                        table_count,
+                        match t.ref_type {
+                            RefType::FuncRef => "funcref",
+                            RefType::ExternRef => "externref",
+                        },
+                        t.limits.min,
+                        if t.limits.max < u32::MAX {
+                            format!(" max={}", t.limits.max as i32)
+                        } else {
+                            "".to_string()
+                        },
+                        import.module,
+                        import.name,
                     ));
                     table_count += 1;
                 }
@@ -432,14 +470,14 @@ impl SectionToString for FunctionSection {
 
 #[derive(Debug)]
 pub struct TableSection {
-    pub table: Vec<TableType>,
+    pub tables: Vec<TableType>,
     pub position: SectionPosition,
 }
 
 impl TableSection {
     pub fn new() -> TableSection {
         TableSection {
-            table: Vec::new(),
+            tables: Vec::new(),
             position: SectionPosition::new(0, 0),
         }
     }
@@ -451,13 +489,13 @@ impl SectionToString for TableSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} count: {}", self.position.to_string(), self.table.len())
+        format!("{} count: {}", self.position.to_string(), self.tables.len())
     }
 
     fn to_details_string(&self, _: &Module) -> String {
         let mut result = String::new();
-        result.push_str(&format!("Table[{}]:\n", self.table.len()));
-        for (i, table_type) in self.table.iter().enumerate() {
+        result.push_str(&format!("Table[{}]:\n", self.tables.len()));
+        for (i, table_type) in self.tables.iter().enumerate() {
             result.push_str(&format!(" - table[{}] {}\n", i, table_type));
         }
         result
@@ -554,10 +592,14 @@ impl SectionToString for GlobalSection {
         result.push_str(&format!("Global[{}]:\n", self.globals.len()));
         for (i, global) in self.globals.iter().enumerate() {
             result.push_str(&format!(
-                " - global[{}] {} mutable={}{}\n",
+                " - global[{}] {} mutable={}{}{}\n",
                 i,
                 global.global_type.value_type,
                 if global.global_type.mutable { 1 } else { 0 },
+                match unit.exports.get_global(i as u32) {
+                    Some(e) => format!(" <{}>", e.name),
+                    None => "".to_string(),
+                },
                 init_expr_to_string(unit, &global.init, false, true),
             ));
         }
@@ -581,6 +623,13 @@ impl ExportSection {
 
     pub fn push(&mut self, export: Export) {
         self.exports.push(export);
+    }
+
+    pub fn get_global(&self, global_index: u32) -> Option<&Export> {
+        self.exports
+            .iter()
+            .filter(|e| matches!(e.index, ExportIndex::Global(_)))
+            .nth(global_index as usize)
     }
 }
 
@@ -608,8 +657,14 @@ impl SectionToString for ExportSection {
                 ExportIndex::Global(i) => ("global", i),
             };
             result.push_str(&format!(
-                " - {}[{}] <{}> -> \"{}\"\n",
-                typ, idx, export.name, export.name
+                " - {}[{}]{} -> \"{}\"\n",
+                typ,
+                idx,
+                match export.index {
+                    ExportIndex::Function(_) => format!(" <{}>", export.name),
+                    _ => "".to_string(),
+                },
+                export.name
             ));
         }
         result
@@ -856,7 +911,7 @@ impl SectionToString for ElementSection {
                         None => -1,
                     },
                 ),
-                _ => (String::new(), i as i32),
+                _ => (String::new(), 0),
             };
             result.push_str(&format!(
                 " - segment[{}] flags={} table={} count={}{}\n",
@@ -1236,6 +1291,22 @@ impl fmt::Display for Import {
                 "sig={} <{}.{}> <- {}.{}",
                 type_index, self.module, self.name, self.module, self.name
             ),
+            ExternalKind::Table(ref table_type) => write!(
+                f,
+                "type={} initial={}{} <- {}.{}",
+                match table_type.ref_type {
+                    RefType::FuncRef => "funcref",
+                    RefType::ExternRef => "externref",
+                },
+                table_type.limits.min,
+                if table_type.limits.max < u32::MAX {
+                    format!(" max={}", table_type.limits.max as i32)
+                } else {
+                    "".to_string()
+                },
+                self.module,
+                self.name
+            ),
             _ => panic!("TODO: implement"),
         }
     }
@@ -1315,7 +1386,7 @@ pub struct FunctionBody {
     pub position: SectionPosition, // sub-section position
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum RefType {
     FuncRef,
     ExternRef,

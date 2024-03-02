@@ -1084,13 +1084,21 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data, _| {
+                Arc::new(|data, module| {
                     if let InstructionData::IndirectInstruction {
                         type_index,
                         table_index,
                     } = &data
                     {
-                        format!("call_indirect {} (type {})", table_index, type_index)
+                        format!(
+                            "call_indirect {}{} (type {})",
+                            table_index,
+                            match module.imports.get_table_import(*table_index) {
+                                Some(import) => format!(" <{}.{}>", import.module, import.name),
+                                None => "".to_string(),
+                            },
+                            type_index
+                        )
                     } else {
                         panic!("expected local instruction");
                     }
@@ -1292,9 +1300,10 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
             ),
             // Table instructions¶ ---------------------------------------------
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::TableGet,
                 0x25,
+                0,
                 "table.get",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
@@ -1304,10 +1313,38 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x25];
+                    if let InstructionData::TableInstruction {
+                        subopcode_bytes,
+                        table_index,
+                    } = &data
+                    {
+                        let mut subopcode_bytes = subopcode_bytes.clone();
+                        bytes.append(&mut subopcode_bytes);
+                        let mut table_bytes = reader::emit_vu32(*table_index);
+                        bytes.append(&mut table_bytes);
+                    } else {
+                        panic!("expected table get instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data, _| {
+                    if let InstructionData::TableInstruction {
+                        subopcode_bytes: _,
+                        table_index,
+                    } = &data
+                    {
+                        format!("table.get {}", table_index)
+                    } else {
+                        panic!("expected table get instruction");
+                    }
+                }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::TableSet,
                 0x26,
+                0,
                 "table.set",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
@@ -1317,6 +1354,33 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x26];
+                    if let InstructionData::TableInstruction {
+                        subopcode_bytes,
+                        table_index,
+                    } = &data
+                    {
+                        let mut subopcode_bytes = subopcode_bytes.clone();
+                        bytes.append(&mut subopcode_bytes);
+                        let mut table_bytes = reader::emit_vu32(*table_index);
+                        bytes.append(&mut table_bytes);
+                    } else {
+                        panic!("expected table set instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data, _| {
+                    if let InstructionData::TableInstruction {
+                        subopcode_bytes: _,
+                        table_index,
+                    } = &data
+                    {
+                        format!("table.set {}", table_index)
+                    } else {
+                        panic!("expected table set instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_with_options(
                 InstructionType::TableInit,
@@ -4952,7 +5016,6 @@ fn decode_validate<T: super::validate::Validator>(
     let mut instructions: Vec<Instruction> = vec![];
     for result in instruction_iter {
         let instruction = result?;
-        // current_pos = instruction.byte_offset + instruction.byte_length;
         validator
             .validate(&instruction)
             .map_err(|e| DecodeError::from(e))?;

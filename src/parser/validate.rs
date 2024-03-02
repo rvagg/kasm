@@ -22,6 +22,9 @@ pub enum ValidationError {
     #[error("unknown table")]
     UnknownTable,
 
+    #[error("unknown element")]
+    UnknownElement,
+
     #[error("unexpected token")]
     UnexpectedToken,
 
@@ -59,6 +62,7 @@ pub struct ConstantExpressionValidator<'a> {
     // globals: &'a Vec<GlobalType>,
     imports: &'a super::module::ImportSection,
     return_type: ValueType,
+    instr_count: u32,
     has_end: bool,
 }
 
@@ -70,6 +74,7 @@ impl ConstantExpressionValidator<'_> {
         ConstantExpressionValidator {
             imports,
             return_type,
+            instr_count: 0,
             has_end: false,
         }
     }
@@ -93,6 +98,14 @@ impl ConstantExpressionValidator<'_> {
 
 impl Validator for ConstantExpressionValidator<'_> {
     fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError> {
+        match *inst.get_type() {
+            I32Const | I64Const | F32Const | F64Const | RefNull | RefFunc | GlobalGet | End => {}
+            _ => return Err(ValidationError::ConstantExpressionRequired),
+        }
+        self.instr_count += 1;
+        if self.instr_count >= 2 && *inst.get_type() != End {
+            return Err(ValidationError::TypeMismatch);
+        }
         match inst.get_type() {
             // const type must match self.return_type
             I32Const => (self.return_type == I32)
@@ -107,9 +120,19 @@ impl Validator for ConstantExpressionValidator<'_> {
             F64Const => (self.return_type == F64)
                 .then(|| ())
                 .ok_or(ValidationError::TypeMismatch),
-            RefNull => (self.return_type == FuncRef || self.return_type == ExternRef)
-                .then(|| ())
-                .ok_or(ValidationError::TypeMismatch),
+            RefNull => {
+                if let InstructionData::RefTypeInstruction { ref_type } = *inst.get_data() {
+                    if self.return_type == FuncRef && ref_type == FuncRef {
+                        Ok(())
+                    } else if self.return_type == ExternRef && ref_type == ExternRef {
+                        Ok(())
+                    } else {
+                        Err(ValidationError::TypeMismatch)
+                    }
+                } else {
+                    Err(ValidationError::InvalidInstruction)
+                }
+            }
             RefFunc => (self.return_type == FuncRef || self.return_type == ExternRef)
                 .then(|| ())
                 .ok_or(ValidationError::TypeMismatch), // TODO: should check that the function index exists? but this implies the functions section is required
@@ -125,10 +148,14 @@ impl Validator for ConstantExpressionValidator<'_> {
                     Err(ValidationError::InvalidInstruction)
                 }
             }
-            End => {
-                self.has_end = true;
-                Ok(())
-            }
+            End => match self.instr_count {
+                1 => Err(ValidationError::TypeMismatch),
+                2 => {
+                    self.has_end = true;
+                    Ok(())
+                }
+                _ => Err(ValidationError::ConstantExpressionRequired),
+            },
             _ => Err(ValidationError::ConstantExpressionRequired),
         }
     }
@@ -244,6 +271,7 @@ impl<'a> CodeValidator<'a> {
     fn pop_expected(&mut self, val_type: MaybeValue) -> Option<MaybeValue> {
         let popped = self.pop_val()?;
         if popped != val_type && popped != Unknown && val_type != Unknown {
+            println!("pop_expected failed popped: {:?}, val_type: {:?}", popped, val_type);
             None
         } else {
             Some(popped)
@@ -710,7 +738,35 @@ impl Validator for CodeValidator<'_> {
                 Ok(())
             }
 
-            TableInit | TableCopy => {
+            TableInit => {
+                self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
+                    .ok_or(ValidationError::TypeMismatch)?;
+                if let InstructionData::TableInitInstruction {
+                    table_index,
+                    elem_index,
+                    ..
+                } = *inst.get_data()
+                {
+                    let table = self
+                        .module
+                        .table
+                        .tables
+                        .get(table_index as usize)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    let elem = self
+                        .module
+                        .elements
+                        .elements
+                        .get(elem_index as usize)
+                        .ok_or(ValidationError::UnknownElement)?;
+                    if elem.ref_type != table.ref_type {
+                        return Err(ValidationError::TypeMismatch);
+                    }
+                }
+                Ok(())
+            }
+
+            TableCopy => {
                 // TODO: check that the destination table index exists
                 // TODO: check that the source element index exists (for TableInit)
                 // TODO: check that the source table index exists (for TableInit)
@@ -718,6 +774,40 @@ impl Validator for CodeValidator<'_> {
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
+            }
+
+            TableGet => {
+                if let InstructionData::TableInstruction { table_index, .. } = *inst.get_data() {
+                    let table = self
+                        .module
+                        .get_table(table_index)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    self.pop_expected(Val(I32))
+                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.push_val(Val(table.ref_type.into()))
+                        .ok_or(ValidationError::TypeMismatch)?;
+                    Ok(())
+                } else {
+                    return Err(ValidationError::InvalidInstruction);
+                }
+            }
+
+            TableSet => {
+                if let InstructionData::TableInstruction { table_index, .. } = *inst.get_data() {
+                    let table = self
+                        .module
+                        .get_table(table_index)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    println!("table.set ref {:?}", table.ref_type);
+                    self.pop_expected(Val(table.ref_type.into()))
+                        .ok_or(ValidationError::TypeMismatch)?;
+                    println!("table.set i32");
+                    self.pop_expected(Val(I32))
+                        .ok_or(ValidationError::TypeMismatch)?;
+                    Ok(())
+                } else {
+                    return Err(ValidationError::InvalidInstruction);
+                }
             }
 
             ElemDrop => {
@@ -914,11 +1004,9 @@ impl Validator for CodeValidator<'_> {
                 {
                     // TOOD: this probably should check that table_index exists in the table space
 
-                    let table: &super::module::TableType = self
+                    let table = self
                         .module
-                        .table
-                        .table
-                        .get(tabi as usize)
+                        .get_table(tabi)
                         .ok_or(ValidationError::UnknownTable)?;
 
                     if ValueType::from(table.ref_type) != FuncRef {

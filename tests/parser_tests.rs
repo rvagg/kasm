@@ -47,10 +47,11 @@ mod tests {
     #[derive(Deserialize, Debug)]
     #[serde(untagged)]
     enum Command {
-        AssertReturn(AssertReturnCommand),
         AssertTrapCommand(AssertTrapCommand),
+        AssertReturn(AssertReturnCommand),
         AssertUninstantiable(AssertUninstantiableCommand),
         AssertInvalid(AssertInvalidCommand),
+        RegisterCommand(RegisterCommand),
         Module(ModuleCommand),
     }
 
@@ -73,7 +74,6 @@ mod tests {
         action: Action,
         expected: Vec<TypedValue>,
     }
-
 
     #[derive(Debug)]
     #[allow(unused)]
@@ -124,6 +124,18 @@ mod tests {
         line: i32,
         action: Action,
         text: String,
+        expected: Vec<Type>,
+    }
+
+    #[derive(Deserialize, Debug)]
+    #[allow(unused)]
+    struct RegisterCommand {
+        #[serde(rename = "type")]
+        command_type: String,
+        line: i32,
+        name: String,
+        #[serde(rename = "as")]
+        as_name: String,
     }
 
     #[derive(Deserialize, Debug)]
@@ -131,6 +143,8 @@ mod tests {
     struct Action {
         #[serde(rename = "type")]
         action_type: String,
+        #[serde(default)]
+        module: String,
         field: String,
         args: Vec<TypedValue>,
     }
@@ -141,6 +155,13 @@ mod tests {
         #[serde(rename = "type")]
         value_type: String,
         value: String,
+    }
+
+    #[derive(Deserialize, Debug)]
+    #[allow(unused)]
+    struct Type {
+        #[serde(rename = "type")]
+        value_type: String,
     }
 
     #[derive(Deserialize)]
@@ -203,13 +224,21 @@ mod tests {
                 format!("{}/{}", icab.command.filename, icab.command.line).as_str(),
                 &mut kasm::parser::reader::Reader::new(icab.bin.clone()),
             ) {
-                Ok(_) => panic!("should not succeed"),
+                Ok(_) => {
+                    panic!(
+                        "should not succeed, expected failure with '{}', filename = {}, line in source is {}",
+                         icab.command.text,
+                         icab.command.filename,
+                         icab.command.line);
+                },
                 Err(e) => assert!(
                     e.to_string().contains(&icab.command.text),
-                    "Error message does not contain the expected text. Error message: '{}', Expected text: '{}'",
+                    "Error message does not contain the expected text. Error message = '{}', expected text = '{}', filename = {}, line in source is {}",
                     e.to_string(),
-                    &icab.command.text
-                ),            }
+                    &icab.command.text,
+                    icab.command.filename,
+                    icab.command.line),
+                }
         }
 
         test_data.dump.iter().for_each(|(filename, dump)| {
