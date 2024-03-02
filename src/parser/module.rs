@@ -35,13 +35,10 @@ impl Module {
 
     pub fn get_function_name(&self, index: u32) -> Option<&String> {
         for export in &self.exports.exports {
-            match export.index {
-                ExportIndex::Function(idx) => {
-                    if idx == index as u64 {
-                        return Some(&export.name);
-                    }
+            if let ExportIndex::Function(idx) = export.index {
+                if idx == index as u64 {
+                    return Some(&export.name);
                 }
-                _ => {}
             }
         }
         None
@@ -128,6 +125,10 @@ impl SectionPosition {
     pub fn len(&self) -> u32 {
         self.end - self.start
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl ToString for SectionPosition {
@@ -199,6 +200,12 @@ pub struct TypeSection {
     pub position: SectionPosition,
 }
 
+impl Default for TypeSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeSection {
     pub fn new() -> TypeSection {
         TypeSection {
@@ -213,6 +220,10 @@ impl TypeSection {
 
     pub fn len(&self) -> usize {
         self.types.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
     }
 
     pub fn get(&self, index: u8) -> Option<&FunctionType> {
@@ -245,6 +256,12 @@ pub struct ImportSection {
     pub position: SectionPosition,
 }
 
+impl Default for ImportSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ImportSection {
     pub fn new() -> ImportSection {
         ImportSection {
@@ -260,20 +277,14 @@ impl ImportSection {
     pub fn function_count(&self) -> usize {
         self.imports
             .iter()
-            .filter(|i| match i.external_kind {
-                ExternalKind::Function(_) => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i.external_kind, ExternalKind::Function(_)))
             .count()
     }
 
     pub fn table_count(&self) -> usize {
         self.imports
             .iter()
-            .filter(|i| match i.external_kind {
-                ExternalKind::Table(_) => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i.external_kind, ExternalKind::Table(_)))
             .count()
     }
 
@@ -281,10 +292,7 @@ impl ImportSection {
         // return the index'th table, if we have that many
         self.imports
             .iter()
-            .filter(|i| match i.external_kind {
-                ExternalKind::Table(_) => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i.external_kind, ExternalKind::Table(_)))
             .nth(index as usize)
     }
 
@@ -300,20 +308,14 @@ impl ImportSection {
     pub fn memory_count(&self) -> usize {
         self.imports
             .iter()
-            .filter(|i| match i.external_kind {
-                ExternalKind::Memory(_) => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i.external_kind, ExternalKind::Memory(_)))
             .count()
     }
 
     pub fn global_count(&self) -> usize {
         self.imports
             .iter()
-            .filter(|i| match i.external_kind {
-                ExternalKind::Global(_) => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i.external_kind, ExternalKind::Global(_)))
             .count()
     }
 
@@ -321,10 +323,7 @@ impl ImportSection {
         // return the index'th global, if we have that many
         self.imports
             .iter()
-            .filter(|i| match i.external_kind {
-                ExternalKind::Global(_) => true,
-                _ => false,
-            })
+            .filter(|i| matches!(i.external_kind, ExternalKind::Global(_)))
             .nth(index as usize)
             .and_then(|i| match i.external_kind {
                 ExternalKind::Global(_) => Some(i),
@@ -420,6 +419,12 @@ pub struct FunctionSection {
     pub position: SectionPosition,
 }
 
+impl Default for FunctionSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FunctionSection {
     pub fn new() -> FunctionSection {
         FunctionSection {
@@ -474,6 +479,12 @@ pub struct TableSection {
     pub position: SectionPosition,
 }
 
+impl Default for TableSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TableSection {
     pub fn new() -> TableSection {
         TableSection {
@@ -506,6 +517,12 @@ impl SectionToString for TableSection {
 pub struct MemorySection {
     pub memory: Vec<Memory>,
     pub position: SectionPosition,
+}
+
+impl Default for MemorySection {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MemorySection {
@@ -555,6 +572,12 @@ pub struct GlobalSection {
     pub position: SectionPosition,
 }
 
+impl Default for GlobalSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalSection {
     pub fn new() -> GlobalSection {
         GlobalSection {
@@ -566,11 +589,7 @@ impl GlobalSection {
 
 impl From<&GlobalSection> for Vec<GlobalType> {
     fn from(section: &GlobalSection) -> Self {
-        section
-            .globals
-            .iter()
-            .map(|g| g.global_type.clone())
-            .collect()
+        section.globals.iter().map(|g| g.global_type).collect()
     }
 }
 
@@ -611,6 +630,12 @@ impl SectionToString for GlobalSection {
 pub struct ExportSection {
     pub exports: Vec<Export>,
     pub position: SectionPosition,
+}
+
+impl Default for ExportSection {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExportSection {
@@ -677,6 +702,12 @@ pub struct StartSection {
     pub position: SectionPosition,
 }
 
+impl Default for StartSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StartSection {
     pub fn new() -> StartSection {
         StartSection {
@@ -708,6 +739,12 @@ pub struct ElementSection {
     pub position: SectionPosition,
 }
 
+impl Default for ElementSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ElementSection {
     pub fn new() -> ElementSection {
         ElementSection {
@@ -729,8 +766,8 @@ fn init_expr_to_offset(init: &Vec<ast::Instruction>) -> Option<u32> {
     match init[0].get_type() {
         // include instruction + end
         ast::InstructionType::I32Const => {
-            if let ast::InstructionData::I32Instruction { value } = *init[0].get_data() {
-                Some(value as u32)
+            if let ast::InstructionData::I32 { value } = *init[0].get_data() {
+                Some(value)
             } else {
                 None
             }
@@ -758,38 +795,36 @@ fn init_expr_to_string(
         2 => match init[0].get_type() {
             // include instruction + end
             ast::InstructionType::I32Const => {
-                if let ast::InstructionData::I32Instruction { value } = *init[0].get_data() {
+                if let ast::InstructionData::I32 { value } = *init[0].get_data() {
                     if as_unsigned {
-                        result.push_str(&format!("i32={}", value as u32));
+                        result.push_str(&format!("i32={}", { value }));
                     } else {
                         result.push_str(&format!("i32={}", value as i32));
                     }
                 }
             }
             ast::InstructionType::I64Const => {
-                if let ast::InstructionData::I64Instruction { value } = *init[0].get_data() {
+                if let ast::InstructionData::I64 { value } = *init[0].get_data() {
                     if as_unsigned {
-                        result.push_str(&format!("i64={}", value as u64));
+                        result.push_str(&format!("i64={}", { value }));
                     } else {
                         result.push_str(&format!("i64={}", value as i64));
                     }
                 }
             }
             ast::InstructionType::F32Const => {
-                if let ast::InstructionData::F32Instruction { value } = *init[0].get_data() {
+                if let ast::InstructionData::F32 { value } = *init[0].get_data() {
                     result.push_str(&format!("f32={}", value.to_hex()));
                 }
             }
             ast::InstructionType::F64Const => {
-                if let ast::InstructionData::F64Instruction { value } = *init[0].get_data() {
+                if let ast::InstructionData::F64 { value } = *init[0].get_data() {
                     result.push_str(&format!("f64={}", value.to_hex()));
                 }
             }
             // TODO: v128
             ast::InstructionType::GlobalGet => {
-                if let ast::InstructionData::GlobalInstruction { global_index } =
-                    *init[0].get_data()
-                {
+                if let ast::InstructionData::Global { global_index } = *init[0].get_data() {
                     match unit.imports.get_global_import(global_index) {
                         Some(import) => {
                             result.push_str(&format!(
@@ -804,9 +839,7 @@ fn init_expr_to_string(
                 }
             }
             ast::InstructionType::RefFunc => {
-                if let ast::InstructionData::FunctionInstruction { function_index } =
-                    *init[0].get_data()
-                {
+                if let ast::InstructionData::Function { function_index } = *init[0].get_data() {
                     result.push_str(&format!(
                         "ref.func:{}{}",
                         function_index,
@@ -818,7 +851,7 @@ fn init_expr_to_string(
                 }
             }
             ast::InstructionType::RefNull => {
-                if let ast::InstructionData::RefTypeInstruction { ref_type } = *init[0].get_data() {
+                if let ast::InstructionData::RefType { ref_type } = *init[0].get_data() {
                     result.push_str(&format!("ref.null {}", ref_type));
                 }
             }
@@ -827,7 +860,7 @@ fn init_expr_to_string(
             }
         },
         _ => {
-            result.push_str("(");
+            result.push('(');
             let mut first = true;
             if let Some(len) = init.len().checked_sub(1) {
                 for instruction in init.iter().take(len) {
@@ -838,35 +871,27 @@ fn init_expr_to_string(
                     result.push_str(&format!("{}", instruction));
                     match instruction.get_type() {
                         ast::InstructionType::I32Const => {
-                            if let ast::InstructionData::I32Instruction { value } =
-                                *instruction.get_data()
-                            {
+                            if let ast::InstructionData::I32 { value } = *instruction.get_data() {
                                 result.push_str(&format!("{}", value as i32));
                             }
                         }
                         ast::InstructionType::I64Const => {
-                            if let ast::InstructionData::I64Instruction { value } =
-                                *instruction.get_data()
-                            {
+                            if let ast::InstructionData::I64 { value } = *instruction.get_data() {
                                 result.push_str(&format!("{}", value as i32));
                             }
                         }
                         ast::InstructionType::F32Const => {
-                            if let ast::InstructionData::F32Instruction { value } =
-                                *instruction.get_data()
-                            {
+                            if let ast::InstructionData::F32 { value } = *instruction.get_data() {
                                 result.push_str(&format!("{}", value));
                             }
                         }
                         ast::InstructionType::F64Const => {
-                            if let ast::InstructionData::F64Instruction { value } =
-                                *instruction.get_data()
-                            {
+                            if let ast::InstructionData::F64 { value } = *instruction.get_data() {
                                 result.push_str(&format!("{}", value));
                             }
                         }
                         ast::InstructionType::GlobalGet => {
-                            if let ast::InstructionData::GlobalInstruction { global_index } =
+                            if let ast::InstructionData::Global { global_index } =
                                 *instruction.get_data()
                             {
                                 result.push_str(&format!("{}", global_index));
@@ -947,6 +972,12 @@ pub struct CodeSection {
     pub position: SectionPosition,
 }
 
+impl Default for CodeSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodeSection {
     pub fn new() -> CodeSection {
         CodeSection {
@@ -957,6 +988,10 @@ impl CodeSection {
 
     pub fn len(&self) -> usize {
         self.code.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.code.is_empty()
     }
 }
 
@@ -975,13 +1010,10 @@ impl SectionToString for CodeSection {
         for (i, function_body) in self.code.iter().enumerate() {
             let mut exp = String::new();
             for export in &unit.exports.exports {
-                match export.index {
-                    ExportIndex::Function(idx) => {
-                        if idx == i as u64 {
-                            exp = format!(" <{}>", export.name);
-                        }
+                if let ExportIndex::Function(idx) = export.index {
+                    if idx == i as u64 {
+                        exp = format!(" <{}>", export.name);
                     }
-                    _ => {}
                 }
             }
             result.push_str(&format!(
@@ -1001,13 +1033,10 @@ impl CodeSection {
         for (i, function_body) in self.code.iter().enumerate() {
             let mut exp = String::new();
             for export in &unit.exports.exports {
-                match export.index {
-                    ExportIndex::Function(idx) => {
-                        if idx == i as u64 {
-                            exp = format!(" <{}>", export.name);
-                        }
+                if let ExportIndex::Function(idx) = export.index {
+                    if idx == i as u64 {
+                        exp = format!(" <{}>", export.name);
                     }
-                    _ => {}
                 }
             }
             let ftype_index = match unit.functions.get(i as u8) {
@@ -1079,7 +1108,7 @@ impl CodeSection {
 
                 let mut byte_string = String::new();
                 let coding_bytes = (coding.emit_bytes)(instruction.get_data());
-                let coding_string = (coding.emit_str)(instruction.get_data(), &unit);
+                let coding_string = (coding.emit_str)(instruction.get_data(), unit);
                 let mut coding_string_added = false;
 
                 let push_format = |byte_string: &String, coding_string_added: bool| -> String {
@@ -1152,6 +1181,12 @@ pub struct DataSection {
     pub position: SectionPosition,
 }
 
+impl Default for DataSection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataSection {
     pub fn new() -> DataSection {
         DataSection {
@@ -1165,6 +1200,12 @@ impl DataSection {
 pub struct DataCountSection {
     pub count: u32,
     pub position: SectionPosition,
+}
+
+impl Default for DataCountSection {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DataCountSection {
@@ -1197,6 +1238,12 @@ pub struct CustomSection {
     pub name: String,
     pub data: Vec<u8>,
     pub position: SectionPosition,
+}
+
+impl Default for CustomSection {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CustomSection {
@@ -1363,6 +1410,10 @@ impl Locals {
         self.entries.iter().map(|(count, _)| *count as u64).sum()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub fn iter(&self) -> std::slice::Iter<'_, (u32, ValueType)> {
         self.entries.iter()
     }
@@ -1451,9 +1502,9 @@ pub enum ElementMode {
 impl fmt::Display for ElementMode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &ElementMode::Passive => write!(f, "Passive"),
-            &ElementMode::Declarative => write!(f, "Declarative"),
-            &ElementMode::Active {
+            ElementMode::Passive => write!(f, "Passive"),
+            ElementMode::Declarative => write!(f, "Declarative"),
+            ElementMode::Active {
                 table_index,
                 ref offset,
             } => {
@@ -1509,8 +1560,8 @@ pub enum DataMode {
 impl fmt::Display for DataMode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &DataMode::Passive => write!(f, "Passive"),
-            &DataMode::Active {
+            DataMode::Passive => write!(f, "Passive"),
+            DataMode::Active {
                 memory_index,
                 ref offset,
             } => {
@@ -1670,10 +1721,10 @@ impl fmt::Display for ExternalKind {
             f,
             "{}",
             match self {
-                &ExternalKind::Function(ref typeidx) => format!("Function({})", typeidx),
-                &ExternalKind::Table(ref table_type) => format!("Table({})", table_type),
-                &ExternalKind::Memory(ref limits) => format!("Memory({})", limits),
-                &ExternalKind::Global(ref global_type) => format!("Global({})", global_type),
+                ExternalKind::Function(typeidx) => format!("Function({})", typeidx),
+                ExternalKind::Table(table_type) => format!("Table({})", table_type),
+                ExternalKind::Memory(limits) => format!("Memory({})", limits),
+                ExternalKind::Global(global_type) => format!("Global({})", global_type),
             }
         )
     }
@@ -1798,7 +1849,7 @@ impl Module {
 
         for (p, s) in components {
             if p.has_position() {
-                result.push_str(s.to_details_string(&self).as_str());
+                result.push_str(s.to_details_string(self).as_str());
             }
         }
 
@@ -1807,7 +1858,7 @@ impl Module {
 
     fn to_disassemble_string(&self) -> String {
         if self.code.has_position() {
-            self.code.to_disassemble_string(&self)
+            self.code.to_disassemble_string(self)
         } else {
             String::new()
         }
@@ -1862,7 +1913,7 @@ impl ExportIndex {
             0x03 => Ok(ExportIndex::Global(idx as u64)),
             _ => {
                 let msg: String = format!("invalid export type: {}", byte);
-                return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+                Err(io::Error::new(io::ErrorKind::InvalidData, msg))
             }
         }
     }
@@ -1908,13 +1959,13 @@ impl ValueType {
 
     pub fn emit_bytes(&self) -> Vec<u8> {
         match self {
-            &ValueType::I32 => vec![0x7f],
-            &ValueType::I64 => vec![0x7e],
-            &ValueType::F32 => vec![0x7d],
-            &ValueType::F64 => vec![0x7c],
-            &ValueType::V128 => vec![0x7b],
-            &ValueType::FuncRef => vec![0x70],
-            &ValueType::ExternRef => vec![0x6f],
+            ValueType::I32 => vec![0x7f],
+            ValueType::I64 => vec![0x7e],
+            ValueType::F32 => vec![0x7d],
+            ValueType::F64 => vec![0x7c],
+            ValueType::V128 => vec![0x7b],
+            ValueType::FuncRef => vec![0x70],
+            ValueType::ExternRef => vec![0x6f],
         }
     }
 }
@@ -1925,13 +1976,13 @@ impl fmt::Display for ValueType {
             f,
             "{}",
             match self {
-                &ValueType::I32 => "i32",
-                &ValueType::I64 => "i64",
-                &ValueType::F64 => "f64",
-                &ValueType::F32 => "f32",
-                &ValueType::V128 => "v128",
-                &ValueType::FuncRef => "funcref",
-                &ValueType::ExternRef => "externref",
+                ValueType::I32 => "i32",
+                ValueType::I64 => "i64",
+                ValueType::F64 => "f64",
+                ValueType::F32 => "f32",
+                ValueType::V128 => "v128",
+                ValueType::FuncRef => "funcref",
+                ValueType::ExternRef => "externref",
             }
         )
     }

@@ -16,10 +16,7 @@ pub struct Reader {
 
 impl Reader {
     pub fn new(bytes: Vec<u8>) -> Reader {
-        Reader {
-            bytes: bytes,
-            pos: 0,
-        }
+        Reader { bytes, pos: 0 }
     }
 }
 
@@ -49,10 +46,7 @@ impl Reader {
 
     pub fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>, io::Error> {
         if !self.has_at_least(len) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected end",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected end"));
         }
         let mut vec = Vec::with_capacity(len);
         for i in 0..len {
@@ -68,10 +62,7 @@ impl Reader {
     pub fn read_u32(&mut self) -> Result<u32, io::Error> {
         let bytes = self.read_bytes(4)?;
         if bytes.len() != 4 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected end",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected end"));
         }
 
         let mut num = 0;
@@ -373,7 +364,7 @@ where
     loop {
         let b = reader()? as u64;
         let value = (b & 0x7f) << (7 * i);
-        result |= value as u64;
+        result |= value;
         if (b & 0x80) == 0 {
             // Check that unused bits are not set
             if i + 1 == max_bytes && size % 7 != 0 {
@@ -406,11 +397,11 @@ fn emit_vu(v: u64) -> Vec<u8> {
     let mut more = true;
     while more {
         let mut byte = (value & 0x7f) as u8;
-        value = value >> 7;
+        value >>= 7;
         if value == 0 {
             more = false;
         } else {
-            byte = byte | 0x80;
+            byte |= 0x80;
         }
         result.push(byte);
     }
@@ -739,11 +730,11 @@ fn emit_vs(v: i64) -> Vec<u8> {
     let mut more = true;
     while more {
         let mut byte = (value & 0x7f) as u8;
-        value = value >> 7;
+        value >>= 7;
         if (value == 0 && (byte & 0x40) == 0) || (value == -1 && (byte & 0x40) != 0) {
             more = false;
         } else {
-            byte = byte | 0x80;
+            byte |= 0x80;
         }
         result.push(byte);
     }
@@ -1007,8 +998,8 @@ where
     F: FnMut() -> Result<u8, io::Error>,
 {
     let mut buf = [0u8; 4];
-    for i in 0..4 {
-        buf[i] = reader()?;
+    for element in &mut buf {
+        *element = reader()?;
     }
     let mut rdr = io::Cursor::new(buf);
     rdr.read_f32::<LittleEndian>()
@@ -1025,11 +1016,11 @@ fn test_read_f32() {
     assert!(read(vec![0, 0, 192, 255]).is_nan()); // -nan
     assert_eq_with_diag(read(vec![0, 0, 0, 0]), 0.0);
     assert_eq_with_diag(read(vec![0, 0, 0, 128]), 0.0); // -0.0
-    assert_eq_with_diag(read(vec![219, 15, 201, 64]), 6.28318548202514648);
+    assert_eq_with_diag(read(vec![219, 15, 201, 64]), 6.283_185_5);
     assert_eq_with_diag(read(vec![1, 0, 0, 0]), 1.4013e-45);
     assert_eq_with_diag(read(vec![0, 0, 128, 0]), 1.1754944e-38);
     assert_eq_with_diag(read(vec![255, 255, 127, 0]), 1.1754942e-38);
-    assert_eq_with_diag(read(vec![255, 255, 127, 127]), 3.4028234e+38);
+    assert_eq_with_diag(read(vec![255, 255, 127, 127]), 3.402_823_5e38);
     assert_eq_with_diag(read(vec![249, 2, 21, 80]), 1.0e10);
 }
 
@@ -1045,8 +1036,8 @@ where
     F: FnMut() -> Result<u8, io::Error>,
 {
     let mut buf = [0u8; 8];
-    for i in 0..8 {
-        buf[i] = reader()?;
+    for element in &mut buf {
+        *element = reader()?;
     }
     let mut rdr = io::Cursor::new(buf);
     rdr.read_f64::<LittleEndian>()
@@ -1066,17 +1057,17 @@ fn test_read_f64() {
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 0, 128]), 0.0); // -0
     assert_eq_with_diag(
         read(vec![24, 45, 68, 84, 251, 33, 25, 64]),
-        6.28318530717958623,
+        6.283_185_307_179_586,
     );
     assert_eq_with_diag(read(vec![1, 0, 0, 0, 0, 0, 0, 0]), 4.94066e-324);
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 16, 0]), 2.2250738585072012e-308);
     assert_eq_with_diag(
         read(vec![255, 255, 255, 255, 255, 255, 15, 0]),
-        2.2250738585072011e-308,
+        2.225_073_858_507_201e-308,
     );
     assert_eq_with_diag(
         read(vec![255, 255, 255, 255, 255, 255, 239, 127]),
-        1.7976931348623157e+308,
+        1.797_693_134_862_315_7e308,
     );
     assert_eq_with_diag(read(vec![125, 195, 148, 37, 173, 73, 178, 84]), 1.0e100);
 }
@@ -1093,8 +1084,8 @@ where
     F: FnMut() -> Result<u8, io::Error>,
 {
     let mut buf = [0u8; 16];
-    for i in 0..16 {
-        buf[i] = reader()?;
+    for element in &mut buf {
+        *element = reader()?;
     }
     Ok(buf)
 }

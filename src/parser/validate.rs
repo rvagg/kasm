@@ -67,10 +67,10 @@ pub struct ConstantExpressionValidator<'a> {
 }
 
 impl ConstantExpressionValidator<'_> {
-    pub fn new<'a>(
-        imports: &'a super::module::ImportSection,
+    pub fn new(
+        imports: &super::module::ImportSection,
         return_type: super::module::ValueType,
-    ) -> ConstantExpressionValidator<'a> {
+    ) -> ConstantExpressionValidator<'_> {
         ConstantExpressionValidator {
             imports,
             return_type,
@@ -109,22 +109,20 @@ impl Validator for ConstantExpressionValidator<'_> {
         match inst.get_type() {
             // const type must match self.return_type
             I32Const => (self.return_type == I32)
-                .then(|| ())
+                .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
             I64Const => (self.return_type == I64)
-                .then(|| ())
+                .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
             F32Const => (self.return_type == F32)
-                .then(|| ())
+                .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
             F64Const => (self.return_type == F64)
-                .then(|| ())
+                .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
             RefNull => {
-                if let InstructionData::RefTypeInstruction { ref_type } = *inst.get_data() {
-                    if self.return_type == FuncRef && ref_type == FuncRef {
-                        Ok(())
-                    } else if self.return_type == ExternRef && ref_type == ExternRef {
+                if let InstructionData::RefType { ref_type } = *inst.get_data() {
+                    if self.return_type == FuncRef && ref_type == FuncRef || self.return_type == ExternRef && ref_type == ExternRef {
                         Ok(())
                     } else {
                         Err(ValidationError::TypeMismatch)
@@ -134,10 +132,10 @@ impl Validator for ConstantExpressionValidator<'_> {
                 }
             }
             RefFunc => (self.return_type == FuncRef || self.return_type == ExternRef)
-                .then(|| ())
+                .then_some(())
                 .ok_or(ValidationError::TypeMismatch), // TODO: should check that the function index exists? but this implies the functions section is required
             GlobalGet => {
-                if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
+                if let InstructionData::Global { global_index: gi } = *inst.get_data() {
                     let value_type = self.global(gi)?.value_type;
                     if value_type == self.return_type {
                         Ok(())
@@ -259,9 +257,7 @@ impl<'a> CodeValidator<'a> {
     fn pop_val(&mut self) -> Option<MaybeValue> {
         if self.vals.len() as u32 == self.ctrls.last()?.height && self.ctrls.last()?.unreachable {
             Some(Unknown)
-        } else if self.vals.len() as u32 == self.ctrls.last()?.height {
-            None
-        } else if self.vals.len() == 0 {
+        } else if self.vals.len() as u32 == self.ctrls.last()?.height || self.vals.is_empty() {
             None
         } else {
             self.vals.pop()
@@ -271,7 +267,10 @@ impl<'a> CodeValidator<'a> {
     fn pop_expected(&mut self, val_type: MaybeValue) -> Option<MaybeValue> {
         let popped = self.pop_val()?;
         if popped != val_type && popped != Unknown && val_type != Unknown {
-            println!("pop_expected failed popped: {:?}, val_type: {:?}", popped, val_type);
+            println!(
+                "pop_expected failed popped: {:?}, val_type: {:?}",
+                popped, val_type
+            );
             None
         } else {
             Some(popped)
@@ -294,9 +293,9 @@ impl<'a> CodeValidator<'a> {
         end_types: Vec<MaybeValue>,
     ) {
         self.ctrls.push(CtrlFrame {
-            instruction: instruction,
+            instruction,
             start_types: start_types.clone(),
-            end_types: end_types,
+            end_types,
             height: self.vals.len() as u32,
             unreachable: false,
         });
@@ -309,14 +308,12 @@ impl<'a> CodeValidator<'a> {
             Err(ValidationError::UnexpectedToken)
         } else {
             let end_types_clone = self.ctrls.last().unwrap().end_types.clone();
-            if self.pop_expecteds(end_types_clone).is_none() {
+            if self.pop_expecteds(end_types_clone).is_none()
+                || self.vals.len() != self.ctrls.last().unwrap().height as usize
+            {
                 Err(ValidationError::TypeMismatch)
             } else {
-                if self.vals.len() != self.ctrls.last().unwrap().height as usize {
-                    Err(ValidationError::TypeMismatch)
-                } else {
-                    Ok(self.ctrls.pop().unwrap())
-                }
+                Ok(self.ctrls.pop().unwrap())
             }
         }
     }
@@ -551,8 +548,8 @@ impl Validator for CodeValidator<'_> {
             }
 
             LocalGet => {
-                if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
-                    let local = self.local(li)?.clone();
+                if let InstructionData::Local { local_index: li } = *inst.get_data() {
+                    let local = *self.local(li)?;
                     self.push_val(Val(local))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
@@ -562,8 +559,8 @@ impl Validator for CodeValidator<'_> {
             }
 
             LocalSet => {
-                if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
-                    let local = self.local(li)?.clone();
+                if let InstructionData::Local { local_index: li } = *inst.get_data() {
+                    let local = *self.local(li)?;
                     self.pop_expected(Val(local))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
@@ -573,8 +570,8 @@ impl Validator for CodeValidator<'_> {
             }
 
             LocalTee => {
-                if let InstructionData::LocalInstruction { local_index: li } = *inst.get_data() {
-                    let local = self.local(li)?.clone();
+                if let InstructionData::Local { local_index: li } = *inst.get_data() {
+                    let local = *self.local(li)?;
                     self.pop_expected(Val(local))
                         .ok_or(ValidationError::TypeMismatch)?;
                     self.push_val(Val(local))
@@ -586,8 +583,8 @@ impl Validator for CodeValidator<'_> {
             }
 
             GlobalGet => {
-                if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
-                    let global = self.global(gi)?.clone();
+                if let InstructionData::Global { global_index: gi } = *inst.get_data() {
+                    let global = *self.global(gi)?;
                     self.push_val(Val(global.value_type))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
@@ -597,8 +594,8 @@ impl Validator for CodeValidator<'_> {
             }
 
             GlobalSet => {
-                if let InstructionData::GlobalInstruction { global_index: gi } = *inst.get_data() {
-                    let global = self.global(gi)?.clone();
+                if let InstructionData::Global { global_index: gi } = *inst.get_data() {
+                    let global = *self.global(gi)?;
                     self.pop_expected(Val(global.value_type))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
@@ -614,7 +611,7 @@ impl Validator for CodeValidator<'_> {
                 self.push_val(Val(I32))
                     .ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
-                    &inst,
+                    inst,
                     match inst.get_type() {
                         &I32Load => 2,                  // 4 bytes = 2^2
                         &I32Load8S | &I32Load8U => 0,   // 1 byte = 2^0
@@ -631,7 +628,7 @@ impl Validator for CodeValidator<'_> {
                 self.push_val(Val(I64))
                     .ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
-                    &inst,
+                    inst,
                     match inst.get_type() {
                         &I64Load => 3,                  // 8 bytes = 2^3
                         &I64Load8S | &I64Load8U => 0,   // 1 byte = 2^0
@@ -648,7 +645,7 @@ impl Validator for CodeValidator<'_> {
                     .ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F32))
                     .ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(&inst, 2 /* 4 bytes = 2^2 */)
+                check_alignment(inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Load => {
@@ -657,7 +654,7 @@ impl Validator for CodeValidator<'_> {
                     .ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F64))
                     .ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(&inst, 3 /* 8 bytes = 2^3 */)
+                check_alignment(inst, 3 /* 8 bytes = 2^3 */)
             }
 
             I32Store | I32Store8 | I32Store16 => {
@@ -667,11 +664,11 @@ impl Validator for CodeValidator<'_> {
                 self.pop_expected(Val(I32))
                     .ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
-                    &inst,
+                    inst,
                     match inst.get_type() {
-                        &I32Store => 2,   // 4 bytes = 2^2
-                        &I32Store8 => 0,  // 1 byte = 2^0
-                        &I32Store16 => 1, // 2 bytes = 2^1
+                        I32Store => 2,   // 4 bytes = 2^2
+                        I32Store8 => 0,  // 1 byte = 2^0
+                        I32Store16 => 1, // 2 bytes = 2^1
                         _ => unreachable!(),
                     },
                 )
@@ -684,12 +681,12 @@ impl Validator for CodeValidator<'_> {
                 self.pop_expected(Val(I32))
                     .ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
-                    &inst,
+                    inst,
                     match inst.get_type() {
-                        &I64Store => 3,   // 8 bytes = 2^3
-                        &I64Store8 => 0,  // 1 byte = 2^0
-                        &I64Store16 => 1, // 2 bytes = 2^1
-                        &I64Store32 => 2, // 4 bytes = 2^2
+                        I64Store => 3,   // 8 bytes = 2^3
+                        I64Store8 => 0,  // 1 byte = 2^0
+                        I64Store16 => 1, // 2 bytes = 2^1
+                        I64Store32 => 2, // 4 bytes = 2^2
                         _ => unreachable!(),
                     },
                 )
@@ -701,7 +698,7 @@ impl Validator for CodeValidator<'_> {
                     .ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32))
                     .ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(&inst, 2 /* 4 bytes = 2^2 */)
+                check_alignment(inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Store => {
@@ -710,7 +707,7 @@ impl Validator for CodeValidator<'_> {
                     .ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32))
                     .ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(&inst, 3 /* 8 bytes = 2^3 */)
+                check_alignment(inst, 3 /* 8 bytes = 2^3 */)
             }
 
             MemoryGrow => {
@@ -741,7 +738,7 @@ impl Validator for CodeValidator<'_> {
             TableInit => {
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
-                if let InstructionData::TableInitInstruction {
+                if let InstructionData::TableInit {
                     table_index,
                     elem_index,
                     ..
@@ -777,7 +774,7 @@ impl Validator for CodeValidator<'_> {
             }
 
             TableGet => {
-                if let InstructionData::TableInstruction { table_index, .. } = *inst.get_data() {
+                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
                     let table = self
                         .module
                         .get_table(table_index)
@@ -788,12 +785,12 @@ impl Validator for CodeValidator<'_> {
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
-                    return Err(ValidationError::InvalidInstruction);
+                    Err(ValidationError::InvalidInstruction)
                 }
             }
 
             TableSet => {
-                if let InstructionData::TableInstruction { table_index, .. } = *inst.get_data() {
+                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
                     let table = self
                         .module
                         .get_table(table_index)
@@ -806,7 +803,7 @@ impl Validator for CodeValidator<'_> {
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
-                    return Err(ValidationError::InvalidInstruction);
+                    Err(ValidationError::InvalidInstruction)
                 }
             }
 
@@ -830,7 +827,7 @@ impl Validator for CodeValidator<'_> {
                         .ok_or(ValidationError::TypeMismatch)?;
                 }
 
-                if let InstructionData::BlockInstruction { blocktype: bt } = *inst.get_data() {
+                if let InstructionData::Block { blocktype: bt } = *inst.get_data() {
                     let mut start_types = Vec::new();
                     let mut end_types = Vec::new();
                     match bt {
@@ -889,14 +886,13 @@ impl Validator for CodeValidator<'_> {
             }
 
             Return | Br | BrIf => {
-                let li: u32 = if let InstructionData::LabelledInstruction { label_index: li } =
-                    *inst.get_data()
-                {
-                    li
-                } else {
-                    // Return, outermost label
-                    self.ctrls.len() as u32 - 1
-                };
+                let li: u32 =
+                    if let InstructionData::Labelled { label_index: li } = *inst.get_data() {
+                        li
+                    } else {
+                        // Return, outermost label
+                        self.ctrls.len() as u32 - 1
+                    };
 
                 if inst.get_type() == &BrIf {
                     self.pop_expected(Val(I32))
@@ -923,7 +919,7 @@ impl Validator for CodeValidator<'_> {
             }
 
             BrTable => {
-                if let InstructionData::TableLabelledInstruction {
+                if let InstructionData::TableLabelled {
                     ref labels,
                     label_index: li,
                 } = *inst.get_data()
@@ -969,12 +965,10 @@ impl Validator for CodeValidator<'_> {
             }
 
             Call => {
-                if let InstructionData::FunctionInstruction { function_index: fi } =
-                    *inst.get_data()
-                {
+                if let InstructionData::Function { function_index: fi } = *inst.get_data() {
                     let ftype: &FunctionType = self.get_function_type(fi)?;
-                    let parameters: Vec<_> = ftype.parameters.iter().cloned().collect();
-                    let return_types: Vec<_> = ftype.return_types.iter().cloned().collect();
+                    let parameters: Vec<_> = ftype.parameters.to_vec();
+                    let return_types: Vec<_> = ftype.return_types.to_vec();
 
                     // parameters are stack ordered, so pick them in reverse
                     parameters
@@ -997,7 +991,7 @@ impl Validator for CodeValidator<'_> {
             }
 
             CallIndirect => {
-                if let InstructionData::IndirectInstruction {
+                if let InstructionData::Indirect {
                     type_index: typi,
                     table_index: tabi,
                 } = *inst.get_data()
@@ -1018,9 +1012,9 @@ impl Validator for CodeValidator<'_> {
                         .ok_or(ValidationError::TypeMismatch)?;
 
                     // table entry must have this function signature
-                    let ftype = self.get_type(typi as u32)?;
-                    let parameters: Vec<_> = ftype.parameters.iter().cloned().collect();
-                    let return_types: Vec<_> = ftype.return_types.iter().cloned().collect();
+                    let ftype = self.get_type(typi)?;
+                    let parameters: Vec<_> = ftype.parameters.to_vec();
+                    let return_types: Vec<_> = ftype.return_types.to_vec();
 
                     // parameters are stack ordered, so pick them in reverse
                     parameters
@@ -1065,9 +1059,7 @@ impl Validator for CodeValidator<'_> {
             }
 
             RefFunc => {
-                if let InstructionData::FunctionInstruction { function_index: fi } =
-                    *inst.get_data()
-                {
+                if let InstructionData::Function { function_index: fi } = *inst.get_data() {
                     self.get_function_type(fi)?;
                     self.push_val(Val(FuncRef))
                         .ok_or(ValidationError::TypeMismatch)?;
@@ -1078,7 +1070,7 @@ impl Validator for CodeValidator<'_> {
             }
 
             RefNull => {
-                if let InstructionData::RefTypeInstruction { ref_type } = *inst.get_data() {
+                if let InstructionData::RefType { ref_type } = *inst.get_data() {
                     self.push_val(Val(ref_type))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
@@ -1107,7 +1099,7 @@ impl Validator for CodeValidator<'_> {
 }
 
 fn check_alignment(inst: &Instruction, align_exponent: u32) -> Result<(), ValidationError> {
-    let align: u32 = if let InstructionData::MemoryInstruction {
+    let align: u32 = if let InstructionData::Memory {
         subopcode_bytes: _,
         memarg,
     } = *inst.get_data()

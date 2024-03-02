@@ -537,108 +537,108 @@ impl fmt::Display for Instruction {
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum InstructionData {
-    SimpleInstruction {
+    Simple {
         // capture the bytes because we still accept non-canonical leb128 and
         // want to reproduce the original bytes for a decompile
         subopcode_bytes: Vec<u8>,
     },
 
     // Control instructions¶ ---------------------------------------------------
-    BlockInstruction {
+    Block {
         blocktype: BlockType,
     },
-    LabelledInstruction {
+    Labelled {
         label_index: u32,
     },
-    TableLabelledInstruction {
+    TableLabelled {
         labels: Vec<u32>,
         label_index: u32,
     },
-    FunctionInstruction {
+    Function {
         function_index: u32,
     },
-    IndirectInstruction {
+    Indirect {
         type_index: u32,
         table_index: u32,
     },
 
     // Reference instructions¶ -------------------------------------------------
-    RefTypeInstruction {
+    RefType {
         ref_type: super::module::ValueType,
     },
 
     // Parametric instructions¶ ------------------------------------------------
-    ValueTypeInstruction {
+    ValueType {
         value_types: Vec<u8>,
     },
 
     // Variable instructions¶ --------------------------------------------------
-    LocalInstruction {
+    Local {
         local_index: u32,
     },
-    GlobalInstruction {
+    Global {
         global_index: u32,
     },
 
     // Table instructions¶ -----------------------------------------------------
-    TableInstruction {
+    Table {
         subopcode_bytes: Vec<u8>,
         table_index: u32,
     },
-    TableInitInstruction {
+    TableInit {
         subopcode_bytes: Vec<u8>,
         elem_index: u32,
         table_index: u32,
     },
-    ElemInstruction {
+    Elem {
         subopcode_bytes: Vec<u8>,
         elem_index: u32,
     },
-    TableCopyInstruction {
+    TableCopy {
         subopcode_bytes: Vec<u8>,
         src_table_index: u32,
         dst_table_index: u32,
     },
 
     // Memory instructions¶ ----------------------------------------------------
-    MemoryInstruction {
+    Memory {
         subopcode_bytes: Vec<u8>,
         memarg: MemArg,
     },
-    DataInstruction {
+    Data {
         subopcode_bytes: Vec<u8>,
         data_index: u32,
     },
 
     // Numeric instructions¶ ----------------------------------------------------
-    I32Instruction {
+    I32 {
         value: u32,
     },
-    I64Instruction {
+    I64 {
         value: u64,
     },
-    F64Instruction {
+    F64 {
         value: f64,
     },
-    F32Instruction {
+    F32 {
         value: f32,
     },
 
     // Vector instructions¶ ----------------------------------------------------
-    V128MemoryLaneInstruction {
+    V128MemoryLane {
         subopcode_bytes: Vec<u8>,
         memarg: MemArg,
         lane_index: u8,
     },
-    V128Instruction {
+    V128 {
         subopcode_bytes: Vec<u8>,
         value: [u8; 16],
     },
-    V128LanesInstruction {
+    V128Lanes {
         subopcode_bytes: Vec<u8>,
         lane_indices: Vec<u8>,
     },
-    V128LaneInstruction {
+    V128Lane {
         subopcode_bytes: Vec<u8>,
         lane_index: u8,
     },
@@ -646,19 +646,21 @@ pub enum InstructionData {
 
 type MemArg = (u32, u32); // (align, offset)
 
+type ParseBytesFn = Arc<
+    dyn Fn(&mut super::reader::Reader, Vec<u8>) -> Result<InstructionData, io::Error> + Send + Sync,
+>;
+type EmitBytesFn = Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>;
+type EmitStrFn = Arc<dyn Fn(&InstructionData, &Module) -> String + Send + Sync>;
+
 #[derive(Clone)]
 pub struct InstructionCoding {
     pub typ: InstructionType,
     pub opcode: u8,
     pub subopcode: u32,
     pub name: &'static str,
-    pub parse_bytes: Arc<
-        dyn Fn(&mut super::reader::Reader, Vec<u8>) -> Result<InstructionData, io::Error>
-            + Send
-            + Sync,
-    >,
-    pub emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
-    pub emit_str: Arc<dyn Fn(&InstructionData, &Module) -> String + Send + Sync>,
+    pub parse_bytes: ParseBytesFn,
+    pub emit_bytes: EmitBytesFn,
+    pub emit_str: EmitStrFn,
 }
 
 impl InstructionCoding {
@@ -669,7 +671,7 @@ impl InstructionCoding {
             subopcode: 0,
             name,
             parse_bytes: Arc::new(move |_, subopcode_bytes| {
-                Ok(InstructionData::SimpleInstruction { subopcode_bytes })
+                Ok(InstructionData::Simple { subopcode_bytes })
             }),
             // default should emit the opcode byte; and if opcode is 0xfc or 0xfd, emit the subopcode byte too
             emit_bytes: Arc::new(move |_| vec![opcode]),
@@ -689,12 +691,12 @@ impl InstructionCoding {
             subopcode,
             name,
             parse_bytes: Arc::new(move |_, subopcode_bytes| {
-                Ok(InstructionData::SimpleInstruction { subopcode_bytes })
+                Ok(InstructionData::Simple { subopcode_bytes })
             }),
             // default should emit the opcode byte; and if opcode is 0xfc or 0xfd, emit the subopcode byte too
             emit_bytes: Arc::new(move |data| {
                 let mut bytes = vec![opcode];
-                if let InstructionData::SimpleInstruction { subopcode_bytes } = &data {
+                if let InstructionData::Simple { subopcode_bytes } = &data {
                     bytes.append(&mut subopcode_bytes.clone());
                 } else {
                     panic!("expected simple instruction");
@@ -712,11 +714,7 @@ impl InstructionCoding {
         typ: InstructionType,
         opcode: u8,
         name: &'static str,
-        parse_bytes: Arc<
-            dyn Fn(&mut super::reader::Reader, Vec<u8>) -> Result<InstructionData, io::Error>
-                + Send
-                + Sync,
-        >,
+        parse_bytes: ParseBytesFn,
     ) -> Self {
         Self {
             typ,
@@ -734,13 +732,9 @@ impl InstructionCoding {
         opcode: u8,
         subopcode: u32,
         name: &'static str,
-        parse_bytes: Arc<
-            dyn Fn(&mut super::reader::Reader, Vec<u8>) -> Result<InstructionData, io::Error>
-                + Send
-                + Sync,
-        >,
-        emit_bytes: Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>,
-        emit_str: Arc<dyn Fn(&InstructionData, &Module) -> String + Send + Sync>,
+        parse_bytes: ParseBytesFn,
+        emit_bytes: EmitBytesFn,
+        emit_str: EmitStrFn,
     ) -> Self {
         Self {
             typ,
@@ -768,7 +762,7 @@ impl InstructionCoding {
                 |bytes: &mut super::reader::Reader,
                  subopcode_bytes: Vec<u8>|
                  -> Result<InstructionData, io::Error> {
-                    Ok(InstructionData::MemoryInstruction {
+                    Ok(InstructionData::Memory {
                         subopcode_bytes,
                         memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                     })
@@ -776,7 +770,7 @@ impl InstructionCoding {
             ),
             emit_bytes: Arc::new(move |data| {
                 let mut bytes = vec![opcode];
-                if let InstructionData::MemoryInstruction {
+                if let InstructionData::Memory {
                     subopcode_bytes,
                     memarg: _,
                 } = &data
@@ -806,14 +800,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "block",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::BlockInstruction {
+                        Ok(InstructionData::Block {
                             blocktype: BlockType::parse_bytes(bytes)?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x02];
-                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                    if let InstructionData::Block { blocktype } = &data {
                         let mut block_bytes = blocktype.emit_bytes();
                         bytes.append(&mut block_bytes);
                     } else {
@@ -822,7 +816,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                    if let InstructionData::Block { blocktype } = &data {
                         if blocktype == &BlockType::Empty {
                             "block".to_string()
                         } else {
@@ -848,14 +842,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "loop",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::BlockInstruction {
+                        Ok(InstructionData::Block {
                             blocktype: BlockType::parse_bytes(bytes)?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x03];
-                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                    if let InstructionData::Block { blocktype } = &data {
                         let mut block_bytes = blocktype.emit_bytes();
                         bytes.append(&mut block_bytes);
                     } else {
@@ -864,7 +858,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                    if let InstructionData::Block { blocktype } = &data {
                         match blocktype {
                             BlockType::Empty => "loop".to_string(),
                             BlockType::Type(value_type) => format!("loop {}", value_type),
@@ -884,14 +878,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "if",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::BlockInstruction {
+                        Ok(InstructionData::Block {
                             blocktype: BlockType::parse_bytes(bytes)?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x04];
-                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                    if let InstructionData::Block { blocktype } = &data {
                         let mut block_bytes = blocktype.emit_bytes();
                         bytes.append(&mut block_bytes);
                     } else {
@@ -900,7 +894,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::BlockInstruction { blocktype } = &data {
+                    if let InstructionData::Block { blocktype } = &data {
                         if blocktype == &BlockType::Empty {
                             "if".to_string()
                         } else {
@@ -919,14 +913,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "br",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::LabelledInstruction {
+                        Ok(InstructionData::Labelled {
                             label_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x0c];
-                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                    if let InstructionData::Labelled { label_index } = &data {
                         let mut label_bytes = reader::emit_vu32(*label_index);
                         bytes.append(&mut label_bytes);
                     } else {
@@ -935,7 +929,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                    if let InstructionData::Labelled { label_index } = &data {
                         format!("br {}", label_index)
                     } else {
                         panic!("expected labelled instruction");
@@ -949,14 +943,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "br_if",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::LabelledInstruction {
+                        Ok(InstructionData::Labelled {
                             label_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x0d];
-                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                    if let InstructionData::Labelled { label_index } = &data {
                         let mut label_bytes = reader::emit_vu32(*label_index);
                         bytes.append(&mut label_bytes);
                     } else {
@@ -965,7 +959,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::LabelledInstruction { label_index } = &data {
+                    if let InstructionData::Labelled { label_index } = &data {
                         format!("br_if {}", label_index)
                     } else {
                         panic!("expected labelled instruction");
@@ -979,7 +973,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "br_table",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableLabelledInstruction {
+                        Ok(InstructionData::TableLabelled {
                             labels: consume_vu32vec(bytes)?,
                             label_index: bytes.read_vu32()?,
                         })
@@ -987,7 +981,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x0e];
-                    if let InstructionData::TableLabelledInstruction {
+                    if let InstructionData::TableLabelled {
                         labels,
                         label_index,
                     } = &data
@@ -1002,7 +996,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableLabelledInstruction {
+                    if let InstructionData::TableLabelled {
                         labels,
                         label_index,
                     } = &data
@@ -1025,14 +1019,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "call",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::FunctionInstruction {
+                        Ok(InstructionData::Function {
                             function_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x10];
-                    if let InstructionData::FunctionInstruction { function_index } = &data {
+                    if let InstructionData::Function { function_index } = &data {
                         let mut local_bytes = reader::emit_vu32(*function_index);
                         bytes.append(&mut local_bytes);
                     } else {
@@ -1041,7 +1035,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, module| {
-                    if let InstructionData::FunctionInstruction { function_index } = &data {
+                    if let InstructionData::Function { function_index } = &data {
                         format!(
                             "call {}{}",
                             function_index,
@@ -1062,7 +1056,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "call_indirect",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::IndirectInstruction {
+                        Ok(InstructionData::Indirect {
                             type_index: bytes.read_vu32()?,
                             table_index: bytes.read_vu32()?,
                         })
@@ -1070,7 +1064,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x11];
-                    if let InstructionData::IndirectInstruction {
+                    if let InstructionData::Indirect {
                         type_index,
                         table_index,
                     } = &data
@@ -1085,7 +1079,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, module| {
-                    if let InstructionData::IndirectInstruction {
+                    if let InstructionData::Indirect {
                         type_index,
                         table_index,
                     } = &data
@@ -1111,7 +1105,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "ref.null",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::RefTypeInstruction {
+                        Ok(InstructionData::RefType {
                             ref_type: super::module::ValueType::decode(bytes.read_byte()?)
                                 .map_err(|e| {
                                     io::Error::new(io::ErrorKind::InvalidData, e.to_string())
@@ -1127,7 +1121,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "ref.func",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::FunctionInstruction {
+                        Ok(InstructionData::Function {
                             function_index: bytes.read_vu32()?,
                         })
                     },
@@ -1142,7 +1136,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "selectt", // TODO: name is just "select?
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::ValueTypeInstruction {
+                        Ok(InstructionData::ValueType {
                             value_types: bytes.read_u8vec()?, // TODO: type vector?
                         })
                     },
@@ -1156,14 +1150,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "local.get",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::LocalInstruction {
+                        Ok(InstructionData::Local {
                             local_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x20];
-                    if let InstructionData::LocalInstruction { local_index } = &data {
+                    if let InstructionData::Local { local_index } = &data {
                         let mut local_bytes = reader::emit_vu32(*local_index);
                         bytes.append(&mut local_bytes);
                     } else {
@@ -1172,7 +1166,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::LocalInstruction { local_index } = &data {
+                    if let InstructionData::Local { local_index } = &data {
                         format!("local.get {}", local_index)
                     } else {
                         panic!("expected local instruction");
@@ -1186,14 +1180,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "local.set",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::LocalInstruction {
+                        Ok(InstructionData::Local {
                             local_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x21];
-                    if let InstructionData::LocalInstruction { local_index } = &data {
+                    if let InstructionData::Local { local_index } = &data {
                         let mut local_bytes = reader::emit_vu32(*local_index);
                         bytes.append(&mut local_bytes);
                     } else {
@@ -1202,7 +1196,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::LocalInstruction { local_index } = &data {
+                    if let InstructionData::Local { local_index } = &data {
                         format!("local.set {}", local_index)
                     } else {
                         panic!("expected local instruction");
@@ -1216,14 +1210,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "local.tee",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::LocalInstruction {
+                        Ok(InstructionData::Local {
                             local_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x22];
-                    if let InstructionData::LocalInstruction { local_index } = &data {
+                    if let InstructionData::Local { local_index } = &data {
                         let mut local_bytes = reader::emit_vu32(*local_index);
                         bytes.append(&mut local_bytes);
                     } else {
@@ -1232,7 +1226,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::LocalInstruction { local_index } = &data {
+                    if let InstructionData::Local { local_index } = &data {
                         format!("local.tee {}", local_index)
                     } else {
                         panic!("expected local instruction");
@@ -1246,14 +1240,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "global.get",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::GlobalInstruction {
+                        Ok(InstructionData::Global {
                             global_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x23];
-                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                    if let InstructionData::Global { global_index } = &data {
                         let mut local_bytes = reader::emit_vu32(*global_index);
                         bytes.append(&mut local_bytes);
                     } else {
@@ -1262,7 +1256,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                    if let InstructionData::Global { global_index } = &data {
                         format!("global.get {}", global_index)
                     } else {
                         panic!("expected global instruction");
@@ -1276,14 +1270,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "global.set",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::GlobalInstruction {
+                        Ok(InstructionData::Global {
                             global_index: bytes.read_vu32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x24];
-                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                    if let InstructionData::Global { global_index } = &data {
                         let mut local_bytes = reader::emit_vu32(*global_index);
                         bytes.append(&mut local_bytes);
                     } else {
@@ -1292,7 +1286,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::GlobalInstruction { global_index } = &data {
+                    if let InstructionData::Global { global_index } = &data {
                         format!("global.set {}", global_index)
                     } else {
                         panic!("expected global instruction");
@@ -1307,7 +1301,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "table.get",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableInstruction {
+                        Ok(InstructionData::Table {
                             subopcode_bytes: Vec::new(),
                             table_index: bytes.read_vu32()?,
                         })
@@ -1315,7 +1309,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x25];
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes,
                         table_index,
                     } = &data
@@ -1330,7 +1324,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes: _,
                         table_index,
                     } = &data
@@ -1348,7 +1342,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "table.set",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableInstruction {
+                        Ok(InstructionData::Table {
                             subopcode_bytes: Vec::new(),
                             table_index: bytes.read_vu32()?,
                         })
@@ -1356,7 +1350,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x26];
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes,
                         table_index,
                     } = &data
@@ -1371,7 +1365,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes: _,
                         table_index,
                     } = &data
@@ -1391,7 +1385,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableInitInstruction {
+                        Ok(InstructionData::TableInit {
                             subopcode_bytes,
                             elem_index: bytes.read_vu32()?,
                             table_index: bytes.read_vu32()?,
@@ -1400,7 +1394,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::TableInitInstruction {
+                    if let InstructionData::TableInit {
                         subopcode_bytes,
                         elem_index,
                         table_index,
@@ -1418,7 +1412,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableInitInstruction {
+                    if let InstructionData::TableInit {
                         subopcode_bytes: _,
                         elem_index,
                         table_index,
@@ -1439,7 +1433,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::ElemInstruction {
+                        Ok(InstructionData::Elem {
                             subopcode_bytes,
                             elem_index: bytes.read_vu32()?,
                         })
@@ -1447,7 +1441,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::ElemInstruction {
+                    if let InstructionData::Elem {
                         subopcode_bytes,
                         elem_index,
                     } = &data
@@ -1462,7 +1456,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::ElemInstruction {
+                    if let InstructionData::Elem {
                         subopcode_bytes: _,
                         elem_index,
                     } = &data
@@ -1482,7 +1476,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableCopyInstruction {
+                        Ok(InstructionData::TableCopy {
                             subopcode_bytes,
                             src_table_index: bytes.read_vu32()?,
                             dst_table_index: bytes.read_vu32()?,
@@ -1491,7 +1485,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::TableCopyInstruction {
+                    if let InstructionData::TableCopy {
                         subopcode_bytes,
                         src_table_index,
                         dst_table_index,
@@ -1509,7 +1503,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableCopyInstruction {
+                    if let InstructionData::TableCopy {
                         subopcode_bytes: _,
                         src_table_index,
                         dst_table_index,
@@ -1530,7 +1524,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableInstruction {
+                        Ok(InstructionData::Table {
                             subopcode_bytes,
                             table_index: bytes.read_vu32()?,
                         })
@@ -1538,7 +1532,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes,
                         table_index,
                     } = &data
@@ -1553,7 +1547,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes: _,
                         table_index,
                     } = &data
@@ -1573,7 +1567,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableInstruction {
+                        Ok(InstructionData::Table {
                             subopcode_bytes,
                             table_index: bytes.read_vu32()?,
                         })
@@ -1581,7 +1575,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes,
                         table_index,
                     } = &data
@@ -1596,7 +1590,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes: _,
                         table_index,
                     } = &data
@@ -1616,7 +1610,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::TableInstruction {
+                        Ok(InstructionData::Table {
                             subopcode_bytes,
                             table_index: bytes.read_vu32()?,
                         })
@@ -1624,7 +1618,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes,
                         table_index,
                     } = &data
@@ -1639,7 +1633,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableInstruction {
+                    if let InstructionData::Table {
                         subopcode_bytes: _,
                         table_index,
                     } = &data
@@ -1658,7 +1652,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.load",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1666,7 +1660,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x28];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1681,7 +1675,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1699,7 +1693,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.load",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1707,7 +1701,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x29];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1722,7 +1716,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1740,7 +1734,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "f32.load",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1748,7 +1742,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x2a];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1763,7 +1757,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1781,7 +1775,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "f64.load",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1789,7 +1783,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x2b];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1804,7 +1798,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1824,7 +1818,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
                         let ma = (bytes.read_vu32()?, bytes.read_vu32()?);
                         println!("ma: {:?}", ma);
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: ma,
                         })
@@ -1832,7 +1826,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x2c];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1847,7 +1841,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1865,7 +1859,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.load8_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1873,7 +1867,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x2d];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1888,7 +1882,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1906,7 +1900,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.load16_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1914,7 +1908,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x2e];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1929,7 +1923,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1947,7 +1941,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.load16_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1955,7 +1949,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x2f];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1970,7 +1964,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -1988,7 +1982,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.load8_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -1996,7 +1990,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x30];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2011,7 +2005,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2029,7 +2023,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.load8_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2037,7 +2031,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x31];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2052,7 +2046,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2070,7 +2064,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.load16_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2078,7 +2072,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x32];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2093,7 +2087,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2111,7 +2105,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.load16_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2119,7 +2113,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x33];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2134,7 +2128,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2152,7 +2146,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.load32_s",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2160,7 +2154,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x34];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2175,7 +2169,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2193,7 +2187,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.load32_u",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2201,7 +2195,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x35];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2216,7 +2210,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2234,7 +2228,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.store",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2242,7 +2236,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x36];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2257,7 +2251,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2275,7 +2269,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.store",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2283,7 +2277,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x37];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2298,7 +2292,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2316,7 +2310,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "f32.store",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2324,7 +2318,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x38];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2339,7 +2333,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2357,7 +2351,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "f64.store",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2365,7 +2359,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x39];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2380,7 +2374,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2398,7 +2392,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.store8",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2406,7 +2400,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x3a];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2421,7 +2415,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2439,7 +2433,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.store16",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2447,7 +2441,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x3b];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2462,7 +2456,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2480,7 +2474,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.store8",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2488,7 +2482,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x3c];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2503,7 +2497,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2521,7 +2515,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.store16",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2529,7 +2523,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x3d];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2544,7 +2538,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2562,7 +2556,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.store32",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::MemoryInstruction {
+                        Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                         })
@@ -2570,7 +2564,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x3e];
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2585,7 +2579,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::MemoryInstruction {
+                    if let InstructionData::Memory {
                         subopcode_bytes: _,
                         memarg,
                     } = &data
@@ -2608,7 +2602,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 "zero byte expected",
                             ));
                         }
-                        Ok(InstructionData::SimpleInstruction {
+                        Ok(InstructionData::Simple {
                             subopcode_bytes: Vec::new(),
                         })
                     },
@@ -2627,13 +2621,13 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 "zero byte expected",
                             ));
                         }
-                        Ok(InstructionData::SimpleInstruction {
+                        Ok(InstructionData::Simple {
                             subopcode_bytes: Vec::new(),
                         })
                     },
                 ),
                 Arc::new(|_| vec![0x40, 0x0]),
-                Arc::new(|_, _| format!("memory.grow 0")),
+                Arc::new(|_, _| "memory.grow 0".to_string()),
             ),
             InstructionCoding::new_with_options(
                 InstructionType::MemoryInit,
@@ -2651,7 +2645,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 "zero byte expected",
                             ));
                         }
-                        Ok(InstructionData::DataInstruction {
+                        Ok(InstructionData::Data {
                             subopcode_bytes,
                             data_index,
                         })
@@ -2659,7 +2653,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::DataInstruction {
+                    if let InstructionData::Data {
                         subopcode_bytes,
                         data_index,
                     } = &data
@@ -2674,7 +2668,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::DataInstruction {
+                    if let InstructionData::Data {
                         subopcode_bytes: _,
                         data_index,
                     } = &data
@@ -2694,7 +2688,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::DataInstruction {
+                        Ok(InstructionData::Data {
                             subopcode_bytes,
                             data_index: bytes.read_vu32()?,
                         })
@@ -2702,7 +2696,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::DataInstruction {
+                    if let InstructionData::Data {
                         subopcode_bytes,
                         data_index,
                     } = &data
@@ -2716,7 +2710,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::DataInstruction {
+                    if let InstructionData::Data {
                         subopcode_bytes: _,
                         data_index,
                     } = &data
@@ -2742,12 +2736,12 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 "expected 0x0 0x0 for memory.copy",
                             ));
                         }
-                        Ok(InstructionData::SimpleInstruction { subopcode_bytes })
+                        Ok(InstructionData::Simple { subopcode_bytes })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::SimpleInstruction { subopcode_bytes } = &data {
+                    if let InstructionData::Simple { subopcode_bytes } = &data {
                         bytes.append(&mut subopcode_bytes.clone());
                         bytes.push(0x0);
                         bytes.push(0x0);
@@ -2756,7 +2750,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|_, _| format!("memory.copy 0 0")),
+                Arc::new(|_, _| "memory.copy 0 0".to_string()),
             ),
             InstructionCoding::new_with_options(
                 InstructionType::MemoryFill,
@@ -2773,12 +2767,12 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 "expected 0x0 for memory.fill",
                             ));
                         }
-                        Ok(InstructionData::SimpleInstruction { subopcode_bytes })
+                        Ok(InstructionData::Simple { subopcode_bytes })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfc];
-                    if let InstructionData::SimpleInstruction { subopcode_bytes } = &data {
+                    if let InstructionData::Simple { subopcode_bytes } = &data {
                         bytes.append(&mut subopcode_bytes.clone());
                         bytes.push(0x0);
                     } else {
@@ -2786,7 +2780,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|_, _| format!("memory.fill 0")),
+                Arc::new(|_, _| "memory.fill 0".to_string()),
             ),
             // Numeric instructions¶ -------------------------------------------
             InstructionCoding::new_with_options(
@@ -2796,14 +2790,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i32.const",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::I32Instruction {
+                        Ok(InstructionData::I32 {
                             value: bytes.read_vs32()? as u32,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x41];
-                    if let InstructionData::I32Instruction { value } = &data {
+                    if let InstructionData::I32 { value } = &data {
                         let mut u32_bytes = reader::emit_vs32(*value as i32);
                         bytes.append(&mut u32_bytes);
                     } else {
@@ -2812,7 +2806,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::I32Instruction { value } = &data {
+                    if let InstructionData::I32 { value } = &data {
                         format!("i32.const {}", value)
                     } else {
                         panic!("expected i32 instruction");
@@ -2826,14 +2820,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64.const",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::I64Instruction {
+                        Ok(InstructionData::I64 {
                             value: bytes.read_vs64()? as u64,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x42];
-                    if let InstructionData::I64Instruction { value } = &data {
+                    if let InstructionData::I64 { value } = &data {
                         let mut u64_bytes = reader::emit_vs64(*value as i64);
                         bytes.append(&mut u64_bytes);
                     } else {
@@ -2842,7 +2836,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::I64Instruction { value } = &data {
+                    if let InstructionData::I64 { value } = &data {
                         format!("i64.const {}", value)
                     } else {
                         panic!("expected i64 instruction");
@@ -2856,14 +2850,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "f32.const",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::F32Instruction {
+                        Ok(InstructionData::F32 {
                             value: bytes.read_f32()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x43];
-                    if let InstructionData::F32Instruction { value } = &data {
+                    if let InstructionData::F32 { value } = &data {
                         let mut f32_bytes = reader::emit_f32(*value);
                         bytes.append(&mut f32_bytes);
                     } else {
@@ -2872,7 +2866,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::F32Instruction { value } = &data {
+                    if let InstructionData::F32 { value } = &data {
                         format!("f32.const {}", value.to_hex())
                     } else {
                         panic!("expected f32 instruction");
@@ -2886,14 +2880,14 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "f64.const",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::F64Instruction {
+                        Ok(InstructionData::F64 {
                             value: bytes.read_f64()?,
                         })
                     },
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x44];
-                    if let InstructionData::F64Instruction { value } = &data {
+                    if let InstructionData::F64 { value } = &data {
                         let mut f64_bytes = reader::emit_f64(*value);
                         bytes.append(&mut f64_bytes);
                     } else {
@@ -2902,7 +2896,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::F64Instruction { value } = &data {
+                    if let InstructionData::F64 { value } = &data {
                         format!("f64.const {}", value.to_hex())
                     } else {
                         panic!("expected f64 instruction");
@@ -3217,7 +3211,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3226,7 +3220,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3244,7 +3238,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3265,7 +3259,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3274,7 +3268,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3292,7 +3286,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3313,7 +3307,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3322,7 +3316,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3340,7 +3334,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3361,7 +3355,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3370,7 +3364,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3388,7 +3382,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3409,7 +3403,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3418,7 +3412,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3436,7 +3430,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3457,7 +3451,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3466,7 +3460,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3484,7 +3478,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3505,7 +3499,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3514,7 +3508,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3532,7 +3526,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3553,7 +3547,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128MemoryLaneInstruction {
+                        Ok(InstructionData::V128MemoryLane {
                             subopcode_bytes,
                             memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
                             lane_index: bytes.read_byte()?,
@@ -3562,7 +3556,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes,
                         memarg,
                         lane_index,
@@ -3580,7 +3574,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128MemoryLaneInstruction {
+                    if let InstructionData::V128MemoryLane {
                         subopcode_bytes: _,
                         memarg,
                         lane_index,
@@ -3601,7 +3595,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128Instruction {
+                        Ok(InstructionData::V128 {
                             subopcode_bytes,
                             value: bytes.read_v128()?,
                         })
@@ -3609,7 +3603,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128Instruction {
+                    if let InstructionData::V128 {
                         subopcode_bytes,
                         value,
                     } = &data
@@ -3623,7 +3617,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128Instruction {
+                    if let InstructionData::V128 {
                         subopcode_bytes: _,
                         value,
                     } = &data
@@ -3650,7 +3644,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LanesInstruction {
+                        Ok(InstructionData::V128Lanes {
                             subopcode_bytes,
                             lane_indices: bytes.read_u8vec()?,
                         })
@@ -3658,7 +3652,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LanesInstruction {
+                    if let InstructionData::V128Lanes {
                         subopcode_bytes,
                         lane_indices,
                     } = &data
@@ -3672,7 +3666,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LanesInstruction {
+                    if let InstructionData::V128Lanes {
                         subopcode_bytes: _,
                         lane_indices,
                     } = &data
@@ -3699,7 +3693,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3707,7 +3701,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -3720,7 +3714,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -3740,7 +3734,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3748,7 +3742,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -3761,7 +3755,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -3781,7 +3775,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3789,7 +3783,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -3802,7 +3796,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -3822,7 +3816,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3830,7 +3824,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -3843,7 +3837,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -3863,7 +3857,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3871,7 +3865,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -3884,7 +3878,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -3904,7 +3898,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3912,7 +3906,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -3925,7 +3919,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -3945,7 +3939,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3953,7 +3947,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -3966,7 +3960,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -3986,7 +3980,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -3994,7 +3988,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -4007,7 +4001,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -4027,7 +4021,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -4035,7 +4029,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -4048,7 +4042,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -4068,7 +4062,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -4076,7 +4070,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -4089,7 +4083,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -4109,7 +4103,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -4117,7 +4111,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -4130,7 +4124,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -4150,7 +4144,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -4158,7 +4152,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -4171,7 +4165,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -4191,7 +4185,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -4199,7 +4193,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -4212,7 +4206,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -4232,7 +4226,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader,
                      subopcode_bytes: Vec<u8>|
                      -> Result<InstructionData, io::Error> {
-                        Ok(InstructionData::V128LaneInstruction {
+                        Ok(InstructionData::V128Lane {
                             subopcode_bytes,
                             lane_index: bytes.read_byte()?,
                         })
@@ -4240,7 +4234,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes,
                         lane_index,
                     } = &data
@@ -4253,7 +4247,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::V128LaneInstruction {
+                    if let InstructionData::V128Lane {
                         subopcode_bytes: _,
                         lane_index,
                     } = &data
@@ -4833,9 +4827,7 @@ pub fn get_coding_by_opcode(opcode: u8, subopcode: u32) -> Option<&'static Instr
         .get_or_init(|| {
             let mut map: HashMap<u8, Vec<InstructionCoding>> = HashMap::new();
             for coding in get_codings().iter() {
-                map.entry(coding.opcode)
-                    .or_insert_with(Vec::new)
-                    .push(coding.clone());
+                map.entry(coding.opcode).or_default().push(coding.clone());
             }
             map
         })
@@ -4880,10 +4872,7 @@ enum ParseType {
 }
 
 impl InstructionIterator<'_> {
-    fn new<'a>(
-        bytes: &'a mut super::reader::Reader,
-        parse_type: ParseType,
-    ) -> InstructionIterator<'a> {
+    fn new(bytes: &mut super::reader::Reader, parse_type: ParseType) -> InstructionIterator<'_> {
         InstructionIterator {
             bytes,
             parse_type,
@@ -4944,7 +4933,7 @@ impl<'a> Iterator for InstructionIterator<'a> {
             opcode, subopcode, block_coding.name, pos
         );
 
-        let instruction = (block_coding.to_owned().parse_bytes)(&mut self.bytes, subopcode_bytes);
+        let instruction = (block_coding.to_owned().parse_bytes)(self.bytes, subopcode_bytes);
         match instruction {
             Ok(data) => {
                 self.ended = !self.bytes.has_at_least(1)
@@ -4989,7 +4978,7 @@ impl Instruction {
         return_type: super::module::ValueType,
     ) -> Result<Vec<Instruction>, DecodeError> {
         let mut validator: super::validate::ConstantExpressionValidator<'_> =
-            super::validate::ConstantExpressionValidator::new(&imports, return_type);
+            super::validate::ConstantExpressionValidator::new(imports, return_type);
         decode_validate(&mut validator, ParseType::ReadTillEnd, bytes)
     }
 
@@ -5002,7 +4991,7 @@ impl Instruction {
         let ftype = module
             .get_function_type(function_index)
             .ok_or(super::validate::ValidationError::UnknownFunctionType)?;
-        let mut validator = super::validate::CodeValidator::new(&module, &locals, &ftype);
+        let mut validator = super::validate::CodeValidator::new(module, locals, ftype);
         decode_validate(&mut validator, ParseType::ReadAll, bytes)
     }
 }
@@ -5018,7 +5007,7 @@ fn decode_validate<T: super::validate::Validator>(
         let instruction = result?;
         validator
             .validate(&instruction)
-            .map_err(|e| DecodeError::from(e))?;
+            .map_err(DecodeError::from)?;
         instructions.push(instruction);
         if validator.ended() {
             return Ok(instructions);

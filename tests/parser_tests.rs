@@ -9,7 +9,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use kasm;
+    
 
     #[derive(Deserialize)]
     struct TestData {
@@ -31,7 +31,7 @@ mod tests {
         {
             let s: String = String::deserialize(deserializer)?;
             let decoded = general_purpose::STANDARD
-                .decode(&s)
+                .decode(s)
                 .map_err(de::Error::custom)?;
             Ok(Base64DecodedBytes(decoded))
         }
@@ -234,7 +234,7 @@ mod tests {
                 Err(e) => assert!(
                     e.to_string().contains(&icab.command.text),
                     "Error message does not contain the expected text. Error message = '{}', expected text = '{}', filename = {}, line in source is {}",
-                    e.to_string(),
+                    e,
                     &icab.command.text,
                     icab.command.filename,
                     icab.command.line),
@@ -245,7 +245,7 @@ mod tests {
             println!("testing to_*_string for file: {}", filename);
 
             let parsed = kasm::parser::parse(
-                format!("{}", filename).as_str(),
+                filename.to_string().as_str(),
                 &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone()),
             );
 

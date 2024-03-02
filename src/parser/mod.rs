@@ -263,8 +263,8 @@ fn read_section_type(
 
         println!("type #{}: {:?} -> {:?}", ii, parameters, return_types);
         types.push(module::FunctionType {
-            parameters: parameters,
-            return_types: return_types,
+            parameters,
+            return_types,
         });
     }
 
@@ -319,9 +319,7 @@ fn read_section_function(
             ));
         }
 
-        functions.push(module::Function {
-            ftype_index: ftype_index,
-        })
+        functions.push(module::Function { ftype_index })
     }
 
     Ok(())
@@ -356,10 +354,7 @@ fn read_section_export(
         let typ = bytes.read_byte()?;
         let idx = bytes.read_vu32()?;
         let index = module::ExportIndex::decode(typ, idx)?;
-        exports.push(module::Export {
-            index: index,
-            name: name,
-        })
+        exports.push(module::Export { index, name })
     }
 
     Ok(())
@@ -401,7 +396,7 @@ fn read_section_code(
         }
 
         let instructions: Vec<ast::Instruction> =
-            ast::Instruction::decode_function(&module, &locals, module.code.len() as u32, bytes)
+            ast::Instruction::decode_function(module, &locals, module.code.len() as u32, bytes)
                 .map_err(|err| {
                     if bytes.pos() > end_pos {
                         io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
@@ -454,7 +449,7 @@ impl module::Data {
                     memory_index: 0,
                     offset: ast::Instruction::decode_constant_expression(
                         bytes,
-                        &imports,
+                        imports,
                         module::ValueType::I32,
                     )?,
                 };
@@ -465,7 +460,7 @@ impl module::Data {
                     memory_index: bytes.read_vu32()?,
                     offset: ast::Instruction::decode_constant_expression(
                         bytes,
-                        &imports,
+                        imports,
                         module::ValueType::I32,
                     )?,
                 };
@@ -496,7 +491,7 @@ impl module::Data {
 
         Ok(module::Data {
             init: bytes.read_u8vec()?, // TODO: this needs to trigger a 'unexpected end of section or function' rather than 'length out of bounds'
-            mode: mode,
+            mode,
         })
     }
 }
@@ -537,8 +532,8 @@ fn read_section_custom<'a>(
     let mut custom = module::CustomSection::new();
     let start_pos = bytes.pos();
     custom.name = bytes.read_string()?;
-    if bytes.pos() >= start_pos && read_len as usize >= (bytes.pos() - start_pos) as usize {
-        custom.data = bytes.read_bytes(read_len as usize - (bytes.pos() - start_pos) as usize)?;
+    if bytes.pos() >= start_pos && read_len as usize >= (bytes.pos() - start_pos) {
+        custom.data = bytes.read_bytes(read_len as usize - (bytes.pos() - start_pos))?;
         customs.push(custom);
         if let Some(last_custom) = customs.last_mut() {
             Ok(last_custom)
@@ -578,11 +573,7 @@ impl module::ExternalKind {
                 let globaltype = module::GlobalType::decode(bytes)?;
                 Ok(module::ExternalKind::Global(globaltype))
             }
-            _ => {
-                return Err(
-                    io::Error::new(io::ErrorKind::InvalidData, "malformed import kind").into(),
-                );
-            }
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "malformed import kind").into()),
         }
     }
 }
@@ -600,8 +591,8 @@ impl module::GlobalType {
             ))?,
         };
         Ok(module::GlobalType {
-            value_type: value_type,
-            mutable: mutable,
+            value_type,
+            mutable,
         })
     }
 }
@@ -616,7 +607,7 @@ impl module::Global {
             global_type,
             init: ast::Instruction::decode_constant_expression(
                 bytes,
-                &imports,
+                imports,
                 global_type.value_type,
             )?,
         })
@@ -673,10 +664,7 @@ impl module::TableType {
         // reftype then limits
         let ref_type = module::RefType::decode(bytes)?;
         let limits = module::Limits::decode(bytes)?;
-        Ok(module::TableType {
-            ref_type: ref_type,
-            limits: limits,
-        })
+        Ok(module::TableType { ref_type, limits })
     }
 }
 
@@ -715,9 +703,10 @@ impl module::Element {
             match byte {
                 0x70 => Ok(module::RefType::FuncRef),
                 0x6f => Ok(module::RefType::ExternRef),
-                _ => Err(
-                    io::Error::new(io::ErrorKind::InvalidData, "malformed reference type").into(),
-                ),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "malformed reference type",
+                )),
             }
         };
         let read_element_kind = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
@@ -727,8 +716,7 @@ impl module::Element {
                 _ => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("unknown element element kind: 0x{:02x}", byte),
-                )
-                .into()),
+                )),
             }
         };
         let read_table_index = |bytes: &mut reader::Reader| -> Result<u32, ast::DecodeError> {
@@ -773,7 +761,7 @@ impl module::Element {
                         vec![
                             ast::Instruction::new(
                                 ast::InstructionType::RefFunc,
-                                ast::InstructionData::FunctionInstruction {
+                                ast::InstructionData::Function {
                                     function_index: func_index,
                                 },
                                 0,
@@ -781,7 +769,7 @@ impl module::Element {
                             ),
                             ast::Instruction::new(
                                 ast::InstructionType::End,
-                                ast::InstructionData::SimpleInstruction {
+                                ast::InstructionData::Simple {
                                     subopcode_bytes: Vec::new(),
                                 },
                                 0,
@@ -911,32 +899,30 @@ impl module::Element {
                 .into());
             }
         };
-        match element.mode {
-            module::ElementMode::Active { table_index, .. } => {
-                let ref_type: Option<&module::TableType> = if table_index < imports.table_count() as u32 {
-                    imports.get_table(table_index)
-                } else if (table_index - imports.table_count() as u32) < table.tables.len() as u32 {
-                    table
-                        .tables
-                        .get((table_index - imports.table_count() as u32) as usize)
-                } else {
+        if let module::ElementMode::Active { table_index, .. } = element.mode {
+            let ref_type: Option<&module::TableType> = if table_index < imports.table_count() as u32
+            {
+                imports.get_table(table_index)
+            } else if (table_index - imports.table_count() as u32) < table.tables.len() as u32 {
+                table
+                    .tables
+                    .get((table_index - imports.table_count() as u32) as usize)
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown table {}", table_index),
+                )
+                .into());
+            };
+            if let Some(ref_type) = ref_type {
+                if element.ref_type != ref_type.ref_type {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unknown table {}", table_index),
+                        "element type mismatch",
                     )
                     .into());
-                };
-                if let Some(ref_type) = ref_type {
-                    if element.ref_type != ref_type.ref_type {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "element type mismatch",
-                        )
-                        .into());
-                    }
                 }
             }
-            _ => {}
         };
         Ok(element)
     }
