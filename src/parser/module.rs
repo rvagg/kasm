@@ -269,6 +269,16 @@ impl ImportSection {
             .filter(|i| matches!(i.external_kind, ExternalKind::Function(_)))
             .count()
     }
+    pub fn get_function_type_index(&self, index: u32) -> Option<u32> {
+        self.imports
+            .iter()
+            .filter_map(|i| match i.external_kind {
+                ExternalKind::Function(ref f) => Some(f),
+                _ => None,
+            })
+            .nth(index as usize)
+            .map(|f| f.clone())
+    }
 
     pub fn table_count(&self) -> usize {
         self.imports
@@ -448,11 +458,12 @@ impl SectionToString for FunctionSection {
         let mut result = String::new();
         result.push_str(&format!("Function[{}]:\n", self.functions.len()));
         for (i, function) in self.functions.iter().enumerate() {
+            let fi = unit.imports.function_count() + i;
             result.push_str(&format!(
                 " - func[{}] sig={}{}\n",
-                i,
+                fi,
                 function.ftype_index,
-                match unit.exports.get_function(i as u32) {
+                match unit.exports.get_function(fi as u32) {
                     Some(export) => format!(" <{}>", export.name),
                     None => "".to_string(),
                 }
@@ -1010,16 +1021,17 @@ impl SectionToString for CodeSection {
         result.push_str(&format!("Code[{}]:\n", self.code.len()));
         for (i, function_body) in self.code.iter().enumerate() {
             let mut exp = String::new();
+            let fi = unit.imports.function_count() + i;
             for export in &unit.exports.exports {
                 if let ExportIndex::Function(idx) = export.index {
-                    if idx == i as u32 {
+                    if idx == fi as u32 {
                         exp = format!(" <{}>", export.name);
                     }
                 }
             }
             result.push_str(&format!(
                 " - func[{}] size={}{}\n",
-                i, // TODO: i is wrong when `(func $dummy)` is included - it should skip over these, need to figure out how it knows
+                fi, // TODO: i is wrong when `(func $dummy)` is included - it should skip over these, need to figure out how it knows
                 function_body.position.len(),
                 exp
             ));
@@ -1033,9 +1045,10 @@ impl CodeSection {
         let mut result: String = String::new();
         for (i, function_body) in self.code.iter().enumerate() {
             let mut exp = String::new();
+            let fi = unit.imports.function_count() + i;
             for export in &unit.exports.exports {
                 if let ExportIndex::Function(idx) = export.index {
-                    if idx == i as u32 {
+                    if idx == fi as u32 {
                         exp = format!(" <{}>", export.name);
                     }
                 }
@@ -1056,7 +1069,7 @@ impl CodeSection {
             };
 
             let mut pos = function_body.position.start as usize;
-            result.push_str(&format!("{:06x} func[{}]{}:\n", pos, i, exp));
+            result.push_str(&format!("{:06x} func[{}]{}:\n", pos, fi, exp));
             pos += 1; // TODO: do we need more bytes to represent a function start?
                       // for each instruction, ignoring the opcodes for now
                       //  00011f: 20 00                      | local.get 0

@@ -122,7 +122,9 @@ impl Validator for ConstantExpressionValidator<'_> {
                 .ok_or(ValidationError::TypeMismatch),
             RefNull => {
                 if let InstructionData::RefType { ref_type } = *inst.get_data() {
-                    if self.return_type == FuncRef && ref_type == FuncRef || self.return_type == ExternRef && ref_type == ExternRef {
+                    if self.return_type == FuncRef && ref_type == FuncRef
+                        || self.return_type == ExternRef && ref_type == ExternRef
+                    {
                         Ok(())
                     } else {
                         Err(ValidationError::TypeMismatch)
@@ -395,11 +397,19 @@ impl<'a> CodeValidator<'a> {
     }
 
     fn get_function_type(&self, fi: u32) -> Result<&FunctionType, ValidationError> {
-        self.module
-            .functions
-            .get(fi as u8)
-            .ok_or(ValidationError::UnknownFunction)
-            .and_then(|f| self.get_type(f.ftype_index))
+        if (fi as usize) < self.module.imports.function_count() {
+            self.module
+                .imports
+                .get_function_type_index(fi)
+                .ok_or(ValidationError::UnknownFunction)
+                .and_then(|ti| self.get_type(ti))
+        } else {
+            self.module
+                .functions
+                .get((fi as u8) - (self.module.imports.function_count() as u8))
+                .ok_or(ValidationError::UnknownFunction)
+                .and_then(|f| self.get_type(f.ftype_index))
+        }
     }
 
     fn get_type(&self, ti: u32) -> Result<&FunctionType, ValidationError> {

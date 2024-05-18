@@ -1,0 +1,26 @@
+{
+  "bin": {
+    "forward.0.wasm": "AGFzbQEAAAABBgFgAX8BfwMDAgAABw4CBGV2ZW4AAANvZGQAAQorAhQAIABBAEYEf0EBBSAAQQFrEAELCxQAIABBAEYEf0EABSAAQQFrEAALCw=="
+  },
+  "spec": {"source_filename": "/home/rvagg/git/webassembly/spec/test/core/forward.wast",
+ "commands": [
+  {"type": "module", "line": 1, "filename": "forward.0.wasm"}, 
+  {"type": "assert_return", "line": 17, "action": {"type": "invoke", "field": "even", "args": [{"type": "i32", "value": "13"}]}, "expected": [{"type": "i32", "value": "0"}]}, 
+  {"type": "assert_return", "line": 18, "action": {"type": "invoke", "field": "even", "args": [{"type": "i32", "value": "20"}]}, "expected": [{"type": "i32", "value": "1"}]}, 
+  {"type": "assert_return", "line": 19, "action": {"type": "invoke", "field": "odd", "args": [{"type": "i32", "value": "13"}]}, "expected": [{"type": "i32", "value": "1"}]}, 
+  {"type": "assert_return", "line": 20, "action": {"type": "invoke", "field": "odd", "args": [{"type": "i32", "value": "20"}]}, "expected": [{"type": "i32", "value": "0"}]}]},
+  "code": [
+    "(module \n  (func $even (export \"even\") (param $n i32) (result i32) (if (result i32) (i32.eq (local.get $n) (i32.const 0)) (then (i32.const 1)) (else (call $odd (i32.sub (local.get $n) (i32.const 1)))) ) )\n  (func $odd (export \"odd\") (param $n i32) (result i32) (if (result i32) (i32.eq (local.get $n) (i32.const 0)) (then (i32.const 0)) (else (call $even (i32.sub (local.get $n) (i32.const 1)))) ) ))",
+    "(assert_return (invoke \"even\" (i32.const 13)) (i32.const 0))",
+    "(assert_return (invoke \"even\" (i32.const 20)) (i32.const 1))",
+    "(assert_return (invoke \"odd\" (i32.const 13)) (i32.const 1))",
+    "(assert_return (invoke \"odd\" (i32.const 20)) (i32.const 0))"
+  ],
+  "dump": {
+    "forward.0.wasm": {
+      "header": "\nforward.0.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x00000010 (size=0x00000006) count: 1\n Function start=0x00000012 end=0x00000015 (size=0x00000003) count: 2\n   Export start=0x00000017 end=0x00000025 (size=0x0000000e) count: 2\n     Code start=0x00000027 end=0x00000052 (size=0x0000002b) count: 2\n",
+      "details": "\nforward.0.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] (i32) -> i32\nFunction[2]:\n - func[0] sig=0 <even>\n - func[1] sig=0 <odd>\nExport[2]:\n - func[0] <even> -> \"even\"\n - func[1] <odd> -> \"odd\"\nCode[2]:\n - func[0] size=20 <even>\n - func[1] size=20 <odd>\n",
+      "disassemble": "\nforward.0.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n000029 func[0] <even>:\n 00002a: 20 00                      | local.get 0\n 00002c: 41 00                      | i32.const 0\n 00002e: 46                         | i32.eq\n 00002f: 04 7f                      | if i32\n 000031: 41 01                      |   i32.const 1\n 000033: 05                         | else\n 000034: 20 00                      |   local.get 0\n 000036: 41 01                      |   i32.const 1\n 000038: 6b                         |   i32.sub\n 000039: 10 01                      |   call 1 <odd>\n 00003b: 0b                         | end\n 00003c: 0b                         | end\n00003e func[1] <odd>:\n 00003f: 20 00                      | local.get 0\n 000041: 41 00                      | i32.const 0\n 000043: 46                         | i32.eq\n 000044: 04 7f                      | if i32\n 000046: 41 00                      |   i32.const 0\n 000048: 05                         | else\n 000049: 20 00                      |   local.get 0\n 00004b: 41 01                      |   i32.const 1\n 00004d: 6b                         |   i32.sub\n 00004e: 10 00                      |   call 0 <even>\n 000050: 0b                         | end\n 000051: 0b                         | end\n"
+    }
+  }
+}

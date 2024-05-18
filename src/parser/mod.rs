@@ -124,7 +124,7 @@ fn read_sections(
             &mut unit.types as &mut dyn module::Positional
         }
         2 => {
-            read_section_import(bytes, &mut unit.imports)?;
+            read_section_import(bytes, &mut unit.imports, unit.types.len() as u32)?;
             &mut unit.imports as &mut dyn module::Positional
         }
         3 => {
@@ -147,6 +147,7 @@ fn read_sections(
             read_section_export(
                 bytes,
                 &mut unit.exports,
+                &unit.imports,
                 &unit.functions,
                 &unit.globals,
                 &unit.table,
@@ -281,11 +282,12 @@ fn read_section_type(
 fn read_section_import(
     bytes: &mut reader::Reader,
     imports: &mut module::ImportSection,
+    type_count: u32,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let import = module::Import::decode(bytes)?;
+        let import = module::Import::decode(bytes, type_count)?;
         imports.push(import);
     }
 
@@ -293,10 +295,13 @@ fn read_section_import(
 }
 
 impl module::Import {
-    pub fn decode(reader: &mut reader::Reader) -> Result<module::Import, ast::DecodeError> {
+    pub fn decode(
+        reader: &mut reader::Reader,
+        type_count: u32,
+    ) -> Result<module::Import, ast::DecodeError> {
         let module = reader.read_string()?;
         let name = reader.read_string()?;
-        let external_kind = module::ExternalKind::decode(reader)?;
+        let external_kind = module::ExternalKind::decode(reader, type_count)?;
         println!("import: {}::{} {:?}", module, name, external_kind);
         Ok(module::Import {
             external_kind,
@@ -319,7 +324,7 @@ fn read_section_function(
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "function type index out of range, expected < {}, got {}",
+                    "unknown type; function type index out of range, expected < {}, got {}",
                     types.len(),
                     ftype_index
                 ),
@@ -353,6 +358,7 @@ fn read_section_memory(
 fn read_section_export(
     bytes: &mut reader::Reader,
     exports: &mut module::ExportSection,
+    imports: &module::ImportSection,
     functions: &module::FunctionSection,
     globals: &module::GlobalSection,
     tables: &module::TableSection,
@@ -373,7 +379,7 @@ fn read_section_export(
         let index = module::ExportIndex::decode(typ, idx)?;
         match index {
             module::ExportIndex::Function(idx) => {
-                if idx >= functions.functions.len() as u32 {
+                if idx >= (functions.functions.len() + imports.function_count()) as u32 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unknown function index for export {}", idx),
@@ -605,11 +611,21 @@ fn read_section_datacount(
 }
 
 impl module::ExternalKind {
-    pub fn decode(bytes: &mut reader::Reader) -> Result<module::ExternalKind, ast::DecodeError> {
+    pub fn decode(
+        bytes: &mut reader::Reader,
+        type_count: u32,
+    ) -> Result<module::ExternalKind, ast::DecodeError> {
         let byte = bytes.read_byte()?;
         match byte {
             0x00 => {
                 let typeidx = bytes.read_vu32()?;
+                if typeidx >= type_count {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown type index {} for imported function", typeidx),
+                    )
+                    .into());
+                }
                 Ok(module::ExternalKind::Function(typeidx))
             }
             0x01 => {
