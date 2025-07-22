@@ -3,12 +3,16 @@ pub mod module;
 pub mod reader;
 mod validate;
 
+use std::collections::HashMap;
 use std::io;
-use std::u32;
 
 use self::module::Positional;
 
-pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, ast::DecodeError> {
+pub fn parse(
+    module_registry: &HashMap<String, module::Module>,
+    name: &str,
+    bytes: &mut reader::Reader,
+) -> Result<module::Module, ast::DecodeError> {
     let mut unit = module::Module::new(name);
 
     read_header(bytes, &mut unit.magic, &mut unit.version)?;
@@ -48,29 +52,7 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, a
         }
         let start_pos = bytes.pos();
 
-        println!(
-            "section #{} '{}', len = {}",
-            sec_id,
-            match sec_id {
-                0 => "custom?",
-                1 => "type",
-                2 => "import",
-                3 => "function",
-                4 => "table",
-                5 => "memory",
-                6 => "global",
-                7 => "export",
-                8 => "start",
-                9 => "element",
-                10 => "code",
-                11 => "data",
-                12 => "datacount",
-                _ => "unknown",
-            },
-            sec_len
-        );
-
-        read_sections(sec_id, bytes, &mut unit, sec_len).map_err(
+        read_sections(sec_id, bytes, module_registry, &mut unit, sec_len).map_err(
             |e: ast::DecodeError| match e {
                 ast::DecodeError::Io(err) => match err.kind() {
                     io::ErrorKind::UnexpectedEof => io::Error::new(
@@ -114,6 +96,7 @@ pub fn parse(name: &str, bytes: &mut reader::Reader) -> Result<module::Module, a
 fn read_sections(
     sec_id: u8,
     bytes: &mut reader::Reader,
+    module_registry: &HashMap<String, module::Module>,
     unit: &mut module::Module,
     section_len: u32,
 ) -> Result<(), ast::DecodeError> {
@@ -124,7 +107,7 @@ fn read_sections(
             &mut unit.types as &mut dyn module::Positional
         }
         2 => {
-            read_section_import(bytes, &mut unit.imports, unit.types.len() as u32)?;
+            read_section_import(bytes, module_registry, &mut unit.imports, &unit.types, &unit.memory, &unit.table)?;
             &mut unit.imports as &mut dyn module::Positional
         }
         3 => {
@@ -136,7 +119,7 @@ fn read_sections(
             &mut unit.table as &mut dyn module::Positional
         }
         5 => {
-            read_section_memory(bytes, &mut unit.memory)?;
+            read_section_memory(bytes, &mut unit.memory, &unit.imports)?;
             &mut unit.memory as &mut dyn module::Positional
         }
         6 => {
@@ -233,7 +216,6 @@ fn read_header(
             ))
         }
     })?;
-    println!("magic={}, version={}", magic, version);
     Ok(())
 }
 
@@ -244,7 +226,7 @@ fn read_value_types_list(bytes: &mut reader::Reader) -> Result<Vec<module::Value
     let count = bytes.read_vu32()?;
     for _ in 0..count {
         let value = module::ValueType::decode(bytes.read_byte()?)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         rt.push(value);
     }
     Ok(rt)
@@ -256,7 +238,7 @@ fn read_section_type(
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
 
-    for ii in 0..count {
+    for _ in 0..count {
         if bytes.read_byte()? != 0x60 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -269,7 +251,6 @@ fn read_section_type(
         let parameters = read_value_types_list(bytes)?;
         let return_types = read_value_types_list(bytes)?;
 
-        println!("type #{}: {:?} -> {:?}", ii, parameters, return_types);
         types.push(module::FunctionType {
             parameters,
             return_types,
@@ -281,13 +262,29 @@ fn read_section_type(
 
 fn read_section_import(
     bytes: &mut reader::Reader,
+    module_registry: &HashMap<String, module::Module>,
     imports: &mut module::ImportSection,
-    type_count: u32,
+    types: &module::TypeSection,
+    memory: &module::MemorySection,
+    tables: &module::TableSection,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
+    let mut memory_import_count = 0;
 
     for _ in 0..count {
-        let import = module::Import::decode(bytes, type_count)?;
+        let import = module::Import::decode(bytes, module_registry, types, memory, tables)?;
+
+        // Validate that we don't have multiple memory imports
+        if matches!(import.external_kind, module::ExternalKind::Memory(_)) {
+            memory_import_count += 1;
+            if memory_import_count > 1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "multiple memories",
+                ).into());
+            }
+        }
+
         imports.push(import);
     }
 
@@ -297,12 +294,39 @@ fn read_section_import(
 impl module::Import {
     pub fn decode(
         reader: &mut reader::Reader,
-        type_count: u32,
+        module_registry: &HashMap<String, module::Module>,
+        types: &module::TypeSection,
+        _memory: &module::MemorySection,
+        _tables: &module::TableSection,
     ) -> Result<module::Import, ast::DecodeError> {
         let module = reader.read_string()?;
         let name = reader.read_string()?;
-        let external_kind = module::ExternalKind::decode(reader, type_count)?;
-        println!("import: {}::{} {:?}", module, name, external_kind);
+        let external_kind = match module::ExternalKind::decode(reader, types.len() as u32) {
+            Ok(kind) => kind,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+        // Minimal validation: check if the import exists (but not compatibility)
+        // Full compatibility validation should happen at instantiation time
+        let import_mod_opt = module_registry.get(&module);
+        if let Some(import_mod) = import_mod_opt {
+            // Check if the export exists
+            let _imported_type = import_mod
+                .exports
+                .exports
+                .iter()
+                .find(|e| e.name == name)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unknown import: {}::{}", module, name),
+                    )
+                })?;
+
+            // Type compatibility validation happens at instantiation time, not parse time
+            // This allows modules to parse successfully even with incompatible imports
+        }
         Ok(module::Import {
             external_kind,
             module,
@@ -340,17 +364,28 @@ fn read_section_function(
 fn read_section_memory(
     bytes: &mut reader::Reader,
     memory: &mut module::MemorySection,
+    imports: &module::ImportSection,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
-    for _ in 0..count {
-        let limits = module::Limits::decode(bytes)?;
-        memory.push(module::Memory {
-            memory_type: limits,
-        })
+    // Check if we already have imported memories
+    let imported_memory_count = imports.imports.iter()
+        .filter(|imp| matches!(imp.external_kind, module::ExternalKind::Memory(_)))
+        .count();
+
+    // WASM 1.0 spec: at most one memory total
+    if imported_memory_count + count as usize > 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "multiple memories",
+        ).into());
     }
 
-    println!("memory: {:?}", memory);
+    for _ in 0..count {
+        let limits = module::Limits::decode(bytes)?;
+        memory.push(module::Memory { limits })
+    }
+
 
     Ok(())
 }
@@ -387,7 +422,7 @@ fn read_section_export(
                 }
             }
             module::ExportIndex::Global(idx) => {
-                if idx >= globals.globals.len() as u32 {
+                if idx >= (globals.globals.len() + imports.global_count()) as u32 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unknown global index for export {}", idx),
@@ -395,7 +430,7 @@ fn read_section_export(
                 }
             }
             module::ExportIndex::Table(idx) => {
-                if idx >= tables.tables.len() as u32 {
+                if idx >= (tables.tables.len() + imports.table_count()) as u32 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unknown table index for export {}", idx),
@@ -403,7 +438,9 @@ fn read_section_export(
                 }
             }
             module::ExportIndex::Memory(idx) => {
-                if idx >= memory.memory.len() as u32 {
+                let total_memories = (memory.memory.len() + imports.memory_count()) as u32;
+
+                if idx >= total_memories {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unknown memory index for export {}", idx),
@@ -443,7 +480,7 @@ fn read_section_code(
             let local_n = bytes.read_vu32()?;
             let b = bytes.read_byte()?;
             let value = module::ValueType::decode(b)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             nts.push((local_n, value));
         }
 
@@ -574,7 +611,6 @@ fn read_section_data(
 
     for _ in 0..count {
         let data = module::Data::decode(bytes, imports, memory_count)?;
-        println!("data type: {:?}", data);
         datas.data.push(data);
     }
 
@@ -648,7 +684,7 @@ impl module::ExternalKind {
 impl module::GlobalType {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
         let value_type = module::ValueType::decode(bytes.read_byte()?)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         let mutable = match bytes.read_byte()? {
             0x00 => false,
             0x01 => true,
@@ -690,7 +726,6 @@ fn read_section_global(
 
     for _ in 0..count {
         let data = module::Global::decode(bytes, imports)?;
-        println!("global: {:?}", data);
         globals.globals.push(data);
     }
 
@@ -743,7 +778,6 @@ fn read_section_table(
 
     for _ in 0..count {
         let table_type = module::TableType::decode(bytes)?;
-        println!("table type: {:?}", table_type);
         table.tables.push(table_type);
     }
 
@@ -793,7 +827,6 @@ impl module::Element {
                          return_type: module::ValueType|
          -> Result<Vec<Vec<ast::Instruction>>, ast::DecodeError> {
             let count = bytes.read_vu32()?;
-            println!("read_init count: {}", count);
             let mut init: Vec<Vec<ast::Instruction>> = vec![];
             for _ in 0..count {
                 init.push(ast::Instruction::decode_constant_expression(
@@ -848,7 +881,6 @@ impl module::Element {
             };
 
         let typ = bytes.read_vu32()?;
-        println!("element type: 0x{:02x}", typ);
         let element = match typ {
             0 => {
                 // 0:u32 𝑒:expr 𝑦*:vec(funcidx) => {type funcref, init ((ref.func 𝑦) end)*, mode active {table 0, offset 𝑒}}
@@ -1006,7 +1038,6 @@ fn read_section_elements(
 
     for _ in 0..count {
         let element = module::Element::decode(bytes, imports, table, function_count)?;
-        println!("element type: {:?}", element);
         elements.push(element);
     }
 

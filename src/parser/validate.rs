@@ -80,6 +80,7 @@ impl ConstantExpressionValidator<'_> {
     }
 
     fn global(&mut self, global_index: u32) -> Result<&GlobalType, ValidationError> {
+        // constant expressions can only reference imported globals
         self.imports
             .get_global_import(global_index)
             .map(|global_type| match global_type.external_kind {
@@ -269,10 +270,6 @@ impl<'a> CodeValidator<'a> {
     fn pop_expected(&mut self, val_type: MaybeValue) -> Option<MaybeValue> {
         let popped = self.pop_val()?;
         if popped != val_type && popped != Unknown && val_type != Unknown {
-            println!(
-                "pop_expected failed popped: {:?}, val_type: {:?}",
-                popped, val_type
-            );
             None
         } else {
             Some(popped)
@@ -377,8 +374,24 @@ impl<'a> CodeValidator<'a> {
     }
 
     fn global(&mut self, global_index: u32) -> Result<&GlobalType, ValidationError> {
-        match self.module.globals.globals.get(global_index as usize) {
-            Some(global) => Ok(&global.global_type),
+        // TODO: get the imported global type
+        let imported_global_count = self.module.imports.global_count();
+        let global = if global_index < imported_global_count as u32 {
+            self.module
+                .imports
+                .get_global_import(global_index)
+                .and_then(|import| match &import.external_kind {
+                    super::module::ExternalKind::Global(ref global_type) => Some(global_type),
+                    _ => None,
+                })
+        } else {
+            self.module
+                .globals
+                .get(global_index - imported_global_count as u32)
+                .map(|g| &g.global_type)
+        };
+        match global {
+            Some(global) => Ok(global),
             None => Err(ValidationError::UnknownGlobal(global_index)),
         }
     }
@@ -720,6 +733,13 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(inst, 3 /* 8 bytes = 2^3 */)
             }
 
+            MemorySize => {
+                // TODO: check that the memory index exists
+                self.push_val(Val(I32))
+                    .ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
+            }
+
             MemoryGrow => {
                 // TODO: check that the memory index exists
                 self.pop_expected(Val(I32))
@@ -805,10 +825,8 @@ impl Validator for CodeValidator<'_> {
                         .module
                         .get_table(table_index)
                         .ok_or(ValidationError::UnknownTable)?;
-                    println!("table.set ref {:?}", table.ref_type);
                     self.pop_expected(Val(table.ref_type.into()))
                         .ok_or(ValidationError::TypeMismatch)?;
-                    println!("table.set i32");
                     self.pop_expected(Val(I32))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
@@ -910,10 +928,8 @@ impl Validator for CodeValidator<'_> {
                 }
 
                 let label_types = self.label_types_at(li)?;
-                println!("label_types: {:?}", label_types);
                 self.pop_expecteds(label_types.clone())
                     .ok_or(ValidationError::TypeMismatch)?;
-                println!("vals: {:?}", self.vals);
                 match inst.get_type() {
                     &Return | &Br => {
                         self.unreachable().ok_or(ValidationError::TypeMismatch)?;
@@ -1097,7 +1113,6 @@ impl Validator for CodeValidator<'_> {
             Nop => Ok(()),
 
             _ => {
-                println!("validate: unimplemented instruction {:?}", inst.to_string());
                 Err(ValidationError::UnimplementedInstruction)
             }
         }

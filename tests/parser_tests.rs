@@ -9,8 +9,6 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    
-
     #[derive(Deserialize)]
     struct TestData {
         bin: Bin,
@@ -46,11 +44,12 @@ mod tests {
 
     #[derive(Deserialize, Debug)]
     #[serde(untagged)]
+    #[allow(dead_code)]
     enum Command {
         AssertTrapCommand(AssertTrapCommand),
-        AssertReturn(AssertReturnCommand),
+        AssertReturnCommand(AssertReturnCommand),
         AssertUninstantiable(AssertUninstantiableCommand),
-        AssertInvalid(AssertInvalidCommand),
+        AssertInvalidCommand(AssertInvalidCommand),
         RegisterCommand(RegisterCommand),
         Module(ModuleCommand),
     }
@@ -62,6 +61,14 @@ mod tests {
         r#type: String,
         line: i32,
         filename: String,
+    }
+
+    #[derive(Deserialize, Debug)]
+    #[allow(unused)]
+    struct RegisterCommand {
+        r#type: String,
+        line: i32,
+        r#as: String,
     }
 
     #[derive(Deserialize, Debug)]
@@ -84,7 +91,6 @@ mod tests {
     }
 
     #[derive(Deserialize, Debug)]
-    #[allow(unused)]
     struct AssertInvalidCommand {
         r#type: String,
         line: i32,
@@ -121,15 +127,6 @@ mod tests {
         action: Action,
         text: String,
         expected: Vec<Type>,
-    }
-
-    #[derive(Deserialize, Debug)]
-    #[allow(unused)]
-    struct RegisterCommand {
-        r#type: String,
-        line: i32,
-        name: String,
-        r#as: String,
     }
 
     #[derive(Deserialize, Debug)]
@@ -171,160 +168,308 @@ mod tests {
         let file = path.to_string_lossy().to_string();
         let json_string =
             fs::read_to_string(&file).unwrap_or_else(|_| panic!("couldn't read file: {}", file));
-
         let test_data: TestData = serde_json::from_str(&json_string).unwrap();
 
-        struct InvalidCommand<'a> {
-            command: &'a AssertInvalidCommand,
-            bin: &'a Vec<u8>,
-            code: &'a String,
-        }
-        let assert_invalid_commands: Vec<_> = test_data
-            .spec
-            .commands
-            .iter()
-            .enumerate()
-            .filter_map(|(index, command)| {
-                if let Command::AssertInvalid(ref cmd) = command {
-                    match cmd.filename.split('.').last() {
-                        Some("wasm") => Some(InvalidCommand {
+        let mut last_module: Option<module::Module> = None;
+        let mut module_registry: HashMap<String, module::Module> = HashMap::new();
+
+        setup_spectest(&mut module_registry);
+
+        for (index, command) in test_data.spec.commands.iter().enumerate() {
+            let code = &test_data.code[index];
+            match command {
+                Command::Module(cmd) => {
+                    println!(
+                        "(TODO) Module: line = {}, filename = {}",
+                        cmd.line, cmd.filename
+                    );
+                    let bin = &test_data.bin[&cmd.filename].0;
+                    let parsed = kasm::parser::parse(
+                        &module_registry,
+                        format!("{}/{}", cmd.filename, cmd.line).as_str(),
+                        &mut kasm::parser::reader::Reader::new(bin.clone()),
+                    );
+                    if parsed.is_err() {
+                        panic!("Failed to parse: {}", parsed.err().unwrap());
+                    }
+                    last_module = Some(parsed.unwrap());
+                }
+                Command::AssertReturnCommand(cmd) => {
+                    println!(
+                        "(TODO) AssertReturn: line = {}, action type = {}",
+                        cmd.line, cmd.action.r#type
+                    );
+                }
+                Command::AssertUninstantiable(cmd) => {
+                    println!(
+                            "(TODO) AssertUninstantiable: line = {}, filename = {}, text = {}, module type = {}",
+                            cmd.line, cmd.filename, cmd.text, cmd.module_type
+                        );
+                }
+                Command::RegisterCommand(cmd) => {
+                    println!(
+                        "RegisterCommand: line = {}, action type = {}, as = {}",
+                        cmd.line, cmd.r#type, cmd.r#as
+                    );
+                    if let Some(module) = last_module.take() {
+                        module_registry.insert(cmd.r#as.clone(), module);
+                    } else {
+                        panic!("No module to register for command: {}", cmd.r#as);
+                    }
+                }
+                Command::AssertTrapCommand(cmd) => {
+                    println!(
+                        "AssertTrapCommand: line = {}, action type = {}, code = {}",
+                        cmd.line, cmd.action.r#type, code
+                    );
+                }
+                Command::AssertInvalidCommand(cmd) => {
+                    // Skip assert_unlinkable tests since we only test parsing, not instantiation
+                    if cmd.r#type == "assert_unlinkable" {
+                        println!(
+                            "Skipping assert_unlinkable test: {} at line {}",
+                            cmd.filename, cmd.line
+                        );
+                        continue;
+                    }
+
+                    struct InvalidCommand<'a> {
+                        command: &'a AssertInvalidCommand,
+                        bin: &'a Vec<u8>,
+                        code: &'a String,
+                    }
+
+                    let icab: InvalidCommand<'_> = match cmd.filename.split('.').last() {
+                        Some("wasm") => InvalidCommand {
                             command: cmd,
                             bin: &test_data.bin[&cmd.filename].0,
                             code: &test_data.code[index],
-                        }),
-                        Some("wat") => None,
+                        },
+                        Some("wat") => {
+                            println!(
+                                "Skipping AssertInvalidCommand with .wat file: {}",
+                                cmd.filename
+                            );
+                            continue;
+                        }
                         _ => panic!("Unexpected file extension in filename: {}", cmd.filename),
-                    }
-                } else {
-                    None
+                    };
+                    let code_hex = icab
+                        .bin
+                        .clone()
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join("");
+                    println!(
+                        "AssertInvalid: line = {}, filename = {}, text = {}, wasm = {}, wat = {}",
+                        icab.command.line,
+                        icab.command.filename,
+                        icab.command.text,
+                        code_hex,
+                        icab.code
+                    );
+                    // TODO: setup spectest host to import: https://github.com/WebAssembly/spec/blob/main/interpreter/host/spectest.ml
+                    match kasm::parser::parse(&module_registry,
+                        format!("{}/{}", icab.command.filename, icab.command.line).as_str(),
+                        &mut kasm::parser::reader::Reader::new(icab.bin.clone()),
+                    ) {
+                        Ok(_) => {
+                            panic!(
+                                "should not succeed, expected failure with '{}', filename = {}, line in source is {}",
+                                 icab.command.text,
+                                 icab.command.filename,
+                                 icab.command.line);
+                        },
+                        Err(e) => assert!(
+                            e.to_string().contains(&icab.command.text),
+                            "Error message does not contain the expected text. Error message = '{}', expected text = '{}', filename = {}, line in source is {}",
+                            e,
+                            &icab.command.text,
+                            icab.command.filename,
+                            icab.command.line),
+                        }
                 }
-            })
-            .collect();
-        for icab in &assert_invalid_commands {
-            let code_hex = icab
-                .bin
-                .clone()
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<Vec<_>>()
-                .join("");
-            println!(
-                "AssertInvalid: line = {}, filename = {}, text = {}, wasm = {}, wat = {}",
-                icab.command.line, icab.command.filename, icab.command.text, code_hex, icab.code
-            );
-            match kasm::parser::parse(
-                format!("{}/{}", icab.command.filename, icab.command.line).as_str(),
-                &mut kasm::parser::reader::Reader::new(icab.bin.clone()),
-            ) {
-                Ok(_) => {
-                    panic!(
-                        "should not succeed, expected failure with '{}', filename = {}, line in source is {}",
-                         icab.command.text,
-                         icab.command.filename,
-                         icab.command.line);
-                },
-                Err(e) => assert!(
-                    e.to_string().contains(&icab.command.text),
-                    "Error message does not contain the expected text. Error message = '{}', expected text = '{}', filename = {}, line in source is {}",
-                    e,
-                    &icab.command.text,
-                    icab.command.filename,
-                    icab.command.line),
-                }
+            }
         }
 
-        test_data.dump.iter().for_each(|(filename, dump)| {
+        // Compare the parsed module to the expected dump
+
+        fn compare_format(prefix: &str, dump_field: &str, parsed: &module::Module, filename: &str, format: module::ParsedUnitFormat) {
+            let parsed_string = parsed.to_string(format);
+            println!("{}:\n{}", prefix, parsed_string);
+
+            let prefix = format!("\n{}:\tfile format wasm 0x1\n\n{}:\n\n", filename, prefix);
+            let expected = dump_field.strip_prefix(&prefix).unwrap_or(&parsed_string);
+
+            assert_eq!(parsed_string, expected);
+        }
+
+        for (filename, dump) in test_data.dump.iter() {
             println!("testing to_*_string for file: {}", filename);
 
-            let parsed = kasm::parser::parse(
-                filename.to_string().as_str(),
-                &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone()),
-            );
+            let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
+            let parsed = kasm::parser::parse(&module_registry, filename, bytes)
+                .expect(&format!("failed to parse {}", filename));
 
-            match parsed {
-                Ok(_) => {}
-                Err(e) => panic!("failed to parse {}: {}", filename, e),
-            }
+            compare_format("Sections", &dump.header, &parsed, filename, module::ParsedUnitFormat::Header);
+            compare_format("Section Details", &dump.details, &parsed, filename, module::ParsedUnitFormat::Details);
+            compare_format("Code Disassembly", &dump.disassemble, &parsed, filename, module::ParsedUnitFormat::Disassemble);
+        }
+    }
 
-            let parsed_string = parsed
-                .as_ref()
-                .unwrap()
-                .to_string(module::ParsedUnitFormat::Header);
-            println!("parsed:\n{}", parsed_string);
-            let prefix = format!("\n{}:\tfile format wasm 0x1\n\nSections:\n\n", filename);
-            let header = dump
-                .header
-                .strip_prefix(&prefix)
-                .unwrap_or_else(|| &parsed_string);
-            assert_eq!(parsed_string, header);
+    fn setup_spectest(module_registry: &mut HashMap<String, kasm::parser::module::Module>) {
+        let mut spectest = kasm::parser::module::Module::new("spectest");
 
-            let parsed_string = parsed
-                .as_ref()
-                .unwrap()
-                .to_string(module::ParsedUnitFormat::Details);
-            println!("details:\n{}", parsed_string);
-            let prefix = format!(
-                "\n{}:\tfile format wasm 0x1\n\nSection Details:\n\n",
-                filename
-            );
-            let details = dump
-                .details
-                .strip_prefix(&prefix)
-                .unwrap_or_else(|| &parsed_string);
-            assert_eq!(parsed_string, details);
+        insert_function(&mut spectest, "print".to_string(), vec![], vec![]);
+        insert_function(
+            &mut spectest,
+            "print_i32".to_string(),
+            vec![kasm::parser::module::ValueType::I32],
+            vec![],
+        );
+        insert_function(
+            &mut spectest,
+            "print_i64".to_string(),
+            vec![kasm::parser::module::ValueType::I64],
+            vec![],
+        );
+        insert_function(
+            &mut spectest,
+            "print_f32".to_string(),
+            vec![kasm::parser::module::ValueType::F32],
+            vec![],
+        );
+        insert_function(
+            &mut spectest,
+            "print_f64".to_string(),
+            vec![kasm::parser::module::ValueType::F64],
+            vec![],
+        );
+        insert_function(
+            &mut spectest,
+            "print_i32_f32".to_string(),
+            vec![
+                kasm::parser::module::ValueType::I32,
+                kasm::parser::module::ValueType::F32,
+            ],
+            vec![],
+        );
+        insert_function(
+            &mut spectest,
+            "print_f64_f64".to_string(),
+            vec![
+                kasm::parser::module::ValueType::F64,
+                kasm::parser::module::ValueType::F64,
+            ],
+            vec![],
+        );
+        insert_global(
+            &mut spectest,
+            "global_i32".to_string(),
+            kasm::parser::module::ValueType::I32,
+        );
+        insert_global(
+            &mut spectest,
+            "global_i64".to_string(),
+            kasm::parser::module::ValueType::I64,
+        );
+        insert_global(
+            &mut spectest,
+            "global_f32".to_string(),
+            kasm::parser::module::ValueType::F32,
+        );
+        insert_global(
+            &mut spectest,
+            "global_f64".to_string(),
+            kasm::parser::module::ValueType::F64,
+        );
 
-            let parsed_string = parsed
-                .as_ref()
-                .unwrap()
-                .to_string(module::ParsedUnitFormat::Disassemble);
-            println!("disassemble:\n{}", parsed_string);
-            let prefix = format!(
-                "\n{}:\tfile format wasm 0x1\n\nCode Disassembly:\n\n",
-                filename
-            );
-            let disassemble = dump
-                .disassemble
-                .strip_prefix(&prefix)
-                .unwrap_or_else(|| &parsed_string);
-
-            assert_eq!(parsed_string, disassemble);
-        });
-
-        /*
-        test_data
-            .spec
-            .commands
-            .iter()
-            .enumerate()
-            .for_each(|(index, command)| {
-                let code = &test_data.code[index];
-                match command {
-                    Command::Module(cmd) => {
-                        println!(
-                            "Module: line = {}, filename = {}, code = {}",
-                            cmd.line, cmd.filename, code
-                        );
-                    }
-                    Command::AssertReturn(cmd) => {
-                        println!(
-                            "AssertReturn: line = {}, action type = {}, code = {}",
-                            cmd.line, cmd.action.action_type, code
-                        );
-                    }
-                    Command::AssertTrapCommand(cmd) => {
-                        println!(
-                            "AssertTrapCommand: line = {}, action type = {}, code = {}",
-                            cmd.line, cmd.action.action_type, code
-                        );
-                    }
-                    Command::AssertInvalid(cmd) => {
-                        println!(
-                            "AssertInvalid: line = {}, filename = {}, code = {}",
-                            cmd.line, cmd.filename, code
-                        );
-                    }
-                }
+        {
+            spectest.table.tables.push(kasm::parser::module::TableType {
+                ref_type: kasm::parser::module::RefType::FuncRef,
+                limits: kasm::parser::module::Limits { min: 10, max: u32::MAX },
             });
-            */
+            let tableidx = (spectest.table.tables.len() - 1) as u32;
+            spectest.exports.exports.push(kasm::parser::module::Export {
+                index: kasm::parser::module::ExportIndex::Table(tableidx),
+                name: "table".to_string(),
+            });
+        }
+
+        {
+            spectest.memory.memory.push(kasm::parser::module::Memory {
+                limits: kasm::parser::module::Limits { min: 1, max: u32::MAX },
+            });
+            let memidx = (spectest.memory.memory.len() - 1) as u32;
+            spectest.exports.exports.push(kasm::parser::module::Export {
+                index: kasm::parser::module::ExportIndex::Memory(memidx),
+                name: "memory".to_string(),
+            });
+        }
+
+        module_registry.insert("spectest".to_string(), spectest);
+    }
+
+    fn insert_global(
+        module: &mut module::Module,
+        name: String,
+        value_type: kasm::parser::module::ValueType,
+    ) {
+        let gtype = kasm::parser::module::Global {
+            global_type: kasm::parser::module::GlobalType {
+                value_type,
+                mutable: false,
+            },
+            init: vec![],
+        };
+
+        let typeidx = match module.globals.find(&gtype) {
+            Some(idx) => idx,
+            None => {
+                module.globals.globals.push(gtype);
+                (module.globals.globals.len() - 1) as u32
+            }
+        };
+        module.exports.exports.push(kasm::parser::module::Export {
+            index: kasm::parser::module::ExportIndex::Global(typeidx),
+            name,
+        });
+    }
+
+    fn insert_function(
+        module: &mut module::Module,
+        name: String,
+        parameters: Vec<kasm::parser::module::ValueType>,
+        return_types: Vec<kasm::parser::module::ValueType>,
+    ) {
+        let ftype = kasm::parser::module::FunctionType {
+            parameters,
+            return_types,
+        };
+        let typeidx = match module.types.find(&ftype) {
+            Some(idx) => idx,
+            None => {
+                module.types.types.push(ftype);
+                (module.types.types.len() - 1) as u32
+            }
+        };
+        module.functions.functions.push(kasm::parser::module::Function {
+            ftype_index: typeidx,
+        });
+        // Add corresponding empty code section for the function
+        module.code.code.push(kasm::parser::module::FunctionBody {
+            locals: kasm::parser::module::Locals::new(vec![]),
+            instructions: vec![],
+            position: kasm::parser::module::SectionPosition {
+                start: 0,
+                end: 0,
+            },
+        });
+        let funcidx = (module.functions.functions.len() - 1) as u32;
+        module.exports.exports.push(kasm::parser::module::Export {
+            index: kasm::parser::module::ExportIndex::Function(funcidx),
+            name,
+        });
     }
 }

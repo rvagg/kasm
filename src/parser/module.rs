@@ -38,6 +38,56 @@ impl Module {
             .get_table(index)
             .or_else(|| self.table.tables.get(index as usize))
     }
+
+    pub fn get_function_name(&self, index: u32) -> Option<String> {
+        // Check if it's an imported function
+        let import_count = self.imports.function_count() as u32;
+        if index < import_count {
+            // It's an imported function
+            let mut func_idx = 0;
+            for import in &self.imports.imports {
+                if let ExternalKind::Function(_) = import.external_kind {
+                    if func_idx == index {
+                        return Some(format!("{}.{}", import.module, import.name));
+                    }
+                    func_idx += 1;
+                }
+            }
+        }
+
+        // Check if it's exported
+        if let Some(export) = self.exports.get_function(index) {
+            return Some(export.name.clone());
+        }
+
+        None
+    }
+
+    pub fn get_global_name(&self, index: u32) -> Option<String> {
+        // Check if it's an imported global
+        let import_count = self.imports.global_count() as u32;
+        if index < import_count {
+            // It's an imported global
+            let mut global_idx = 0;
+            for import in &self.imports.imports {
+                if let ExternalKind::Global(_) = import.external_kind {
+                    if global_idx == index {
+                        return Some(format!("{}.{}", import.module, import.name));
+                    }
+                    global_idx += 1;
+                }
+            }
+        }
+
+        // Check if it's exported
+        if let Some(export) = self.exports.exports.iter()
+            .find(|e| matches!(e.index, ExportIndex::Global(idx) if idx == index))
+        {
+            return Some(export.name.clone());
+        }
+
+        None
+    }
 }
 
 impl fmt::Display for Module {
@@ -120,9 +170,10 @@ impl SectionPosition {
     }
 }
 
-impl ToString for SectionPosition {
-    fn to_string(&self) -> String {
-        format!(
+impl fmt::Display for SectionPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
             "start=0x{:08x} end=0x{:08x} (size=0x{:08x})",
             self.start,
             self.end,
@@ -218,6 +269,13 @@ impl TypeSection {
     pub fn get(&self, index: u8) -> Option<&FunctionType> {
         self.types.get(index as usize)
     }
+
+    pub fn find(&self, function_type: &FunctionType) -> Option<u32> {
+        self.types
+            .iter()
+            .position(|t| t == function_type)
+            .map(|i| i as u32)
+    }
 }
 
 impl SectionToString for TypeSection {
@@ -226,7 +284,7 @@ impl SectionToString for TypeSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} count: {}", self.position.to_string(), self.types.len())
+        format!("{} count: {}", self.position, self.types.len())
     }
 
     fn to_details_string(&self, _: &Module) -> String {
@@ -269,15 +327,15 @@ impl ImportSection {
             .filter(|i| matches!(i.external_kind, ExternalKind::Function(_)))
             .count()
     }
+
     pub fn get_function_type_index(&self, index: u32) -> Option<u32> {
         self.imports
             .iter()
             .filter_map(|i| match i.external_kind {
-                ExternalKind::Function(ref f) => Some(f),
+                ExternalKind::Function(ref f) => Some(*f),
                 _ => None,
             })
             .nth(index as usize)
-            .map(|f| f.clone())
     }
 
     pub fn table_count(&self) -> usize {
@@ -337,14 +395,10 @@ impl SectionToString for ImportSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!(
-            "{} count: {}",
-            self.position.to_string(),
-            self.imports.len()
-        )
+        format!("{} count: {}", self.position, self.imports.len())
     }
 
-    fn to_details_string(&self, _: &Module) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Import[{}]:\n", self.imports.len()));
         let mut function_count = 0;
@@ -355,9 +409,20 @@ impl SectionToString for ImportSection {
         for import in &self.imports {
             match import.external_kind {
                 ExternalKind::Function(ref f) => {
+                    // Check if this function is re-exported
+                    // Use the last export if there are multiple (for test compatibility)
+                    let display_name = if let Some(export) = unit.exports.exports.iter()
+                        .rev()
+                        .find(|e| matches!(e.index, ExportIndex::Function(idx) if idx == function_count as u32))
+                    {
+                        export.name.clone()
+                    } else {
+                        format!("{}.{}", import.module, import.name)
+                    };
+
                     result.push_str(&format!(
-                        " - func[{}] sig={} <{}.{}> <- {}.{}\n",
-                        function_count, f, import.module, import.name, import.module, import.name
+                        " - func[{}] sig={} <{}> <- {}.{}\n",
+                        function_count, f, display_name, import.module, import.name
                     ));
                     function_count += 1;
                 }
@@ -436,6 +501,14 @@ impl FunctionSection {
         self.functions.push(function);
     }
 
+    pub fn len(&self) -> usize {
+        self.functions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.functions.is_empty()
+    }
+
     pub fn get(&self, index: u8) -> Option<&Function> {
         self.functions.get(index as usize)
     }
@@ -447,11 +520,7 @@ impl SectionToString for FunctionSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!(
-            "{} count: {}",
-            self.position.to_string(),
-            self.functions.len()
-        )
+        format!("{} count: {}", self.position, self.functions.len())
     }
 
     fn to_details_string(&self, unit: &Module) -> String {
@@ -492,6 +561,18 @@ impl TableSection {
             position: SectionPosition::new(0, 0),
         }
     }
+
+    pub fn push(&mut self, table: TableType) {
+        self.tables.push(table);
+    }
+
+    pub fn len(&self) -> usize {
+        self.tables.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tables.is_empty()
+    }
 }
 
 impl SectionToString for TableSection {
@@ -500,14 +581,15 @@ impl SectionToString for TableSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} count: {}", self.position.to_string(), self.tables.len())
+        format!("{} count: {}", self.position, self.tables.len())
     }
 
-    fn to_details_string(&self, _: &Module) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Table[{}]:\n", self.tables.len()));
+        let import_table_count = unit.imports.table_count();
         for (i, table_type) in self.tables.iter().enumerate() {
-            result.push_str(&format!(" - table[{}] {}\n", i, table_type));
+            result.push_str(&format!(" - table[{}] {}\n", import_table_count + i, table_type));
         }
         result
     }
@@ -536,6 +618,14 @@ impl MemorySection {
     pub fn push(&mut self, memory: Memory) {
         self.memory.push(memory);
     }
+
+    pub fn len(&self) -> usize {
+        self.memory.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.memory.is_empty()
+    }
 }
 
 impl SectionToString for MemorySection {
@@ -544,7 +634,7 @@ impl SectionToString for MemorySection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} count: {}", self.position.to_string(), self.memory.len())
+        format!("{} count: {}", self.position, self.memory.len())
     }
 
     fn to_details_string(&self, _: &Module) -> String {
@@ -554,9 +644,9 @@ impl SectionToString for MemorySection {
             result.push_str(&format!(
                 " - memory[{}] pages: initial={}{}\n",
                 i,
-                memory.memory_type.min,
-                if memory.memory_type.max < u32::MAX {
-                    format!(" max={}", memory.memory_type.max)
+                memory.limits.min,
+                if memory.limits.max < u32::MAX {
+                    format!(" max={}", memory.limits.max)
                 } else {
                     "".to_string()
                 }
@@ -585,6 +675,29 @@ impl GlobalSection {
             position: SectionPosition::new(0, 0),
         }
     }
+
+    pub fn push(&mut self, global: Global) {
+        self.globals.push(global);
+    }
+
+    pub fn len(&self) -> usize {
+        self.globals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.globals.is_empty()
+    }
+
+    pub fn find(&self, global: &Global) -> Option<u32> {
+        self.globals
+            .iter()
+            .position(|g| g == global)
+            .map(|i| i as u32)
+    }
+
+    pub fn get(&self, index: u32) -> Option<&Global> {
+        self.globals.get(index as usize)
+    }
 }
 
 impl From<&GlobalSection> for Vec<GlobalType> {
@@ -599,11 +712,7 @@ impl SectionToString for GlobalSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!(
-            "{} count: {}",
-            self.position.to_string(),
-            self.globals.len()
-        )
+        format!("{} count: {}", self.position, self.globals.len())
     }
 
     fn to_details_string(&self, unit: &Module) -> String {
@@ -671,11 +780,7 @@ impl SectionToString for ExportSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!(
-            "{} count: {}",
-            self.position.to_string(),
-            self.exports.len()
-        )
+        format!("{} count: {}", self.position, self.exports.len())
     }
 
     fn to_details_string(&self, unit: &Module) -> String {
@@ -735,7 +840,7 @@ impl SectionToString for StartSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} start: {}", self.position.to_string(), self.start)
+        format!("{} start: {}", self.position, self.start)
     }
 
     fn to_details_string(&self, _: &Module) -> String {
@@ -770,7 +875,7 @@ impl ElementSection {
     }
 }
 
-fn init_expr_to_offset(init: &Vec<ast::Instruction>) -> Option<u32> {
+fn init_expr_to_offset(init: &[ast::Instruction]) -> Option<u32> {
     if init.len() != 2 {
         // const + end
         return None;
@@ -791,7 +896,7 @@ fn init_expr_to_offset(init: &Vec<ast::Instruction>) -> Option<u32> {
 
 fn init_expr_to_string(
     unit: &Module,
-    init: &Vec<ast::Instruction>,
+    init: &[ast::Instruction],
     as_unsigned: bool,
     with_prefix: bool,
 ) -> String {
@@ -855,8 +960,8 @@ fn init_expr_to_string(
                     result.push_str(&format!(
                         "ref.func:{}{}",
                         function_index,
-                        match unit.exports.get_function(function_index) {
-                            Some(export) => format!(" <{}>", export.name),
+                        match unit.get_function_name(function_index) {
+                            Some(name) => format!(" <{}>", name),
                             None => "".to_string(),
                         }
                     ));
@@ -929,11 +1034,7 @@ impl SectionToString for ElementSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!(
-            "{} count: {}",
-            self.position.to_string(),
-            self.elements.len()
-        )
+        format!("{} count: {}", self.position, self.elements.len())
     }
 
     fn to_details_string(&self, unit: &Module) -> String {
@@ -1013,7 +1114,7 @@ impl SectionToString for CodeSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} count: {}", self.position.to_string(), self.code.len())
+        format!("{} count: {}", self.position, self.code.len())
     }
 
     fn to_details_string(&self, unit: &Module) -> String {
@@ -1237,7 +1338,7 @@ impl SectionToString for DataCountSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} count: {}", self.position.to_string(), self.count)
+        format!("{} count: {}", self.position, self.count)
     }
 
     fn to_details_string(&self, _: &Module) -> String {
@@ -1278,7 +1379,7 @@ impl SectionToString for CustomSection {
     fn to_header_string(&self) -> String {
         format!(
             "{} \"{}\"",
-            self.position.to_string(),
+            self.position,
             self.name
                 .split('\0') // TODO: this is a hack to replicate C++ printing behaviour to match wabt output
                 .next()
@@ -1299,7 +1400,8 @@ impl SectionToString for CustomSection {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
+
 pub struct FunctionType {
     pub parameters: Vec<ValueType>,
     pub return_types: Vec<ValueType>,
@@ -1386,7 +1488,7 @@ impl fmt::Display for Function {
 
 #[derive(Debug)]
 pub struct Memory {
-    pub memory_type: Limits,
+    pub limits: Limits,
 }
 
 #[derive(Debug)]
@@ -1466,10 +1568,28 @@ impl From<RefType> for ValueType {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Limits {
     pub min: u32,
     pub max: u32, // TODO: is u32::MAX ok for unlimited?
+}
+
+impl Limits {
+    /// Check if these limits are compatible for import
+    /// According to WASM spec: import can be more restrictive than export
+    /// Import min must be >= export min, import max must be <= export max
+    pub fn is_compatible_with(&self, exported: &Limits) -> bool {
+        // Import's min must be >= exported min
+        if self.min < exported.min {
+            return false;
+        }
+        // If export has a max, import must have a max <= exported max
+        if exported.max != u32::MAX && (self.max == u32::MAX || self.max > exported.max) {
+            return false;
+        }
+        // If export has no max, import can have any max (or no max)
+        true
+    }
 }
 
 impl fmt::Display for Limits {
@@ -1478,7 +1598,7 @@ impl fmt::Display for Limits {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub struct TableType {
     pub ref_type: RefType,
     pub limits: Limits,
@@ -1611,7 +1731,7 @@ impl SectionToString for DataSection {
     }
 
     fn to_header_string(&self) -> String {
-        format!("{} count: {}", self.position.to_string(), self.data.len())
+        format!("{} count: {}", self.position, self.data.len())
     }
 
     fn to_details_string(&self, unit: &Module) -> String {
@@ -1699,7 +1819,7 @@ impl fmt::Display for GlobalType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Global {
     pub global_type: GlobalType,
     pub init: Vec<ast::Instruction>,
@@ -1744,11 +1864,13 @@ impl fmt::Display for ExternalKind {
     }
 }
 
+/*
 #[derive(Debug)]
 pub struct MemoryType {
     // TODO: fix this, no longer correct
     // limits : ResizableLimits
 }
+ */
 
 /*
 pub struct ResizableLimits {
@@ -1881,7 +2003,7 @@ impl Module {
 
 impl fmt::Display for Memory {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Memory({})", self.memory_type)
+        write!(f, "Memory({})", self.limits)
     }
 }
 
@@ -1933,7 +2055,7 @@ impl ExportIndex {
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum ValueType {
     // Number types
     I32,

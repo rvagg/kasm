@@ -1264,9 +1264,12 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                     bytes
                 }),
-                Arc::new(|data, _| {
+                Arc::new(|data, unit| {
                     if let InstructionData::Global { global_index } = &data {
-                        format!("global.get {}", global_index)
+                        let name = unit.get_global_name(*global_index)
+                            .map(|n| format!(" <{}>", n))
+                            .unwrap_or_default();
+                        format!("global.get {}{}", global_index, name)
                     } else {
                         panic!("expected global instruction");
                     }
@@ -1826,7 +1829,6 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
                         let ma = (bytes.read_vu32()?, bytes.read_vu32()?);
-                        println!("ma: {:?}", ma);
                         Ok(InstructionData::Memory {
                             subopcode_bytes: Vec::new(),
                             memarg: ma,
@@ -2599,23 +2601,35 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                 }),
             ),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::MemorySize,
                 0x3f,
+                0,
                 "memory.size",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
-                        if bytes.read_byte()? != 0x0 {
+                        let memidx = bytes.read_byte()?;
+                        if memidx != 0x0 {
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 "zero byte expected",
                             ));
                         }
                         Ok(InstructionData::Simple {
-                            subopcode_bytes: Vec::new(),
+                            subopcode_bytes: vec![memidx],
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x3f];
+                    if let InstructionData::Simple { subopcode_bytes } = data {
+                        bytes.extend_from_slice(subopcode_bytes);
+                    } else {
+                        bytes.push(0x0);
+                    }
+                    bytes
+                }),
+                Arc::new(|_, _| "memory.size 0".to_string()),
             ),
             InstructionCoding::new_with_options(
                 InstructionType::MemoryGrow,
@@ -4929,18 +4943,12 @@ impl<'a> Iterator for InstructionIterator<'a> {
             Some(coding) => coding,
             None => {
                 self.ended = true;
-                println!("unknown opcode: {} ({})", opcode, subopcode);
                 return Some(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "illegal opcode",
                 )));
             }
         };
-
-        println!(
-            "opcode: {} ({}) '{}' @ {:x}",
-            opcode, subopcode, block_coding.name, pos
-        );
 
         let instruction = (block_coding.to_owned().parse_bytes)(self.bytes, subopcode_bytes);
         match instruction {
@@ -4958,7 +4966,6 @@ impl<'a> Iterator for InstructionIterator<'a> {
                 )))
             }
             Err(e) => {
-                println!("error: {}", e);
                 Some(Err(e))
             }
         }

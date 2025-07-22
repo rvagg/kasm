@@ -547,8 +547,7 @@ fn test_rt_vu64() {
         let byts = emit_vu64(expected);
         let mut reader = Reader::new(byts);
         let r = reader.read_vu64();
-        let actual = r.unwrap_or_else(|err| {
-            println!("Failed to read vu64: {}", err);
+        let actual = r.unwrap_or_else(|_err| {
             panic!("Failed to read vu64");
         });
         assert_eq_with_diag(actual, expected);
@@ -643,8 +642,7 @@ fn test_rt_vu32() {
         let byts = emit_vu32(expected);
         let mut reader = Reader::new(byts);
         let r = reader.read_vu32();
-        let actual = r.unwrap_or_else(|err| {
-            println!("Failed to read vu32: {}", err);
+        let actual = r.unwrap_or_else(|_err| {
             panic!("Failed to read vu32");
         });
         assert_eq_with_diag(actual, expected);
@@ -877,8 +875,7 @@ fn test_rt_vs64() {
         let byts = emit_vs64(expected);
         let mut reader = Reader::new(byts);
         let r = reader.read_vs64();
-        let actual = r.unwrap_or_else(|err| {
-            println!("Failed to read vs64: {}", err);
+        let actual = r.unwrap_or_else(|_err| {
             panic!("Failed to read vs64");
         });
         assert_eq_with_diag(actual, expected);
@@ -985,8 +982,7 @@ fn test_rt_vs32() {
         let byts = emit_vs32(expected);
         let mut reader = Reader::new(byts);
         let r = reader.read_vs32();
-        let actual = r.unwrap_or_else(|err| {
-            println!("Failed to read vs32: {}", err);
+        let actual = r.unwrap_or_else(|_err| {
             panic!("Failed to read vs32");
         });
         assert_eq_with_diag(actual, expected);
