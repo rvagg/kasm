@@ -261,7 +261,7 @@ impl SectionToString for TypeSection {
         let mut result = String::new();
         result.push_str(&format!("Type[{}]:\n", self.types.len()));
         for (i, function_type) in self.types.iter().enumerate() {
-            result.push_str(&format!(" - type[{}] {}\n", i, function_type));
+            result.push_str(&format!(" - type[{i}] {function_type}\n"));
         }
         result
     }
@@ -687,13 +687,15 @@ impl SectionToString for GlobalSection {
     fn to_details_string(&self, unit: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Global[{}]:\n", self.globals.len()));
+        let import_global_count = unit.imports.global_count() as u32;
         for (i, global) in self.globals.iter().enumerate() {
+            let global_index = import_global_count + i as u32;
             result.push_str(&format!(
                 " - global[{}] {} mutable={}{}{}\n",
-                i,
+                global_index,
                 global.global_type.value_type,
                 if global.global_type.mutable { 1 } else { 0 },
-                match unit.exports.get_global(i as u32) {
+                match unit.exports.get_global(global_index) {
                     Some(e) => format!(" <{}>", e.name),
                     None => "".to_string(),
                 },
@@ -911,7 +913,7 @@ fn init_expr_to_string(unit: &Module, init: &[ast::Instruction], as_unsigned: bo
                             result.push_str(&format!("global={} <{}.{}>", global_index, import.module, import.name));
                         }
                         None => {
-                            result.push_str(&format!("global={} <INVALID>", global_index));
+                            result.push_str(&format!("global={global_index} <INVALID>"));
                         }
                     }
                 }
@@ -922,7 +924,7 @@ fn init_expr_to_string(unit: &Module, init: &[ast::Instruction], as_unsigned: bo
                         "ref.func:{}{}",
                         function_index,
                         match unit.get_function_name(function_index) {
-                            Some(name) => format!(" <{}>", name),
+                            Some(name) => format!(" <{name}>"),
                             None => "".to_string(),
                         }
                     ));
@@ -930,7 +932,7 @@ fn init_expr_to_string(unit: &Module, init: &[ast::Instruction], as_unsigned: bo
             }
             ast::InstructionType::RefNull => {
                 if let ast::InstructionData::RefType { ref_type } = *init[0].get_data() {
-                    result.push_str(&format!("ref.null {}", ref_type));
+                    result.push_str(&format!("ref.null {ref_type}"));
                 }
             }
             _ => {
@@ -946,7 +948,7 @@ fn init_expr_to_string(unit: &Module, init: &[ast::Instruction], as_unsigned: bo
                         result.push_str(", ");
                     }
                     first = false;
-                    result.push_str(&format!("{}", instruction));
+                    result.push_str(&format!("{instruction}"));
                     match instruction.get_type() {
                         ast::InstructionType::I32Const => {
                             if let ast::InstructionData::I32 { value } = *instruction.get_data() {
@@ -960,17 +962,17 @@ fn init_expr_to_string(unit: &Module, init: &[ast::Instruction], as_unsigned: bo
                         }
                         ast::InstructionType::F32Const => {
                             if let ast::InstructionData::F32 { value } = *instruction.get_data() {
-                                result.push_str(&format!("{}", value));
+                                result.push_str(&format!("{value}"));
                             }
                         }
                         ast::InstructionType::F64Const => {
                             if let ast::InstructionData::F64 { value } = *instruction.get_data() {
-                                result.push_str(&format!("{}", value));
+                                result.push_str(&format!("{value}"));
                             }
                         }
                         ast::InstructionType::GlobalGet => {
                             if let ast::InstructionData::Global { global_index } = *instruction.get_data() {
-                                result.push_str(&format!("{}", global_index));
+                                result.push_str(&format!("{global_index}"));
                                 // TODO: global name?
                             }
                         }
@@ -1116,20 +1118,20 @@ impl CodeSection {
             let ftype_index = match unit.functions.get(i as u8) {
                 Some(f) => f.ftype_index,
                 None => {
-                    result.push_str(&format!("invalid function index: {}\n", i));
+                    result.push_str(&format!("invalid function index: {i}\n"));
                     continue;
                 }
             };
             let ftype = match unit.types.get(ftype_index as u8) {
                 Some(t) => t,
                 None => {
-                    result.push_str(&format!("invalid type index: {}\n", ftype_index));
+                    result.push_str(&format!("invalid type index: {ftype_index}\n"));
                     continue;
                 }
             };
 
             let mut pos = function_body.position.start as usize;
-            result.push_str(&format!("{:06x} func[{}]{}:\n", pos, fi, exp));
+            result.push_str(&format!("{pos:06x} func[{fi}]{exp}:\n"));
             pos += 1; // TODO: do we need more bytes to represent a function start?
                       // for each instruction, ignoring the opcodes for now
                       //  00011f: 20 00                      | local.get 0
@@ -1138,21 +1140,18 @@ impl CodeSection {
             function_body.locals.iter().for_each(|(count, value_type)| {
                 let count_bytes = super::reader::emit_vu32(*count);
                 let mut byts = count_bytes.iter().fold(String::new(), |mut acc, byte| {
-                    acc.push_str(&format!("{:02x} ", byte));
+                    acc.push_str(&format!("{byte:02x} "));
                     acc
                 });
                 byts.push_str(&format!("{:02x}", value_type.emit_bytes()[0]));
 
                 let range = match *count {
                     0 => "".to_string(),
-                    1 => format!("{}", offset),
+                    1 => format!("{offset}"),
                     _ => format!("{}..{}", offset, offset + count - 1),
                 };
 
-                result.push_str(&format!(
-                    " {:06x}: {:27}| local[{}] type={}\n",
-                    pos, byts, range, value_type,
-                ));
+                result.push_str(&format!(" {pos:06x}: {byts:27}| local[{range}] type={value_type}\n",));
                 pos += count_bytes.len() + 1;
                 offset += count;
             });
@@ -1189,7 +1188,7 @@ impl CodeSection {
                     } else {
                         ("  ".repeat(indent), coding_string.as_str())
                     };
-                    format!("{:27}| {}{}\n", byte_string, indent_string, coding_str,)
+                    format!("{byte_string:27}| {indent_string}{coding_str}\n",)
                 };
 
                 // crop_last_2, and related paraphernalia is a hack to handle what appears to be
@@ -1210,11 +1209,11 @@ impl CodeSection {
                 if crop_last_2 {
                     p += (coding_bytes.len() - 2) as u32;
                 }
-                result.push_str(&format!(" {:06x}: ", p));
+                result.push_str(&format!(" {p:06x}: "));
 
                 for (index, byte) in coding_bytes.iter().enumerate() {
                     if !crop_last_2 || index >= coding_bytes.len() - 2 {
-                        let new_byte_string = format!("{:02x} ", byte);
+                        let new_byte_string = format!("{byte:02x} ");
                         if byte_string.len() + new_byte_string.len() > 27 {
                             // the case of a byte block that's too long, so we dump the
                             // current batch and loop again, possibly dumping more until
@@ -1224,7 +1223,7 @@ impl CodeSection {
                             if crop_last_2 {
                                 p += (coding_bytes.len() - 2) as u32;
                             }
-                            result.push_str(&format!(" {:06x}: ", p));
+                            result.push_str(&format!(" {p:06x}: "));
                             byte_string.clear();
                             coding_string_added = true;
                         }
@@ -1597,9 +1596,9 @@ impl fmt::Display for ElementMode {
                 table_index,
                 ref offset,
             } => {
-                write!(f, "Active {{ table_index = {}, offset =", table_index).unwrap();
+                write!(f, "Active {{ table_index = {table_index}, offset =").unwrap();
                 for instruction in offset {
-                    write!(f, "{} ", instruction)?;
+                    write!(f, "{instruction} ")?;
                 }
                 write!(f, "}}")
             }
@@ -1629,7 +1628,7 @@ impl fmt::Display for Element {
         for iv in &self.init {
             write!(f, "[")?;
             for instruction in iv {
-                write!(f, "{} ", instruction)?;
+                write!(f, "{instruction} ")?;
             }
             write!(f, "] ")?;
         }
@@ -1654,9 +1653,9 @@ impl fmt::Display for DataMode {
                 memory_index,
                 ref offset,
             } => {
-                write!(f, "Active {{ memory_index = {}, offset =", memory_index).unwrap();
+                write!(f, "Active {{ memory_index = {memory_index}, offset =").unwrap();
                 for instruction in offset {
-                    write!(f, "{} ", instruction)?;
+                    write!(f, "{instruction} ")?;
                 }
                 write!(f, "}}")
             }
@@ -1674,7 +1673,7 @@ impl fmt::Display for Data {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Data init = [")?;
         for byte in &self.init {
-            write!(f, "{:02x} ", byte)?;
+            write!(f, "{byte:02x} ")?;
         }
         write!(f, "] mode = {}", self.mode)
     }
@@ -1699,7 +1698,7 @@ impl SectionToString for DataSection {
                 i,
                 match data.mode {
                     DataMode::Passive => "passive".to_string(),
-                    DataMode::Active { memory_index, .. } => format!("memory={}", memory_index),
+                    DataMode::Active { memory_index, .. } => format!("memory={memory_index}"),
                 },
                 data.init.len(),
                 match data.mode {
@@ -1745,7 +1744,7 @@ impl SectionToString for DataSection {
                     -1 => "<INVALID OFFSET>".to_string(),
                     _ => format!("{:07x}", pos as i32 + data_offset),
                 };
-                result.push_str(&format!("  - {}: {} {}\n", offset_str, byts, chars));
+                result.push_str(&format!("  - {offset_str}: {byts} {chars}\n"));
                 pos += 16;
             }
         }
@@ -1781,7 +1780,7 @@ impl fmt::Display for Global {
         write!(f, "Global global_type = {}", self.global_type)?;
         write!(f, " init = [")?;
         for instruction in &self.init {
-            write!(f, "{} ", instruction)?;
+            write!(f, "{instruction} ")?;
         }
         write!(f, "]")
     }
@@ -1806,10 +1805,10 @@ impl fmt::Display for ExternalKind {
             f,
             "{}",
             match self {
-                ExternalKind::Function(typeidx) => format!("Function({})", typeidx),
-                ExternalKind::Table(table_type) => format!("Table({})", table_type),
-                ExternalKind::Memory(limits) => format!("Memory({})", limits),
-                ExternalKind::Global(global_type) => format!("Global({})", global_type),
+                ExternalKind::Function(typeidx) => format!("Function({typeidx})"),
+                ExternalKind::Table(table_type) => format!("Table({table_type})"),
+                ExternalKind::Memory(limits) => format!("Memory({limits})"),
+                ExternalKind::Global(global_type) => format!("Global({global_type})"),
             }
         )
     }
@@ -1957,10 +1956,10 @@ impl fmt::Display for Memory {
 impl fmt::Display for Export {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let typ = match self.index {
-            ExportIndex::Function(i) => format!("Function({})", i),
-            ExportIndex::Table(i) => format!("Table({})", i),
-            ExportIndex::Memory(i) => format!("Memory({})", i),
-            ExportIndex::Global(i) => format!("Global({})", i),
+            ExportIndex::Function(i) => format!("Function({i})"),
+            ExportIndex::Table(i) => format!("Table({i})"),
+            ExportIndex::Memory(i) => format!("Memory({i})"),
+            ExportIndex::Global(i) => format!("Global({i})"),
         };
         write!(f, "{} {}", self.name, typ)
     }
@@ -1981,7 +1980,7 @@ impl fmt::Display for FunctionBody {
          */
         write!(f, " instructions = ").unwrap();
         for instruction in &self.instructions {
-            write!(f, "{} ", instruction)?;
+            write!(f, "{instruction} ")?;
         }
         Ok(())
     }
@@ -1995,7 +1994,7 @@ impl ExportIndex {
             0x02 => Ok(ExportIndex::Memory(idx)),
             0x03 => Ok(ExportIndex::Global(idx)),
             _ => {
-                let msg: String = format!("invalid export type: {}", byte);
+                let msg: String = format!("invalid export type: {byte}");
                 Err(io::Error::new(io::ErrorKind::InvalidData, msg))
             }
         }
@@ -2030,7 +2029,7 @@ impl ValueType {
             0x7b => Ok(ValueType::V128),
             0x70 => Ok(ValueType::FuncRef),
             0x6f => Ok(ValueType::ExternRef),
-            _ => Err(format!("invalid value type: {}", byte)),
+            _ => Err(format!("invalid value type: {byte}")),
         }
     }
 

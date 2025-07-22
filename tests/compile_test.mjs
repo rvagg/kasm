@@ -4,8 +4,8 @@ import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 
 // const wast2wasm = new URL('../webassembly/wabt/build/wat2wasm', import.meta.url).pathname
-const wast2json = new URL('../webassembly/wabt/build/wast2json', `file://${process.cwd()}/`).pathname
-const wasmObjdump = new URL('../webassembly/wabt/build/wasm-objdump', `file://${process.cwd()}/`).pathname
+const wast2json = 'wast2json'
+const wasmObjdump = 'wasm-objdump'
 
 if (process.argv.length < 4) {
   console.error('usage: compile_test.mjs <input.wast> <output.json>')

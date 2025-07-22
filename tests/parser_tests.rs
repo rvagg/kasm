@@ -230,7 +230,7 @@ mod tests {
                         code: &'a String,
                     }
 
-                    let icab: InvalidCommand<'_> = match cmd.filename.split('.').last() {
+                    let icab: InvalidCommand<'_> = match cmd.filename.split('.').next_back() {
                         Some("wasm") => InvalidCommand {
                             command: cmd,
                             bin: &test_data.bin[&cmd.filename].0,
@@ -246,7 +246,7 @@ mod tests {
                         .bin
                         .clone()
                         .iter()
-                        .map(|b| format!("{:02x}", b))
+                        .map(|b| format!("{b:02x}"))
                         .collect::<Vec<_>>()
                         .join("");
                     println!(
@@ -287,20 +287,20 @@ mod tests {
             format: module::ParsedUnitFormat,
         ) {
             let parsed_string = parsed.to_string(format);
-            println!("{}:\n{}", prefix, parsed_string);
+            println!("{prefix}:\n{parsed_string}");
 
-            let prefix = format!("\n{}:\tfile format wasm 0x1\n\n{}:\n\n", filename, prefix);
+            let prefix = format!("\n{filename}:\tfile format wasm 0x1\n\n{prefix}:\n\n");
             let expected = dump_field.strip_prefix(&prefix).unwrap_or(&parsed_string);
 
             assert_eq!(parsed_string, expected);
         }
 
         for (filename, dump) in test_data.dump.iter() {
-            println!("testing to_*_string for file: {}", filename);
+            println!("testing to_*_string for file: {filename}");
 
             let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
-            let parsed =
-                kasm::parser::parse(&module_registry, filename, bytes).expect(&format!("failed to parse {}", filename));
+            let parsed = kasm::parser::parse(&module_registry, filename, bytes)
+                .unwrap_or_else(|_| panic!("failed to parse {}", filename));
 
             compare_format(
                 "Sections",

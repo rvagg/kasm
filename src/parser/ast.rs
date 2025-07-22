@@ -797,8 +797,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 "block{}",
                                 match blocktype {
                                     BlockType::Empty => String::from(""),
-                                    BlockType::Type(value_type) => format!(" {}", value_type),
-                                    BlockType::TypeIndex(type_index) => format!(" type[{}]", type_index),
+                                    BlockType::Type(value_type) => format!(" {value_type}"),
+                                    BlockType::TypeIndex(type_index) => format!(" type[{type_index}]"),
                                 }
                             )
                         }
@@ -833,9 +833,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     if let InstructionData::Block { blocktype } = &data {
                         match blocktype {
                             BlockType::Empty => "loop".to_string(),
-                            BlockType::Type(value_type) => format!("loop {}", value_type),
+                            BlockType::Type(value_type) => format!("loop {value_type}"),
                             BlockType::TypeIndex(type_index) => {
-                                format!("loop type[{}]", type_index)
+                                format!("loop type[{type_index}]")
                             }
                         }
                     } else {
@@ -870,7 +870,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         if blocktype == &BlockType::Empty {
                             "if".to_string()
                         } else {
-                            format!("if {}", blocktype)
+                            format!("if {blocktype}")
                         }
                     } else {
                         panic!("expected block instruction");
@@ -902,7 +902,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::Labelled { label_index } = &data {
-                        format!("br {}", label_index)
+                        format!("br {label_index}")
                     } else {
                         panic!("expected labelled instruction");
                     }
@@ -932,7 +932,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::Labelled { label_index } = &data {
-                        format!("br_if {}", label_index)
+                        format!("br_if {label_index}")
                     } else {
                         panic!("expected labelled instruction");
                     }
@@ -967,9 +967,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     if let InstructionData::TableLabelled { labels, label_index } = &data {
                         let mut labels_str = String::new();
                         for label in labels {
-                            labels_str.push_str(&format!(" {}", label));
+                            labels_str.push_str(&format!(" {label}"));
                         }
-                        format!("br_table{} {}", labels_str, label_index)
+                        format!("br_table{labels_str} {label_index}")
                     } else {
                         panic!("expected table labelled instruction");
                     }
@@ -1139,7 +1139,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::Local { local_index } = &data {
-                        format!("local.get {}", local_index)
+                        format!("local.get {local_index}")
                     } else {
                         panic!("expected local instruction");
                     }
@@ -1169,7 +1169,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::Local { local_index } = &data {
-                        format!("local.set {}", local_index)
+                        format!("local.set {local_index}")
                     } else {
                         panic!("expected local instruction");
                     }
@@ -1199,7 +1199,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::Local { local_index } = &data {
-                        format!("local.tee {}", local_index)
+                        format!("local.tee {local_index}")
                     } else {
                         panic!("expected local instruction");
                     }
@@ -1231,9 +1231,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     if let InstructionData::Global { global_index } = &data {
                         let name = unit
                             .get_global_name(*global_index)
-                            .map(|n| format!(" <{}>", n))
+                            .map(|n| format!(" <{n}>"))
                             .unwrap_or_default();
-                        format!("global.get {}{}", global_index, name)
+                        format!("global.get {global_index}{name}")
                     } else {
                         panic!("expected global instruction");
                     }
@@ -1263,7 +1263,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::Global { global_index } = &data {
-                        format!("global.set {}", global_index)
+                        format!("global.set {global_index}")
                     } else {
                         panic!("expected global instruction");
                     }
@@ -1305,7 +1305,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         table_index,
                     } = &data
                     {
-                        format!("table.get {}", table_index)
+                        format!("table.get {table_index}")
                     } else {
                         panic!("expected table get instruction");
                     }
@@ -1346,7 +1346,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         table_index,
                     } = &data
                     {
-                        format!("table.set {}", table_index)
+                        format!("table.set {table_index}")
                     } else {
                         panic!("expected table set instruction");
                     }
@@ -1394,7 +1394,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         table_index,
                     } = &data
                     {
-                        format!("table.init {} {}", elem_index, table_index)
+                        format!("table.init {elem_index} {table_index}")
                     } else {
                         panic!("expected table init instruction");
                     }
@@ -1437,7 +1437,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         elem_index,
                     } = &data
                     {
-                        format!("elem.drop {}", elem_index)
+                        format!("elem.drop {elem_index}")
                     } else {
                         panic!("expected elem instruction");
                     }
@@ -1485,7 +1485,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         dst_table_index,
                     } = &data
                     {
-                        format!("table.copy {} {}", src_table_index, dst_table_index)
+                        format!("table.copy {src_table_index} {dst_table_index}")
                     } else {
                         panic!("expected table copy instruction");
                     }
@@ -1528,7 +1528,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         table_index,
                     } = &data
                     {
-                        format!("table.grow {}", table_index)
+                        format!("table.grow {table_index}")
                     } else {
                         panic!("expected table instruction");
                     }
@@ -1571,7 +1571,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         table_index,
                     } = &data
                     {
-                        format!("table.size {}", table_index)
+                        format!("table.size {table_index}")
                     } else {
                         panic!("expected table instruction");
                     }
@@ -1614,7 +1614,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         table_index,
                     } = &data
                     {
-                        format!("table.fill {}", table_index)
+                        format!("table.fill {table_index}")
                     } else {
                         panic!("expected table instruction");
                     }
@@ -2651,7 +2651,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         data_index,
                     } = &data
                     {
-                        format!("memory.init {} 0", data_index)
+                        format!("memory.init {data_index} 0")
                     } else {
                         panic!("expected data instruction");
                     }
@@ -2693,7 +2693,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         data_index,
                     } = &data
                     {
-                        format!("data.drop {}", data_index)
+                        format!("data.drop {data_index}")
                     } else {
                         panic!("expected data instruction");
                     }
@@ -2785,7 +2785,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::I32 { value } = &data {
-                        format!("i32.const {}", value)
+                        format!("i32.const {value}")
                     } else {
                         panic!("expected i32 instruction");
                     }
@@ -2815,7 +2815,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, _| {
                     if let InstructionData::I64 { value } = &data {
-                        format!("i64.const {}", value)
+                        format!("i64.const {value}")
                     } else {
                         panic!("expected i64 instruction");
                     }
@@ -3450,11 +3450,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     {
                         format!(
                             "v128.const {}",
-                            value
-                                .iter()
-                                .map(|x| format!("{}", x))
-                                .collect::<Vec<String>>()
-                                .join(" ")
+                            value.iter().map(|x| format!("{x}")).collect::<Vec<String>>().join(" ")
                         )
                     } else {
                         panic!("expected v128 instruction");
@@ -3501,7 +3497,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                             "i8x16.shuffle {}",
                             lane_indices
                                 .iter()
-                                .map(|x| format!("{}", x))
+                                .map(|x| format!("{x}"))
                                 .collect::<Vec<String>>()
                                 .join(" ")
                         )
@@ -3545,7 +3541,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i8x16.extract_lane_s {}", lane_index)
+                        format!("i8x16.extract_lane_s {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3586,7 +3582,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i8x16.extract_lane_u {}", lane_index)
+                        format!("i8x16.extract_lane_u {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3627,7 +3623,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i8x16.replace_lane {}", lane_index)
+                        format!("i8x16.replace_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3668,7 +3664,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i16x8.extract_lane_s {}", lane_index)
+                        format!("i16x8.extract_lane_s {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3709,7 +3705,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i16x8.extract_lane_u {}", lane_index)
+                        format!("i16x8.extract_lane_u {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3750,7 +3746,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i16x8.replace_lane {}", lane_index)
+                        format!("i16x8.replace_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3791,7 +3787,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i32x4.extract_lane {}", lane_index)
+                        format!("i32x4.extract_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3832,7 +3828,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i32x4.replace_lane {}", lane_index)
+                        format!("i32x4.replace_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3873,7 +3869,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i64x2.extract_lane {}", lane_index)
+                        format!("i64x2.extract_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3914,7 +3910,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("i64x2.replace_lane {}", lane_index)
+                        format!("i64x2.replace_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3955,7 +3951,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("f32x4.extract_lane {}", lane_index)
+                        format!("f32x4.extract_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -3996,7 +3992,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("f32x4.replace_lane {}", lane_index)
+                        format!("f32x4.replace_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4037,7 +4033,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("f64x2.extract_lane {}", lane_index)
+                        format!("f64x2.extract_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4078,7 +4074,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         lane_index,
                     } = &data
                     {
-                        format!("f64x2.replace_lane {}", lane_index)
+                        format!("f64x2.replace_lane {lane_index}")
                     } else {
                         panic!("expected v128 lane instruction");
                     }
@@ -4696,8 +4692,8 @@ impl fmt::Display for BlockType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             BlockType::Empty => write!(f, ""),
-            BlockType::Type(value_type) => write!(f, "{}", value_type),
-            BlockType::TypeIndex(type_index) => write!(f, "type {}", type_index),
+            BlockType::Type(value_type) => write!(f, "{value_type}"),
+            BlockType::TypeIndex(type_index) => write!(f, "type {type_index}"),
         }
     }
 }

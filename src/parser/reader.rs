@@ -944,7 +944,7 @@ fn test_read_f64() {
 
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 0, 0]), 0.0);
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 0, 128]), 0.0); // -0
-    assert_eq_with_diag(read(vec![24, 45, 68, 84, 251, 33, 25, 64]), 6.283_185_307_179_586);
+    assert_eq_with_diag(read(vec![24, 45, 68, 84, 251, 33, 25, 64]), std::f64::consts::TAU);
     assert_eq_with_diag(read(vec![1, 0, 0, 0, 0, 0, 0, 0]), 4.94066e-324);
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 16, 0]), 2.2250738585072012e-308);
     assert_eq_with_diag(
@@ -1044,9 +1044,7 @@ fn assert_err_with_diag<T: std::fmt::Debug + std::cmp::PartialEq>(actual: std::i
         Err(e) => assert_eq!(
             e.to_string(),
             expected_err,
-            "Actual error: {}, Expected error: {}",
-            e,
-            expected_err
+            "Actual error: {e}, Expected error: {expected_err}"
         ),
     }
 }

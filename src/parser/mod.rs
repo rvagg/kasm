@@ -62,7 +62,7 @@ pub fn parse(
         if actual_len != sec_len as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("section length mismatch, expected {}, got {}", sec_len, actual_len),
+                format!("section length mismatch, expected {sec_len}, got {actual_len}"),
             )
             .into());
         }
@@ -297,10 +297,7 @@ impl module::Import {
                 .iter()
                 .find(|e| e.name == name)
                 .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("unknown import: {}::{}", module, name),
-                    )
+                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown import: {module}::{name}"))
                 })?;
 
             // Type compatibility validation happens at instantiation time, not parse time
@@ -383,7 +380,7 @@ fn read_section_export(
         if exports.exports.iter().any(|e| e.name == name) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("duplicate export name: {}", name),
+                format!("duplicate export name: {name}"),
             ));
         }
         let typ = bytes.read_byte()?;
@@ -394,7 +391,7 @@ fn read_section_export(
                 if idx >= (functions.functions.len() + imports.function_count()) as u32 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unknown function index for export {}", idx),
+                        format!("unknown function index for export {idx}"),
                     ));
                 }
             }
@@ -402,7 +399,7 @@ fn read_section_export(
                 if idx >= (globals.globals.len() + imports.global_count()) as u32 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unknown global index for export {}", idx),
+                        format!("unknown global index for export {idx}"),
                     ));
                 }
             }
@@ -410,7 +407,7 @@ fn read_section_export(
                 if idx >= (tables.tables.len() + imports.table_count()) as u32 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unknown table index for export {}", idx),
+                        format!("unknown table index for export {idx}"),
                     ));
                 }
             }
@@ -420,7 +417,7 @@ fn read_section_export(
                 if idx >= total_memories {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unknown memory index for export {}", idx),
+                        format!("unknown memory index for export {idx}"),
                     ));
                 }
             }
@@ -517,7 +514,7 @@ impl module::Data {
             }
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unknown data type: 0x{:02x}", typ),
+                format!("unknown data type: 0x{typ:02x}"),
             ))?,
         };
 
@@ -528,7 +525,7 @@ impl module::Data {
         {
             if memory_index != 0 || imports.memory_count() as u32 + memory_count == 0 {
                 return Err(
-                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown memory {}", memory_index)).into(),
+                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown memory {memory_index}")).into(),
                 );
             }
             // we expect a constant and an End
@@ -609,7 +606,7 @@ impl module::ExternalKind {
                 if typeidx >= type_count {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unknown type index {} for imported function", typeidx),
+                        format!("unknown type index {typeidx} for imported function"),
                     )
                     .into());
                 }
@@ -638,10 +635,7 @@ impl module::GlobalType {
         let mutable = match bytes.read_byte()? {
             0x00 => false,
             0x01 => true,
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid global type mutable flag",
-            ))?,
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "malformed mutability"))?,
         };
         Ok(module::GlobalType { value_type, mutable })
     }
@@ -678,7 +672,7 @@ impl module::RefType {
         match byte {
             0x70 => Ok(module::RefType::FuncRef),
             0x6f => Ok(module::RefType::ExternRef),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown ref type: 0x{:02x}", byte)).into()),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown ref type: 0x{byte:02x}")).into()),
         }
     }
 }
@@ -739,7 +733,7 @@ impl module::Element {
                 0x00 => Ok(module::RefType::FuncRef),
                 _ => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("unknown element element kind: 0x{:02x}", byte),
+                    format!("unknown element element kind: 0x{byte:02x}"),
                 )),
             }
         };
@@ -890,11 +884,9 @@ impl module::Element {
                 }
             }
             _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unknown element type: 0x{:02x}", typ),
-                )
-                .into());
+                return Err(
+                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown element type: 0x{typ:02x}")).into(),
+                );
             }
         };
         if let module::ElementMode::Active { table_index, .. } = element.mode {
@@ -903,9 +895,7 @@ impl module::Element {
             } else if (table_index - imports.table_count() as u32) < table.tables.len() as u32 {
                 table.tables.get((table_index - imports.table_count() as u32) as usize)
             } else {
-                return Err(
-                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown table {}", table_index)).into(),
-                );
+                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown table {table_index}")).into());
             };
             if let Some(ref_type) = ref_type {
                 if element.ref_type != ref_type.ref_type {

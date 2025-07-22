@@ -51,6 +51,9 @@ pub enum ValidationError {
 
     #[error("alignment must not be larger than natural")]
     BadAlignment,
+
+    #[error("global is immutable")]
+    GlobalIsImmutable,
 }
 
 pub trait Validator {
@@ -583,6 +586,9 @@ impl Validator for CodeValidator<'_> {
             GlobalSet => {
                 if let InstructionData::Global { global_index: gi } = *inst.get_data() {
                     let global = *self.global(gi)?;
+                    if !global.mutable {
+                        return Err(ValidationError::GlobalIsImmutable);
+                    }
                     self.pop_expected(Val(global.value_type))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
