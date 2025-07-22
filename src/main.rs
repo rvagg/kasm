@@ -20,20 +20,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.contains(&"--dump-header".to_string()) {
-        println!(
-            "{}",
-            unit.to_string(parser::module::ParsedUnitFormat::Header)
-        );
+        println!("{}", unit.to_string(parser::module::ParsedUnitFormat::Header));
     } else if args.contains(&"--dump-details".to_string()) {
-        println!(
-            "{}",
-            unit.to_string(parser::module::ParsedUnitFormat::Details)
-        );
+        println!("{}", unit.to_string(parser::module::ParsedUnitFormat::Details));
     } else if args.contains(&"--dump-disassemble".to_string()) {
-        println!(
-            "{}",
-            unit.to_string(parser::module::ParsedUnitFormat::Disassemble)
-        );
+        println!("{}", unit.to_string(parser::module::ParsedUnitFormat::Disassemble));
     }
 
     Ok(())

@@ -28,9 +28,7 @@ mod tests {
             D: Deserializer<'de>,
         {
             let s: String = String::deserialize(deserializer)?;
-            let decoded = general_purpose::STANDARD
-                .decode(s)
-                .map_err(de::Error::custom)?;
+            let decoded = general_purpose::STANDARD.decode(s).map_err(de::Error::custom)?;
             Ok(Base64DecodedBytes(decoded))
         }
     }
@@ -166,8 +164,7 @@ mod tests {
         println!("testing file: {}", path.display());
 
         let file = path.to_string_lossy().to_string();
-        let json_string =
-            fs::read_to_string(&file).unwrap_or_else(|_| panic!("couldn't read file: {}", file));
+        let json_string = fs::read_to_string(&file).unwrap_or_else(|_| panic!("couldn't read file: {}", file));
         let test_data: TestData = serde_json::from_str(&json_string).unwrap();
 
         let mut last_module: Option<module::Module> = None;
@@ -179,10 +176,7 @@ mod tests {
             let code = &test_data.code[index];
             match command {
                 Command::Module(cmd) => {
-                    println!(
-                        "(TODO) Module: line = {}, filename = {}",
-                        cmd.line, cmd.filename
-                    );
+                    println!("(TODO) Module: line = {}, filename = {}", cmd.line, cmd.filename);
                     let bin = &test_data.bin[&cmd.filename].0;
                     let parsed = kasm::parser::parse(
                         &module_registry,
@@ -202,9 +196,9 @@ mod tests {
                 }
                 Command::AssertUninstantiable(cmd) => {
                     println!(
-                            "(TODO) AssertUninstantiable: line = {}, filename = {}, text = {}, module type = {}",
-                            cmd.line, cmd.filename, cmd.text, cmd.module_type
-                        );
+                        "(TODO) AssertUninstantiable: line = {}, filename = {}, text = {}, module type = {}",
+                        cmd.line, cmd.filename, cmd.text, cmd.module_type
+                    );
                 }
                 Command::RegisterCommand(cmd) => {
                     println!(
@@ -226,10 +220,7 @@ mod tests {
                 Command::AssertInvalidCommand(cmd) => {
                     // Skip assert_unlinkable tests since we only test parsing, not instantiation
                     if cmd.r#type == "assert_unlinkable" {
-                        println!(
-                            "Skipping assert_unlinkable test: {} at line {}",
-                            cmd.filename, cmd.line
-                        );
+                        println!("Skipping assert_unlinkable test: {} at line {}", cmd.filename, cmd.line);
                         continue;
                     }
 
@@ -246,10 +237,7 @@ mod tests {
                             code: &test_data.code[index],
                         },
                         Some("wat") => {
-                            println!(
-                                "Skipping AssertInvalidCommand with .wat file: {}",
-                                cmd.filename
-                            );
+                            println!("Skipping AssertInvalidCommand with .wat file: {}", cmd.filename);
                             continue;
                         }
                         _ => panic!("Unexpected file extension in filename: {}", cmd.filename),
@@ -263,11 +251,7 @@ mod tests {
                         .join("");
                     println!(
                         "AssertInvalid: line = {}, filename = {}, text = {}, wasm = {}, wat = {}",
-                        icab.command.line,
-                        icab.command.filename,
-                        icab.command.text,
-                        code_hex,
-                        icab.code
+                        icab.command.line, icab.command.filename, icab.command.text, code_hex, icab.code
                     );
                     // TODO: setup spectest host to import: https://github.com/WebAssembly/spec/blob/main/interpreter/host/spectest.ml
                     match kasm::parser::parse(&module_registry,
@@ -295,7 +279,13 @@ mod tests {
 
         // Compare the parsed module to the expected dump
 
-        fn compare_format(prefix: &str, dump_field: &str, parsed: &module::Module, filename: &str, format: module::ParsedUnitFormat) {
+        fn compare_format(
+            prefix: &str,
+            dump_field: &str,
+            parsed: &module::Module,
+            filename: &str,
+            format: module::ParsedUnitFormat,
+        ) {
             let parsed_string = parsed.to_string(format);
             println!("{}:\n{}", prefix, parsed_string);
 
@@ -309,12 +299,30 @@ mod tests {
             println!("testing to_*_string for file: {}", filename);
 
             let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
-            let parsed = kasm::parser::parse(&module_registry, filename, bytes)
-                .expect(&format!("failed to parse {}", filename));
+            let parsed =
+                kasm::parser::parse(&module_registry, filename, bytes).expect(&format!("failed to parse {}", filename));
 
-            compare_format("Sections", &dump.header, &parsed, filename, module::ParsedUnitFormat::Header);
-            compare_format("Section Details", &dump.details, &parsed, filename, module::ParsedUnitFormat::Details);
-            compare_format("Code Disassembly", &dump.disassemble, &parsed, filename, module::ParsedUnitFormat::Disassemble);
+            compare_format(
+                "Sections",
+                &dump.header,
+                &parsed,
+                filename,
+                module::ParsedUnitFormat::Header,
+            );
+            compare_format(
+                "Section Details",
+                &dump.details,
+                &parsed,
+                filename,
+                module::ParsedUnitFormat::Details,
+            );
+            compare_format(
+                "Code Disassembly",
+                &dump.disassemble,
+                &parsed,
+                filename,
+                module::ParsedUnitFormat::Disassemble,
+            );
         }
     }
 
@@ -411,11 +419,7 @@ mod tests {
         module_registry.insert("spectest".to_string(), spectest);
     }
 
-    fn insert_global(
-        module: &mut module::Module,
-        name: String,
-        value_type: kasm::parser::module::ValueType,
-    ) {
+    fn insert_global(module: &mut module::Module, name: String, value_type: kasm::parser::module::ValueType) {
         let gtype = kasm::parser::module::Global {
             global_type: kasm::parser::module::GlobalType {
                 value_type,
@@ -454,17 +458,15 @@ mod tests {
                 (module.types.types.len() - 1) as u32
             }
         };
-        module.functions.functions.push(kasm::parser::module::Function {
-            ftype_index: typeidx,
-        });
+        module
+            .functions
+            .functions
+            .push(kasm::parser::module::Function { ftype_index: typeidx });
         // Add corresponding empty code section for the function
         module.code.code.push(kasm::parser::module::FunctionBody {
             locals: kasm::parser::module::Locals::new(vec![]),
             instructions: vec![],
-            position: kasm::parser::module::SectionPosition {
-                start: 0,
-                end: 0,
-            },
+            position: kasm::parser::module::SectionPosition { start: 0, end: 0 },
         });
         let funcidx = (module.functions.functions.len() - 1) as u32;
         module.exports.exports.push(kasm::parser::module::Export {

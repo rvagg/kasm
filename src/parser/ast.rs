@@ -505,12 +505,7 @@ pub struct Instruction {
 }
 
 impl Instruction {
-    pub fn new(
-        typ: InstructionType,
-        data: InstructionData,
-        byte_offset: usize,
-        byte_length: usize,
-    ) -> Self {
+    pub fn new(typ: InstructionType, data: InstructionData, byte_offset: usize, byte_length: usize) -> Self {
         Self {
             typ,
             data,
@@ -646,9 +641,8 @@ pub enum InstructionData {
 
 type MemArg = (u32, u32); // (align, offset)
 
-type ParseBytesFn = Arc<
-    dyn Fn(&mut super::reader::Reader, Vec<u8>) -> Result<InstructionData, io::Error> + Send + Sync,
->;
+type ParseBytesFn =
+    Arc<dyn Fn(&mut super::reader::Reader, Vec<u8>) -> Result<InstructionData, io::Error> + Send + Sync>;
 type EmitBytesFn = Arc<dyn Fn(&InstructionData) -> Vec<u8> + Send + Sync>;
 type EmitStrFn = Arc<dyn Fn(&InstructionData, &Module) -> String + Send + Sync>;
 
@@ -670,29 +664,20 @@ impl InstructionCoding {
             opcode,
             subopcode: 0,
             name,
-            parse_bytes: Arc::new(move |_, subopcode_bytes| {
-                Ok(InstructionData::Simple { subopcode_bytes })
-            }),
+            parse_bytes: Arc::new(move |_, subopcode_bytes| Ok(InstructionData::Simple { subopcode_bytes })),
             // default should emit the opcode byte; and if opcode is 0xfc or 0xfd, emit the subopcode byte too
             emit_bytes: Arc::new(move |_| vec![opcode]),
             emit_str: Arc::new(move |_, _| name.to_string()),
         }
     }
 
-    pub fn new_simple_sub(
-        typ: InstructionType,
-        opcode: u8,
-        subopcode: u32,
-        name: &'static str,
-    ) -> Self {
+    pub fn new_simple_sub(typ: InstructionType, opcode: u8, subopcode: u32, name: &'static str) -> Self {
         Self {
             typ,
             opcode,
             subopcode,
             name,
-            parse_bytes: Arc::new(move |_, subopcode_bytes| {
-                Ok(InstructionData::Simple { subopcode_bytes })
-            }),
+            parse_bytes: Arc::new(move |_, subopcode_bytes| Ok(InstructionData::Simple { subopcode_bytes })),
             // default should emit the opcode byte; and if opcode is 0xfc or 0xfd, emit the subopcode byte too
             emit_bytes: Arc::new(move |data| {
                 let mut bytes = vec![opcode];
@@ -710,12 +695,7 @@ impl InstructionCoding {
         }
     }
 
-    pub fn new_with_parse(
-        typ: InstructionType,
-        opcode: u8,
-        name: &'static str,
-        parse_bytes: ParseBytesFn,
-    ) -> Self {
+    pub fn new_with_parse(typ: InstructionType, opcode: u8, name: &'static str, parse_bytes: ParseBytesFn) -> Self {
         Self {
             typ,
             opcode,
@@ -747,21 +727,14 @@ impl InstructionCoding {
         }
     }
 
-    pub fn new_meminstr(
-        typ: InstructionType,
-        opcode: u8,
-        subopcode: u32,
-        name: &'static str,
-    ) -> Self {
+    pub fn new_meminstr(typ: InstructionType, opcode: u8, subopcode: u32, name: &'static str) -> Self {
         Self {
             typ,
             opcode,
             subopcode,
             name,
             parse_bytes: Arc::new(
-                |bytes: &mut super::reader::Reader,
-                 subopcode_bytes: Vec<u8>|
-                 -> Result<InstructionData, io::Error> {
+                |bytes: &mut super::reader::Reader, subopcode_bytes: Vec<u8>| -> Result<InstructionData, io::Error> {
                     Ok(InstructionData::Memory {
                         subopcode_bytes,
                         memarg: (bytes.read_vu32()?, bytes.read_vu32()?),
@@ -825,8 +798,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                 match blocktype {
                                     BlockType::Empty => String::from(""),
                                     BlockType::Type(value_type) => format!(" {}", value_type),
-                                    BlockType::TypeIndex(type_index) =>
-                                        format!(" type[{}]", type_index),
+                                    BlockType::TypeIndex(type_index) => format!(" type[{}]", type_index),
                                 }
                             )
                         }
@@ -981,11 +953,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0x0e];
-                    if let InstructionData::TableLabelled {
-                        labels,
-                        label_index,
-                    } = &data
-                    {
+                    if let InstructionData::TableLabelled { labels, label_index } = &data {
                         let mut labels_bytes = emit_vu32vec(labels);
                         bytes.append(&mut labels_bytes);
                         let mut label_bytes = reader::emit_vu32(*label_index);
@@ -996,11 +964,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     bytes
                 }),
                 Arc::new(|data, _| {
-                    if let InstructionData::TableLabelled {
-                        labels,
-                        label_index,
-                    } = &data
-                    {
+                    if let InstructionData::TableLabelled { labels, label_index } = &data {
                         let mut labels_str = String::new();
                         for label in labels {
                             labels_str.push_str(&format!(" {}", label));
@@ -1045,9 +1009,10 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                                     None => "".to_string(),
                                 }
                             } else {
-                                match module.exports.get_function(
-                                    *function_index - module.imports.function_count() as u32,
-                                ) {
+                                match module
+                                    .exports
+                                    .get_function(*function_index - module.imports.function_count() as u32)
+                                {
                                     Some(export) => format!(" <{}>", export.name),
                                     None => "".to_string(),
                                 }
@@ -1116,9 +1081,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::RefType {
                             ref_type: super::module::ValueType::decode(bytes.read_byte()?)
-                                .map_err(|e| {
-                                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-                                })?,
+                                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
                         })
                     },
                 ),
@@ -1266,7 +1229,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
                 Arc::new(|data, unit| {
                     if let InstructionData::Global { global_index } = &data {
-                        let name = unit.get_global_name(*global_index)
+                        let name = unit
+                            .get_global_name(*global_index)
                             .map(|n| format!(" <{}>", n))
                             .unwrap_or_default();
                         format!("global.get {}{}", global_index, name)
@@ -2610,10 +2574,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
                         let memidx = bytes.read_byte()?;
                         if memidx != 0x0 {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "zero byte expected",
-                            ));
+                            return Err(io::Error::new(io::ErrorKind::InvalidData, "zero byte expected"));
                         }
                         Ok(InstructionData::Simple {
                             subopcode_bytes: vec![memidx],
@@ -2639,10 +2600,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
                         if bytes.read_byte()? != 0x0 {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "zero byte expected",
-                            ));
+                            return Err(io::Error::new(io::ErrorKind::InvalidData, "zero byte expected"));
                         }
                         Ok(InstructionData::Simple {
                             subopcode_bytes: Vec::new(),
@@ -2663,10 +2621,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                      -> Result<InstructionData, io::Error> {
                         let data_index = bytes.read_vu32()?;
                         if bytes.read_byte()? != 0x0 {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "zero byte expected",
-                            ));
+                            return Err(io::Error::new(io::ErrorKind::InvalidData, "zero byte expected"));
                         }
                         Ok(InstructionData::Data {
                             subopcode_bytes,
@@ -3035,195 +2990,47 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple(InstructionType::I64TruncF32U, 0xaf, "i64.trunc_f32_u"),
             InstructionCoding::new_simple(InstructionType::I64TruncF64S, 0xb0, "i64.trunc_f64_s"),
             InstructionCoding::new_simple(InstructionType::I64TruncF64U, 0xb1, "i64.trunc_f64_u"),
-            InstructionCoding::new_simple(
-                InstructionType::F32ConvertI32S,
-                0xb2,
-                "f32.convert_i32_s",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F32ConvertI32U,
-                0xb3,
-                "f32.convert_i32_u",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F32ConvertI64S,
-                0xb4,
-                "f32.convert_i64_s",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F32ConvertI64U,
-                0xb5,
-                "f32.convert_i64_u",
-            ),
+            InstructionCoding::new_simple(InstructionType::F32ConvertI32S, 0xb2, "f32.convert_i32_s"),
+            InstructionCoding::new_simple(InstructionType::F32ConvertI32U, 0xb3, "f32.convert_i32_u"),
+            InstructionCoding::new_simple(InstructionType::F32ConvertI64S, 0xb4, "f32.convert_i64_s"),
+            InstructionCoding::new_simple(InstructionType::F32ConvertI64U, 0xb5, "f32.convert_i64_u"),
             InstructionCoding::new_simple(InstructionType::F32DemoteF64, 0xb6, "f32.demote_f64"),
-            InstructionCoding::new_simple(
-                InstructionType::F64ConvertI32S,
-                0xb7,
-                "f64.convert_i32_s",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F64ConvertI32U,
-                0xb8,
-                "f64.convert_i32_u",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F64ConvertI64S,
-                0xb9,
-                "f64.convert_i64_s",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F64ConvertI64U,
-                0xba,
-                "f64.convert_i64_u",
-            ),
+            InstructionCoding::new_simple(InstructionType::F64ConvertI32S, 0xb7, "f64.convert_i32_s"),
+            InstructionCoding::new_simple(InstructionType::F64ConvertI32U, 0xb8, "f64.convert_i32_u"),
+            InstructionCoding::new_simple(InstructionType::F64ConvertI64S, 0xb9, "f64.convert_i64_s"),
+            InstructionCoding::new_simple(InstructionType::F64ConvertI64U, 0xba, "f64.convert_i64_u"),
             InstructionCoding::new_simple(InstructionType::F64PromoteF32, 0xbb, "f64.promote_f32"),
-            InstructionCoding::new_simple(
-                InstructionType::I32ReinterpretF32,
-                0xbc,
-                "i32.reinterpret_f32",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::I64ReinterpretF64,
-                0xbd,
-                "i64.reinterpret_f64",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F32ReinterpretI32,
-                0xbe,
-                "f32.reinterpret_i32",
-            ),
-            InstructionCoding::new_simple(
-                InstructionType::F64ReinterpretI64,
-                0xbf,
-                "f64.reinterpret_i64",
-            ),
+            InstructionCoding::new_simple(InstructionType::I32ReinterpretF32, 0xbc, "i32.reinterpret_f32"),
+            InstructionCoding::new_simple(InstructionType::I64ReinterpretF64, 0xbd, "i64.reinterpret_f64"),
+            InstructionCoding::new_simple(InstructionType::F32ReinterpretI32, 0xbe, "f32.reinterpret_i32"),
+            InstructionCoding::new_simple(InstructionType::F64ReinterpretI64, 0xbf, "f64.reinterpret_i64"),
             InstructionCoding::new_simple(InstructionType::I32Extend8S, 0xc0, "i32.extend8_s"),
             InstructionCoding::new_simple(InstructionType::I32Extend16S, 0xc1, "i32.extend16_s"),
             InstructionCoding::new_simple(InstructionType::I64Extend8S, 0xc2, "i64.extend8_s"),
             InstructionCoding::new_simple(InstructionType::I64Extend16S, 0xc3, "i64.extend16_s"),
             InstructionCoding::new_simple(InstructionType::I64Extend32S, 0xc4, "i64.extend32_s"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I32TruncSatF32S,
-                0xfc,
-                0,
-                "i32.trunc_sat_f32_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I32TruncSatF32U,
-                0xfc,
-                1,
-                "i32.trunc_sat_f32_u",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I32TruncSatF64S,
-                0xfc,
-                2,
-                "i32.trunc_sat_f64_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I32TruncSatF64U,
-                0xfc,
-                3,
-                "i32.trunc_sat_f64_u",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I64TruncSatF32S,
-                0xfc,
-                4,
-                "i64.trunc_sat_f32_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I64TruncSatF32U,
-                0xfc,
-                5,
-                "i64.trunc_sat_f32_u",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I64TruncSatF64S,
-                0xfc,
-                6,
-                "i64.trunc_sat_f64_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I64TruncSatF64U,
-                0xfc,
-                7,
-                "i64.trunc_sat_f64_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I32TruncSatF32S, 0xfc, 0, "i32.trunc_sat_f32_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I32TruncSatF32U, 0xfc, 1, "i32.trunc_sat_f32_u"),
+            InstructionCoding::new_simple_sub(InstructionType::I32TruncSatF64S, 0xfc, 2, "i32.trunc_sat_f64_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I32TruncSatF64U, 0xfc, 3, "i32.trunc_sat_f64_u"),
+            InstructionCoding::new_simple_sub(InstructionType::I64TruncSatF32S, 0xfc, 4, "i64.trunc_sat_f32_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I64TruncSatF32U, 0xfc, 5, "i64.trunc_sat_f32_u"),
+            InstructionCoding::new_simple_sub(InstructionType::I64TruncSatF64S, 0xfc, 6, "i64.trunc_sat_f64_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I64TruncSatF64U, 0xfc, 7, "i64.trunc_sat_f64_u"),
             // Vector instructions¶ ---------------------------------meminstr-
             InstructionCoding::new_meminstr(InstructionType::V128Load, 0xfd, 0, "v128.load"),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load8x8S,
-                0xfd,
-                1,
-                "v128.load8x8_s",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load8x8U,
-                0xfd,
-                2,
-                "v128.load8x8_u",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load16x4S,
-                0xfd,
-                3,
-                "v128.load16x4_s",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load16x4U,
-                0xfd,
-                4,
-                "v128.load16x4_u",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load32x2S,
-                0xfd,
-                5,
-                "v128.load32x2_s",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load32x2U,
-                0xfd,
-                6,
-                "v128.load32x2_u",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load8Splat,
-                0xfd,
-                7,
-                "v128.load8_splat",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load16Splat,
-                0xfd,
-                8,
-                "v128.load16_splat",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load32Splat,
-                0xfd,
-                9,
-                "v128.load32_splat",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load64Splat,
-                0xfd,
-                10,
-                "v128.load64_splat",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load32Zero,
-                0xfd,
-                92,
-                "v128.load32zero",
-            ),
-            InstructionCoding::new_meminstr(
-                InstructionType::V128Load64Zero,
-                0xfd,
-                93,
-                "v128.load64zero",
-            ),
+            InstructionCoding::new_meminstr(InstructionType::V128Load8x8S, 0xfd, 1, "v128.load8x8_s"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load8x8U, 0xfd, 2, "v128.load8x8_u"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load16x4S, 0xfd, 3, "v128.load16x4_s"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load16x4U, 0xfd, 4, "v128.load16x4_u"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load32x2S, 0xfd, 5, "v128.load32x2_s"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load32x2U, 0xfd, 6, "v128.load32x2_u"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load8Splat, 0xfd, 7, "v128.load8_splat"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load16Splat, 0xfd, 8, "v128.load16_splat"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load32Splat, 0xfd, 9, "v128.load32_splat"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load64Splat, 0xfd, 10, "v128.load64_splat"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load32Zero, 0xfd, 92, "v128.load32zero"),
+            InstructionCoding::new_meminstr(InstructionType::V128Load64Zero, 0xfd, 93, "v128.load64zero"),
             InstructionCoding::new_meminstr(InstructionType::V128Store, 0xfd, 11, "v128.store"),
             InstructionCoding::new_with_options(
                 InstructionType::V128Load8Lane,
@@ -3626,11 +3433,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 ),
                 Arc::new(|data| {
                     let mut bytes = vec![0xfd];
-                    if let InstructionData::V128 {
-                        subopcode_bytes,
-                        value,
-                    } = &data
-                    {
+                    if let InstructionData::V128 { subopcode_bytes, value } = &data {
                         bytes.append(&mut subopcode_bytes.clone());
                         let mut value_bytes = reader::emit_v128(*value);
                         bytes.append(&mut value_bytes);
@@ -4281,12 +4084,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                     }
                 }),
             ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16Swizzle,
-                0xfd,
-                14,
-                "i8x16.swizzle",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16Swizzle, 0xfd, 14, "i8x16.swizzle"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16Splat, 0xfd, 15, "i8x16.splat"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8Splat, 0xfd, 16, "i16x8.splat"),
             InstructionCoding::new_simple_sub(InstructionType::I32x4Splat, 0xfd, 17, "i32x4.splat"),
@@ -4346,89 +4144,29 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple_sub(InstructionType::V128AndNot, 0xfd, 79, "v128.andnot"),
             InstructionCoding::new_simple_sub(InstructionType::V128Or, 0xfd, 80, "v128.or"),
             InstructionCoding::new_simple_sub(InstructionType::V128Xor, 0xfd, 81, "v128.xor"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::V128Bitselect,
-                0xfd,
-                82,
-                "v128.bitselect",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::V128AnyTrue,
-                0xfd,
-                83,
-                "v128.anytrue",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::V128Bitselect, 0xfd, 82, "v128.bitselect"),
+            InstructionCoding::new_simple_sub(InstructionType::V128AnyTrue, 0xfd, 83, "v128.anytrue"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16Abs, 0xfd, 96, "i8x16.abs"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16Neg, 0xfd, 97, "i8x16.neg"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16Popcnt,
-                0xfd,
-                98,
-                "i8x16.popcnt",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16AllTrue,
-                0xfd,
-                99,
-                "i8x16.all_true",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16Bitmask,
-                0xfd,
-                100,
-                "i8x16.bitmask",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16NarrowI16x8S,
-                0xfd,
-                101,
-                "i8x16.narrow_i16x8_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16NarrowI16x8U,
-                0xfd,
-                102,
-                "i8x16.narrow_i16x8_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16Popcnt, 0xfd, 98, "i8x16.popcnt"),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16AllTrue, 0xfd, 99, "i8x16.all_true"),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16Bitmask, 0xfd, 100, "i8x16.bitmask"),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16NarrowI16x8S, 0xfd, 101, "i8x16.narrow_i16x8_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16NarrowI16x8U, 0xfd, 102, "i8x16.narrow_i16x8_u"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16Shl, 0xfd, 107, "i8x16.shl"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16ShrS, 0xfd, 108, "i8x16.shr_s"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16ShrU, 0xfd, 109, "i8x16.shr_u"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16Add, 0xfd, 110, "i8x16.add"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16AddSaturateS,
-                0xfd,
-                111,
-                "i8x16.add_sat_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16AddSaturateU,
-                0xfd,
-                112,
-                "i8x16.add_sat_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16AddSaturateS, 0xfd, 111, "i8x16.add_sat_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16AddSaturateU, 0xfd, 112, "i8x16.add_sat_u"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16Sub, 0xfd, 113, "i8x16.sub"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16SubSaturateS,
-                0xfd,
-                114,
-                "i8x16.sub_sat_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16SubSaturateU,
-                0xfd,
-                115,
-                "i8x16.sub_sat_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16SubSaturateS, 0xfd, 114, "i8x16.sub_sat_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16SubSaturateU, 0xfd, 115, "i8x16.sub_sat_u"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16MinS, 0xfd, 118, "i8x16.min_s"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16MinU, 0xfd, 119, "i8x16.min_u"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16MaxS, 0xfd, 120, "i8x16.max_s"),
             InstructionCoding::new_simple_sub(InstructionType::I8x16MaxU, 0xfd, 121, "i8x16.max_u"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I8x16AvgrU,
-                0xfd,
-                123,
-                "i8x16.avgr_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I8x16AvgrU, 0xfd, 123, "i8x16.avgr_u"),
             InstructionCoding::new_simple_sub(
                 InstructionType::I16x8ExtAddPairwiseI8x16S,
                 0xfd,
@@ -4443,36 +4181,11 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             ),
             InstructionCoding::new_simple_sub(InstructionType::I16x8Abs, 0xfd, 128, "i16x8.abs"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8Neg, 0xfd, 129, "i16x8.neg"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8Q15MulrSatS,
-                0xfd,
-                130,
-                "i16x8.q15mulr_sat_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8AllTrue,
-                0xfd,
-                131,
-                "i16x8.all_true",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8Bitmask,
-                0xfd,
-                132,
-                "i16x8.bitmask",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8NarrowI32x4S,
-                0xfd,
-                133,
-                "i16x8.narrow_i32x4_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8NarrowI32x4U,
-                0xfd,
-                134,
-                "i16x8.narrow_i32x4_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8Q15MulrSatS, 0xfd, 130, "i16x8.q15mulr_sat_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8AllTrue, 0xfd, 131, "i16x8.all_true"),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8Bitmask, 0xfd, 132, "i16x8.bitmask"),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8NarrowI32x4S, 0xfd, 133, "i16x8.narrow_i32x4_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8NarrowI32x4U, 0xfd, 134, "i16x8.narrow_i32x4_u"),
             InstructionCoding::new_simple_sub(
                 InstructionType::I16x8ExtendLowI8x16S,
                 0xfd,
@@ -4501,42 +4214,17 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple_sub(InstructionType::I16x8ShrS, 0xfd, 140, "i16x8.shr_s"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8ShrU, 0xfd, 141, "i16x8.shr_u"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8Add, 0xfd, 142, "i16x8.add"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8AddSaturateS,
-                0xfd,
-                143,
-                "i16x8.add_sat_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8AddSaturateU,
-                0xfd,
-                144,
-                "i16x8.add_sat_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8AddSaturateS, 0xfd, 143, "i16x8.add_sat_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8AddSaturateU, 0xfd, 144, "i16x8.add_sat_u"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8Sub, 0xfd, 145, "i16x8.sub"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8SubSaturateS,
-                0xfd,
-                146,
-                "i16x8.sub_sat_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8SubSaturateU,
-                0xfd,
-                147,
-                "i16x8.sub_sat_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8SubSaturateS, 0xfd, 146, "i16x8.sub_sat_s"),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8SubSaturateU, 0xfd, 147, "i16x8.sub_sat_u"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8Mul, 0xfd, 149, "i16x8.mul"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8MinS, 0xfd, 150, "i16x8.min_s"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8MinU, 0xfd, 151, "i16x8.min_u"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8MaxS, 0xfd, 152, "i16x8.max_s"),
             InstructionCoding::new_simple_sub(InstructionType::I16x8MaxU, 0xfd, 153, "i16x8.max_u"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I16x8AvgrU,
-                0xfd,
-                155,
-                "i16x8.avgr_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I16x8AvgrU, 0xfd, 155, "i16x8.avgr_u"),
             InstructionCoding::new_simple_sub(
                 InstructionType::I16x8ExtMulLowI8x16S,
                 0xfd,
@@ -4575,18 +4263,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             ),
             InstructionCoding::new_simple_sub(InstructionType::I32x4Abs, 0xfd, 160, "i32x4.abs"),
             InstructionCoding::new_simple_sub(InstructionType::I32x4Neg, 0xfd, 161, "i32x4.neg"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I32x4AllTrue,
-                0xfd,
-                163,
-                "i32x4.all_true",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I32x4Bitmask,
-                0xfd,
-                164,
-                "i32x4.bitmask",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I32x4AllTrue, 0xfd, 163, "i32x4.all_true"),
+            InstructionCoding::new_simple_sub(InstructionType::I32x4Bitmask, 0xfd, 164, "i32x4.bitmask"),
             InstructionCoding::new_simple_sub(
                 InstructionType::I32x4ExtendLowI16x8S,
                 0xfd,
@@ -4621,12 +4299,7 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple_sub(InstructionType::I32x4MinU, 0xfd, 183, "i32x4.min_u"),
             InstructionCoding::new_simple_sub(InstructionType::I32x4MaxS, 0xfd, 184, "i32x4.max_s"),
             InstructionCoding::new_simple_sub(InstructionType::I32x4MaxU, 0xfd, 185, "i32x4.max_u"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I32x4DotI16x8S,
-                0xfd,
-                186,
-                "i32x4.dot_i16x8_s",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I32x4DotI16x8S, 0xfd, 186, "i32x4.dot_i16x8_s"),
             InstructionCoding::new_simple_sub(
                 InstructionType::I32x4ExtMulLowI16x8S,
                 0xfd,
@@ -4653,18 +4326,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             ),
             InstructionCoding::new_simple_sub(InstructionType::I64x2Abs, 0xfd, 192, "i64x2.abs"),
             InstructionCoding::new_simple_sub(InstructionType::I64x2Neg, 0xfd, 193, "i64x2.neg"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I64x2AllTrue,
-                0xfd,
-                195,
-                "i64x2.all_true",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::I64x2Bitmask,
-                0xfd,
-                196,
-                "i64x2.bitmask",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::I64x2AllTrue, 0xfd, 195, "i64x2.all_true"),
+            InstructionCoding::new_simple_sub(InstructionType::I64x2Bitmask, 0xfd, 196, "i64x2.bitmask"),
             InstructionCoding::new_simple_sub(
                 InstructionType::I64x2ExtendLowI32x4S,
                 0xfd,
@@ -4720,24 +4383,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 "i64x2.extmul_high_i32x4_u",
             ),
             InstructionCoding::new_simple_sub(InstructionType::F32x4Ceil, 0xfd, 103, "f32x4.ceil"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F32x4Floor,
-                0xfd,
-                104,
-                "f32x4.floor",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F32x4Trunc,
-                0xfd,
-                105,
-                "f32x4.trunc",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F32x4Nearest,
-                0xfd,
-                106,
-                "f32x4.nearest",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::F32x4Floor, 0xfd, 104, "f32x4.floor"),
+            InstructionCoding::new_simple_sub(InstructionType::F32x4Trunc, 0xfd, 105, "f32x4.trunc"),
+            InstructionCoding::new_simple_sub(InstructionType::F32x4Nearest, 0xfd, 106, "f32x4.nearest"),
             InstructionCoding::new_simple_sub(InstructionType::F32x4Abs, 0xfd, 224, "f32x4.abs"),
             InstructionCoding::new_simple_sub(InstructionType::F32x4Neg, 0xfd, 225, "f32x4.neg"),
             InstructionCoding::new_simple_sub(InstructionType::F32x4Sqrt, 0xfd, 227, "f32x4.sqrt"),
@@ -4750,24 +4398,9 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             InstructionCoding::new_simple_sub(InstructionType::F32x4PMin, 0xfd, 234, "f32x4.pmin"),
             InstructionCoding::new_simple_sub(InstructionType::F32x4PMax, 0xfd, 235, "f32x4.pmax"),
             InstructionCoding::new_simple_sub(InstructionType::F64x2Ceil, 0xfd, 116, "f64x2.ceil"),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F64x2Floor,
-                0xfd,
-                117,
-                "f64x2.floor",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F64x2Trunc,
-                0xfd,
-                122,
-                "f64x2.trunc",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F64x2Nearest,
-                0xfd,
-                148,
-                "f64x2.nearest",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::F64x2Floor, 0xfd, 117, "f64x2.floor"),
+            InstructionCoding::new_simple_sub(InstructionType::F64x2Trunc, 0xfd, 122, "f64x2.trunc"),
+            InstructionCoding::new_simple_sub(InstructionType::F64x2Nearest, 0xfd, 148, "f64x2.nearest"),
             InstructionCoding::new_simple_sub(InstructionType::F64x2Abs, 0xfd, 236, "f64x2.abs"),
             InstructionCoding::new_simple_sub(InstructionType::F64x2Neg, 0xfd, 237, "f64x2.neg"),
             InstructionCoding::new_simple_sub(InstructionType::F64x2Sqrt, 0xfd, 239, "f64x2.sqrt"),
@@ -4791,18 +4424,8 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 249,
                 "i32x4.trunc_sat_f32x4_u",
             ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F32x4ConvertI32x4S,
-                0xfd,
-                250,
-                "f32x4.convert_i32x4_s",
-            ),
-            InstructionCoding::new_simple_sub(
-                InstructionType::F32x4ConvertI32x4U,
-                0xfd,
-                251,
-                "f32x4.convert_i32x4_u",
-            ),
+            InstructionCoding::new_simple_sub(InstructionType::F32x4ConvertI32x4S, 0xfd, 250, "f32x4.convert_i32x4_s"),
+            InstructionCoding::new_simple_sub(InstructionType::F32x4ConvertI32x4U, 0xfd, 251, "f32x4.convert_i32x4_u"),
             InstructionCoding::new_simple_sub(
                 InstructionType::I32x4TruncSatF64x2SZero,
                 0xfd,
@@ -4943,10 +4566,7 @@ impl<'a> Iterator for InstructionIterator<'a> {
             Some(coding) => coding,
             None => {
                 self.ended = true;
-                return Some(Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "illegal opcode",
-                )));
+                return Some(Err(io::Error::new(io::ErrorKind::InvalidData, "illegal opcode")));
             }
         };
 
@@ -4965,9 +4585,7 @@ impl<'a> Iterator for InstructionIterator<'a> {
                     self.bytes.pos() - pos,
                 )))
             }
-            Err(e) => {
-                Some(Err(e))
-            }
+            Err(e) => Some(Err(e)),
         }
     }
 }
@@ -5021,9 +4639,7 @@ fn decode_validate<T: super::validate::Validator>(
     let mut instructions: Vec<Instruction> = vec![];
     for result in instruction_iter {
         let instruction = result?;
-        validator
-            .validate(&instruction)
-            .map_err(DecodeError::from)?;
+        validator.validate(&instruction).map_err(DecodeError::from)?;
         instructions.push(instruction);
         if validator.ended() {
             return Ok(instructions);
@@ -5059,8 +4675,7 @@ impl BlockType {
             Ok(BlockType::Empty)
         } else if super::module::ValueType::is_value_type_byte(b) {
             Ok(BlockType::Type(
-                super::module::ValueType::decode(b)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+                super::module::ValueType::decode(b).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
             ))
         } else {
             let mut first_byte = Some(b);
@@ -5069,10 +4684,7 @@ impl BlockType {
                 None => bytes.read_byte(),
             })?;
             if type_index < 0 {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid block type index",
-                ))
+                Err(io::Error::new(io::ErrorKind::InvalidData, "invalid block type index"))
             } else {
                 Ok(BlockType::TypeIndex(type_index))
             }

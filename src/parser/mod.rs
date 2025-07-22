@@ -37,11 +37,7 @@ pub fn parse(
                 _ => sec_id,
             };
             if mapped_section_id <= last_section_id {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unexpected content after last section",
-                )
-                .into());
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected content after last section").into());
             }
             last_section_id = mapped_section_id;
         }
@@ -52,28 +48,21 @@ pub fn parse(
         }
         let start_pos = bytes.pos();
 
-        read_sections(sec_id, bytes, module_registry, &mut unit, sec_len).map_err(
-            |e: ast::DecodeError| match e {
-                ast::DecodeError::Io(err) => match err.kind() {
-                    io::ErrorKind::UnexpectedEof => io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "unexpected end of section or function",
-                    )
-                    .into(),
-                    _ => ast::DecodeError::Io(err),
-                },
-                _ => e,
+        read_sections(sec_id, bytes, module_registry, &mut unit, sec_len).map_err(|e: ast::DecodeError| match e {
+            ast::DecodeError::Io(err) => match err.kind() {
+                io::ErrorKind::UnexpectedEof => {
+                    io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end of section or function").into()
+                }
+                _ => ast::DecodeError::Io(err),
             },
-        )?;
+            _ => e,
+        })?;
         let end_pos = bytes.pos();
         let actual_len = end_pos - start_pos;
         if actual_len != sec_len as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "section length mismatch, expected {}, got {}",
-                    sec_len, actual_len
-                ),
+                format!("section length mismatch, expected {}, got {}", sec_len, actual_len),
             )
             .into());
         }
@@ -107,7 +96,14 @@ fn read_sections(
             &mut unit.types as &mut dyn module::Positional
         }
         2 => {
-            read_section_import(bytes, module_registry, &mut unit.imports, &unit.types, &unit.memory, &unit.table)?;
+            read_section_import(
+                bytes,
+                module_registry,
+                &mut unit.imports,
+                &unit.types,
+                &unit.memory,
+                &unit.table,
+            )?;
             &mut unit.imports as &mut dyn module::Positional
         }
         3 => {
@@ -191,29 +187,19 @@ fn read_sections(
     Ok(())
 }
 
-fn read_header(
-    bytes: &mut reader::Reader,
-    magic: &mut u32,
-    version: &mut u32,
-) -> Result<(), io::Error> {
+fn read_header(bytes: &mut reader::Reader, magic: &mut u32, version: &mut u32) -> Result<(), io::Error> {
     *magic = bytes.read_u32().and_then(|value| {
         if value == 0x6d736100 {
             Ok(value)
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "magic header not detected",
-            ))
+            Err(io::Error::new(io::ErrorKind::InvalidData, "magic header not detected"))
         }
     })?;
     *version = bytes.read_u32().and_then(|value| {
         if value == 0x1 {
             Ok(value)
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unknown binary version",
-            ))
+            Err(io::Error::new(io::ErrorKind::InvalidData, "unknown binary version"))
         }
     })?;
     Ok(())
@@ -225,17 +211,13 @@ fn read_value_types_list(bytes: &mut reader::Reader) -> Result<Vec<module::Value
     let mut rt: Vec<module::ValueType> = vec![];
     let count = bytes.read_vu32()?;
     for _ in 0..count {
-        let value = module::ValueType::decode(bytes.read_byte()?)
-            .map_err(std::io::Error::other)?;
+        let value = module::ValueType::decode(bytes.read_byte()?).map_err(std::io::Error::other)?;
         rt.push(value);
     }
     Ok(rt)
 }
 
-fn read_section_type(
-    bytes: &mut reader::Reader,
-    types: &mut module::TypeSection,
-) -> Result<(), io::Error> {
+fn read_section_type(bytes: &mut reader::Reader, types: &mut module::TypeSection) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
@@ -278,10 +260,7 @@ fn read_section_import(
         if matches!(import.external_kind, module::ExternalKind::Memory(_)) {
             memory_import_count += 1;
             if memory_import_count > 1 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "multiple memories",
-                ).into());
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "multiple memories").into());
             }
         }
 
@@ -369,23 +348,21 @@ fn read_section_memory(
     let count = bytes.read_vu32()?;
 
     // Check if we already have imported memories
-    let imported_memory_count = imports.imports.iter()
+    let imported_memory_count = imports
+        .imports
+        .iter()
         .filter(|imp| matches!(imp.external_kind, module::ExternalKind::Memory(_)))
         .count();
 
     // WASM 1.0 spec: at most one memory total
     if imported_memory_count + count as usize > 1 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "multiple memories",
-        ).into());
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "multiple memories").into());
     }
 
     for _ in 0..count {
         let limits = module::Limits::decode(bytes)?;
         memory.push(module::Memory { limits })
     }
-
 
     Ok(())
 }
@@ -454,10 +431,7 @@ fn read_section_export(
     Ok(())
 }
 
-fn read_section_code(
-    bytes: &mut reader::Reader,
-    module: &mut module::Module,
-) -> Result<(), ast::DecodeError> {
+fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     // TODO: this check is duplicated after the section read loop
@@ -479,8 +453,7 @@ fn read_section_code(
         for _ in 0..locals_count {
             let local_n = bytes.read_vu32()?;
             let b = bytes.read_byte()?;
-            let value = module::ValueType::decode(b)
-                .map_err(std::io::Error::other)?;
+            let value = module::ValueType::decode(b).map_err(std::io::Error::other)?;
             nts.push((local_n, value));
         }
 
@@ -490,29 +463,20 @@ fn read_section_code(
         }
 
         let instructions: Vec<ast::Instruction> =
-            ast::Instruction::decode_function(module, &locals, module.code.len() as u32, bytes)
-                .map_err(|err| {
-                    if bytes.pos() > end_pos {
-                        io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
-                    } else if ii == count - 1 && bytes.pos() == end_pos {
-                        match err {
-                            ast::DecodeError::Validation(_) => err,
-                            _ => io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "unexpected end of section or function",
-                            )
-                            .into(),
-                        }
-                    } else {
-                        err
+            ast::Instruction::decode_function(module, &locals, module.code.len() as u32, bytes).map_err(|err| {
+                if bytes.pos() > end_pos {
+                    io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
+                } else if ii == count - 1 && bytes.pos() == end_pos {
+                    match err {
+                        ast::DecodeError::Validation(_) => err,
+                        _ => io::Error::new(io::ErrorKind::InvalidData, "unexpected end of section or function").into(),
                     }
-                })?;
+                } else {
+                    err
+                }
+            })?;
         if bytes.pos() < end_pos {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected end of section or function",
-            )
-            .into());
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected end of section or function").into());
         }
         let function_body = module::FunctionBody {
             locals,
@@ -541,22 +505,14 @@ impl module::Data {
             0 => {
                 mode = module::DataMode::Active {
                     memory_index: 0,
-                    offset: ast::Instruction::decode_constant_expression(
-                        bytes,
-                        imports,
-                        module::ValueType::I32,
-                    )?,
+                    offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                 };
             }
             1 => {} // nothing else needed
             2 => {
                 mode = module::DataMode::Active {
                     memory_index: bytes.read_vu32()?,
-                    offset: ast::Instruction::decode_constant_expression(
-                        bytes,
-                        imports,
-                        module::ValueType::I32,
-                    )?,
+                    offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                 };
             }
             _ => Err(io::Error::new(
@@ -571,11 +527,9 @@ impl module::Data {
         } = mode
         {
             if memory_index != 0 || imports.memory_count() as u32 + memory_count == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unknown memory {}", memory_index),
-                )
-                .into());
+                return Err(
+                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown memory {}", memory_index)).into(),
+                );
             }
             // we expect a constant and an End
             if offset.len() != 2 {
@@ -647,10 +601,7 @@ fn read_section_datacount(
 }
 
 impl module::ExternalKind {
-    pub fn decode(
-        bytes: &mut reader::Reader,
-        type_count: u32,
-    ) -> Result<module::ExternalKind, ast::DecodeError> {
+    pub fn decode(bytes: &mut reader::Reader, type_count: u32) -> Result<module::ExternalKind, ast::DecodeError> {
         let byte = bytes.read_byte()?;
         match byte {
             0x00 => {
@@ -683,8 +634,7 @@ impl module::ExternalKind {
 
 impl module::GlobalType {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, io::Error> {
-        let value_type = module::ValueType::decode(bytes.read_byte()?)
-            .map_err(std::io::Error::other)?;
+        let value_type = module::ValueType::decode(bytes.read_byte()?).map_err(std::io::Error::other)?;
         let mutable = match bytes.read_byte()? {
             0x00 => false,
             0x01 => true,
@@ -693,26 +643,16 @@ impl module::GlobalType {
                 "invalid global type mutable flag",
             ))?,
         };
-        Ok(module::GlobalType {
-            value_type,
-            mutable,
-        })
+        Ok(module::GlobalType { value_type, mutable })
     }
 }
 
 impl module::Global {
-    pub fn decode(
-        bytes: &mut reader::Reader,
-        imports: &module::ImportSection,
-    ) -> Result<Self, ast::DecodeError> {
+    pub fn decode(bytes: &mut reader::Reader, imports: &module::ImportSection) -> Result<Self, ast::DecodeError> {
         let global_type = module::GlobalType::decode(bytes)?;
         Ok(module::Global {
             global_type,
-            init: ast::Instruction::decode_constant_expression(
-                bytes,
-                imports,
-                global_type.value_type,
-            )?,
+            init: ast::Instruction::decode_constant_expression(bytes, imports, global_type.value_type)?,
         })
     }
 }
@@ -738,11 +678,7 @@ impl module::RefType {
         match byte {
             0x70 => Ok(module::RefType::FuncRef),
             0x6f => Ok(module::RefType::ExternRef),
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown ref type: 0x{:02x}", byte),
-            )
-            .into()),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown ref type: 0x{:02x}", byte)).into()),
         }
     }
 }
@@ -752,11 +688,7 @@ impl module::Limits {
         let has_max = bytes.read_vu1()?;
         Ok(module::Limits {
             min: bytes.read_vu32()?,
-            max: if has_max {
-                bytes.read_vu32()?
-            } else {
-                u32::MAX
-            },
+            max: if has_max { bytes.read_vu32()? } else { u32::MAX },
         })
     }
 }
@@ -770,10 +702,7 @@ impl module::TableType {
     }
 }
 
-fn read_section_table(
-    bytes: &mut reader::Reader,
-    table: &mut module::TableSection,
-) -> Result<(), ast::DecodeError> {
+fn read_section_table(bytes: &mut reader::Reader, table: &mut module::TableSection) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
@@ -784,10 +713,7 @@ fn read_section_table(
     Ok(())
 }
 
-fn read_section_start(
-    bytes: &mut reader::Reader,
-    start: &mut module::StartSection,
-) -> Result<(), io::Error> {
+fn read_section_start(bytes: &mut reader::Reader, start: &mut module::StartSection) -> Result<(), io::Error> {
     start.start = bytes.read_vu32()?;
     Ok(())
 }
@@ -804,10 +730,7 @@ impl module::Element {
             match byte {
                 0x70 => Ok(module::RefType::FuncRef),
                 0x6f => Ok(module::RefType::ExternRef),
-                _ => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "malformed reference type",
-                )),
+                _ => Err(io::Error::new(io::ErrorKind::InvalidData, "malformed reference type")),
             }
         };
         let read_element_kind = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
@@ -820,9 +743,8 @@ impl module::Element {
                 )),
             }
         };
-        let read_table_index = |bytes: &mut reader::Reader| -> Result<u32, ast::DecodeError> {
-            bytes.read_vu32().map_err(|e| e.into())
-        };
+        let read_table_index =
+            |bytes: &mut reader::Reader| -> Result<u32, ast::DecodeError> { bytes.read_vu32().map_err(|e| e.into()) };
         let read_init = |bytes: &mut reader::Reader,
                          return_type: module::ValueType|
          -> Result<Vec<Vec<ast::Instruction>>, ast::DecodeError> {
@@ -843,42 +765,38 @@ impl module::Element {
             for _ in 0..count {
                 let func_index = bytes.read_vu32()?;
                 if func_index >= function_count {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unknown function",
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown function"));
                 }
                 func_indexes.push(func_index);
             }
             Ok(func_indexes)
         };
-        let read_func_index_init =
-            |bytes: &mut reader::Reader| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
-                let fi = read_func_indexes(bytes)?;
-                Ok(fi
-                    .into_iter()
-                    .map(|func_index| {
-                        vec![
-                            ast::Instruction::new(
-                                ast::InstructionType::RefFunc,
-                                ast::InstructionData::Function {
-                                    function_index: func_index,
-                                },
-                                0,
-                                0,
-                            ),
-                            ast::Instruction::new(
-                                ast::InstructionType::End,
-                                ast::InstructionData::Simple {
-                                    subopcode_bytes: Vec::new(),
-                                },
-                                0,
-                                0,
-                            ),
-                        ]
-                    })
-                    .collect())
-            };
+        let read_func_index_init = |bytes: &mut reader::Reader| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
+            let fi = read_func_indexes(bytes)?;
+            Ok(fi
+                .into_iter()
+                .map(|func_index| {
+                    vec![
+                        ast::Instruction::new(
+                            ast::InstructionType::RefFunc,
+                            ast::InstructionData::Function {
+                                function_index: func_index,
+                            },
+                            0,
+                            0,
+                        ),
+                        ast::Instruction::new(
+                            ast::InstructionType::End,
+                            ast::InstructionData::Simple {
+                                subopcode_bytes: Vec::new(),
+                            },
+                            0,
+                            0,
+                        ),
+                    ]
+                })
+                .collect())
+        };
 
         let typ = bytes.read_vu32()?;
         let element = match typ {
@@ -889,11 +807,7 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: ast::Instruction::decode_constant_expression(
-                            bytes,
-                            imports,
-                            module::ValueType::I32,
-                        )?,
+                        offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                     },
                     init: read_func_index_init(bytes)?,
                 }
@@ -913,11 +827,7 @@ impl module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
-                        offset: ast::Instruction::decode_constant_expression(
-                            bytes,
-                            imports,
-                            module::ValueType::I32,
-                        )?,
+                        offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                     },
                     ref_type: read_element_kind(bytes)?,
                     init: read_func_index_init(bytes)?,
@@ -939,11 +849,7 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: ast::Instruction::decode_constant_expression(
-                            bytes,
-                            imports,
-                            module::ValueType::I32,
-                        )?,
+                        offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                     },
                     init: read_init(bytes, module::ValueType::FuncRef)?,
                 }
@@ -962,19 +868,12 @@ impl module::Element {
             6 => {
                 // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
                 let table_index = read_table_index(bytes)?;
-                let offset = ast::Instruction::decode_constant_expression(
-                    bytes,
-                    imports,
-                    module::ValueType::I32,
-                )?;
+                let offset = ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?;
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
                 module::Element {
                     flags: typ,
-                    mode: module::ElementMode::Active {
-                        table_index,
-                        offset,
-                    },
+                    mode: module::ElementMode::Active { table_index, offset },
                     ref_type,
                     init,
                 }
@@ -999,27 +898,18 @@ impl module::Element {
             }
         };
         if let module::ElementMode::Active { table_index, .. } = element.mode {
-            let ref_type: Option<&module::TableType> = if table_index < imports.table_count() as u32
-            {
+            let ref_type: Option<&module::TableType> = if table_index < imports.table_count() as u32 {
                 imports.get_table(table_index)
             } else if (table_index - imports.table_count() as u32) < table.tables.len() as u32 {
-                table
-                    .tables
-                    .get((table_index - imports.table_count() as u32) as usize)
+                table.tables.get((table_index - imports.table_count() as u32) as usize)
             } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("unknown table {}", table_index),
-                )
-                .into());
+                return Err(
+                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown table {}", table_index)).into(),
+                );
             };
             if let Some(ref_type) = ref_type {
                 if element.ref_type != ref_type.ref_type {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "element type mismatch",
-                    )
-                    .into());
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "element type mismatch").into());
                 }
             }
         };

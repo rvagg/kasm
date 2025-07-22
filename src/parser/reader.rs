@@ -29,10 +29,7 @@ impl Reader {
     pub fn read_byte(&mut self) -> Result<u8, io::Error> {
         match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         }
     }
 
@@ -75,117 +72,81 @@ impl Reader {
     pub fn read_vu64(&mut self) -> Result<u64, io::Error> {
         read_vu64(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_vu32(&mut self) -> Result<u32, io::Error> {
         read_vu32(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_vu1(&mut self) -> Result<bool, io::Error> {
         read_vu1(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_u8(&mut self) -> Result<u8, io::Error> {
         match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         }
     }
 
     pub fn read_vs64(&mut self) -> Result<i64, io::Error> {
         read_vs64(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_vs32(&mut self) -> Result<i32, io::Error> {
         read_vs32(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_f64(&mut self) -> Result<f64, io::Error> {
         read_f64(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_f32(&mut self) -> Result<f32, io::Error> {
         read_f32(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_v128(&mut self) -> Result<[u8; 16], io::Error> {
         read_v128(&mut || match self.next() {
             Some(byte) => Ok(byte),
-            None => Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "unexpected end",
-            )),
+            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
         })
     }
 
     pub fn read_string(&mut self) -> Result<String, io::Error> {
         let len = self.read_vu32()?;
         if !self.has_at_least(len as usize) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "length out of bounds",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "length out of bounds"));
         }
         let mut v: Vec<u8> = Vec::with_capacity(len as usize);
 
         for _ in 0..len {
             match self.next() {
                 Some(byte) => v.push(byte),
-                None => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "unexpected end",
-                    ))
-                }
+                None => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end")),
             }
         }
 
-        String::from_utf8(v)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid utf-8 sequence"))
+        String::from_utf8(v).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid utf-8 sequence"))
     }
 
     pub fn read_u8vec(&mut self) -> Result<Vec<u8>, io::Error> {
@@ -241,70 +202,22 @@ fn test_read_u32() {
         reader.read_u32().expect("Failed to read u32")
     };
 
-    assert_eq_with_diag(
-        read(vec![0b00000000, 0b00000000, 0b00000000, 0b00000000]),
-        0,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000001, 0b00000000, 0b00000000, 0b00000000]),
-        1,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000000, 0b00000001, 0b00000000, 0b00000000]),
-        256,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000001, 0b00000001, 0b00000000, 0b00000000]),
-        257,
-    );
-    assert_eq_with_diag(
-        read(vec![0b10000000, 0b00000000, 0b00000000, 0b00000000]),
-        128,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000000, 0b10000000, 0b00000000, 0b00000000]),
-        32768,
-    );
-    assert_eq_with_diag(
-        read(vec![0b10000000, 0b10000000, 0b00000000, 0b00000000]),
-        32896,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000000, 0b10000000, 0b00000000, 0b00000000]),
-        32768,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000000, 0b00000000, 0b10000000, 0b00000000]),
-        8388608,
-    );
-    assert_eq_with_diag(
-        read(vec![0b10000000, 0b10000000, 0b10000000, 0b00000000]),
-        8421504,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000000, 0b00000000, 0b00000000, 0b10000000]),
-        2147483648,
-    );
-    assert_eq_with_diag(
-        read(vec![0b10000000, 0b10000000, 0b10000000, 0b10000000]),
-        2155905152,
-    );
-    assert_eq_with_diag(
-        read(vec![0b00000000, 0b11111111, 0b00000000, 0b00000000]),
-        65280,
-    );
-    assert_eq_with_diag(
-        read(vec![0b11111111, 0b11111111, 0b00000000, 0b00000000]),
-        65535,
-    );
-    assert_eq_with_diag(
-        read(vec![0b11111111, 0b11111111, 0b11111111, 0b00000000]),
-        16777215,
-    );
-    assert_eq_with_diag(
-        read(vec![0b11111111, 0b11111111, 0b11111111, 0b11111111]),
-        4294967295,
-    );
+    assert_eq_with_diag(read(vec![0b00000000, 0b00000000, 0b00000000, 0b00000000]), 0);
+    assert_eq_with_diag(read(vec![0b00000001, 0b00000000, 0b00000000, 0b00000000]), 1);
+    assert_eq_with_diag(read(vec![0b00000000, 0b00000001, 0b00000000, 0b00000000]), 256);
+    assert_eq_with_diag(read(vec![0b00000001, 0b00000001, 0b00000000, 0b00000000]), 257);
+    assert_eq_with_diag(read(vec![0b10000000, 0b00000000, 0b00000000, 0b00000000]), 128);
+    assert_eq_with_diag(read(vec![0b00000000, 0b10000000, 0b00000000, 0b00000000]), 32768);
+    assert_eq_with_diag(read(vec![0b10000000, 0b10000000, 0b00000000, 0b00000000]), 32896);
+    assert_eq_with_diag(read(vec![0b00000000, 0b10000000, 0b00000000, 0b00000000]), 32768);
+    assert_eq_with_diag(read(vec![0b00000000, 0b00000000, 0b10000000, 0b00000000]), 8388608);
+    assert_eq_with_diag(read(vec![0b10000000, 0b10000000, 0b10000000, 0b00000000]), 8421504);
+    assert_eq_with_diag(read(vec![0b00000000, 0b00000000, 0b00000000, 0b10000000]), 2147483648);
+    assert_eq_with_diag(read(vec![0b10000000, 0b10000000, 0b10000000, 0b10000000]), 2155905152);
+    assert_eq_with_diag(read(vec![0b00000000, 0b11111111, 0b00000000, 0b00000000]), 65280);
+    assert_eq_with_diag(read(vec![0b11111111, 0b11111111, 0b00000000, 0b00000000]), 65535);
+    assert_eq_with_diag(read(vec![0b11111111, 0b11111111, 0b11111111, 0b00000000]), 16777215);
+    assert_eq_with_diag(read(vec![0b11111111, 0b11111111, 0b11111111, 0b11111111]), 4294967295);
 }
 
 /*
@@ -370,10 +283,7 @@ where
             if i + 1 == max_bytes && size % 7 != 0 {
                 let unused_bits = 7 - size % 7;
                 if b >= (1 << (7 - unused_bits)) {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "integer too large",
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "integer too large"));
                 }
             }
             break;
@@ -438,22 +348,10 @@ fn test_read_vu64() {
     assert_eq_with_diag(read(vec![128, 128, 128, 128, 128, 15]), 0x7800000000);
     assert_eq_with_diag(read(vec![0xff, 0xff, 0xff, 0xff, 0xff, 1]), 0xfffffffff);
     assert_eq_with_diag(read(vec![128, 128, 128, 128, 128, 128, 15]), 0x3c0000000000);
-    assert_eq_with_diag(
-        read(vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1]),
-        0x7ffffffffff,
-    );
-    assert_eq_with_diag(
-        read(vec![128, 128, 128, 128, 128, 128, 128, 15]),
-        0x1e000000000000,
-    );
-    assert_eq_with_diag(
-        read(vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1]),
-        0x3ffffffffffff,
-    );
-    assert_eq_with_diag(
-        read(vec![128, 128, 128, 128, 128, 128, 128, 128, 8]),
-        0x800000000000000,
-    );
+    assert_eq_with_diag(read(vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1]), 0x7ffffffffff);
+    assert_eq_with_diag(read(vec![128, 128, 128, 128, 128, 128, 128, 15]), 0x1e000000000000);
+    assert_eq_with_diag(read(vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1]), 0x3ffffffffffff);
+    assert_eq_with_diag(read(vec![128, 128, 128, 128, 128, 128, 128, 128, 8]), 0x800000000000000);
     assert_eq_with_diag(
         read(vec![128, 128, 128, 128, 128, 128, 128, 128, 15]),
         0xf00000000000000,
@@ -479,9 +377,7 @@ fn test_read_vu64() {
         0x8000000000000000,
     );
     assert_eq_with_diag(
-        read(vec![
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1,
-        ]),
+        read(vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1]),
         0xffffffffffffffff,
     );
 
@@ -701,10 +597,7 @@ where
             }
             let negative = (b & sign_bit) != 0;
             if (negative && b & mask != mask) || (!negative && b & mask != 0) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "integer too large",
-                ));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "integer too large"));
             }
         }
         let value = ((b & !0x80) as i64) << shift;
@@ -1051,10 +944,7 @@ fn test_read_f64() {
 
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 0, 0]), 0.0);
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 0, 128]), 0.0); // -0
-    assert_eq_with_diag(
-        read(vec![24, 45, 68, 84, 251, 33, 25, 64]),
-        6.283_185_307_179_586,
-    );
+    assert_eq_with_diag(read(vec![24, 45, 68, 84, 251, 33, 25, 64]), 6.283_185_307_179_586);
     assert_eq_with_diag(read(vec![1, 0, 0, 0, 0, 0, 0, 0]), 4.94066e-324);
     assert_eq_with_diag(read(vec![0, 0, 0, 0, 0, 0, 16, 0]), 2.2250738585072012e-308);
     assert_eq_with_diag(
@@ -1100,23 +990,19 @@ fn test_read_v128() {
 
     assert_eq_with_diag(
         read(vec![
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
         ]),
         [
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
         ],
     );
 
     assert_eq_with_diag(
         read(vec![
-            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
-            0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
         ]),
         [
-            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
-            0xaa, 0xaa,
+            0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
         ],
     );
 
@@ -1152,10 +1038,7 @@ fn assert_eq_with_diag<T: std::fmt::Debug + std::cmp::PartialEq>(actual: T, expe
 }
 
 #[cfg(test)]
-fn assert_err_with_diag<T: std::fmt::Debug + std::cmp::PartialEq>(
-    actual: std::io::Result<T>,
-    expected_err: &str,
-) {
+fn assert_err_with_diag<T: std::fmt::Debug + std::cmp::PartialEq>(actual: std::io::Result<T>, expected_err: &str) {
     match actual {
         Ok(_) => panic!("Expected error, but got Ok"),
         Err(e) => assert_eq!(

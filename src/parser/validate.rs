@@ -285,12 +285,7 @@ impl<'a> CodeValidator<'a> {
         Some(popped)
     }
 
-    fn push_ctrl(
-        &mut self,
-        instruction: InstructionType,
-        start_types: Vec<MaybeValue>,
-        end_types: Vec<MaybeValue>,
-    ) {
+    fn push_ctrl(&mut self, instruction: InstructionType, start_types: Vec<MaybeValue>, end_types: Vec<MaybeValue>) {
         self.ctrls.push(CtrlFrame {
             instruction,
             start_types: start_types.clone(),
@@ -338,13 +333,8 @@ impl<'a> CodeValidator<'a> {
         }
     }
 
-    fn sig_unary(
-        &mut self,
-        in_type: MaybeValue,
-        out_type: MaybeValue,
-    ) -> Result<(), ValidationError> {
-        self.pop_expected(in_type)
-            .ok_or(ValidationError::TypeMismatch)?;
+    fn sig_unary(&mut self, in_type: MaybeValue, out_type: MaybeValue) -> Result<(), ValidationError> {
+        self.pop_expected(in_type).ok_or(ValidationError::TypeMismatch)?;
         self.push_val(out_type).ok_or(ValidationError::TypeMismatch)
     }
 
@@ -354,10 +344,8 @@ impl<'a> CodeValidator<'a> {
         in2_type: MaybeValue,
         out_type: MaybeValue,
     ) -> Result<(), ValidationError> {
-        self.pop_expected(in1_type)
-            .ok_or(ValidationError::TypeMismatch)?;
-        self.pop_expected(in2_type)
-            .ok_or(ValidationError::TypeMismatch)?;
+        self.pop_expected(in1_type).ok_or(ValidationError::TypeMismatch)?;
+        self.pop_expected(in2_type).ok_or(ValidationError::TypeMismatch)?;
         self.push_val(out_type).ok_or(ValidationError::TypeMismatch)
     }
 
@@ -401,11 +389,7 @@ impl<'a> CodeValidator<'a> {
             return Err(ValidationError::UnknownLabel);
         }
         let index = self.ctrls.len() - li as usize - 1;
-        let frame = self
-            .ctrls
-            .get(index)
-            .ok_or(ValidationError::UnknownLabel)?
-            .clone();
+        let frame = self.ctrls.get(index).ok_or(ValidationError::UnknownLabel)?.clone();
         Ok(self.frame_types(frame))
     }
 
@@ -436,25 +420,22 @@ impl<'a> CodeValidator<'a> {
 impl Validator for CodeValidator<'_> {
     fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError> {
         match inst.get_type() {
-            I32Const => self
-                .push_val(Val(I32_VALUE))
-                .ok_or(ValidationError::TypeMismatch),
+            I32Const => self.push_val(Val(I32_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // iunop (i32):i32
             I32Clz | I32Ctz | I32Popcnt => self.sig_unary(Val(I32_VALUE), Val(I32_VALUE)),
 
             // ibinop (i32,i32):i32
-            I32Add | I32Sub | I32Mul | I32DivS | I32DivU | I32RemS | I32RemU | I32And | I32Or
-            | I32Xor | I32Shl | I32ShrS | I32ShrU | I32Rotr | I32Rotl => {
-                self.sig_binary(Val(I32_VALUE), Val(I32_VALUE), Val(I32_VALUE))
-            }
+            I32Add | I32Sub | I32Mul | I32DivS | I32DivU | I32RemS | I32RemU | I32And | I32Or | I32Xor | I32Shl
+            | I32ShrS | I32ShrU | I32Rotr | I32Rotl => self.sig_binary(Val(I32_VALUE), Val(I32_VALUE), Val(I32_VALUE)),
 
             // itestop (i32):i32
             I32Eqz => self.sig_unary(Val(I32_VALUE), Val(I32_VALUE)),
 
             // irelop (i32,i32):i32
-            I32Eq | I32Ne | I32LtS | I32LtU | I32GtS | I32GtU | I32LeS | I32LeU | I32GeS
-            | I32GeU => self.sig_binary(Val(I32_VALUE), Val(I32_VALUE), Val(I32_VALUE)),
+            I32Eq | I32Ne | I32LtS | I32LtU | I32GtS | I32GtU | I32LeS | I32LeU | I32GeS | I32GeU => {
+                self.sig_binary(Val(I32_VALUE), Val(I32_VALUE), Val(I32_VALUE))
+            }
 
             // cvtop (i32):i32
             I32Extend8S | I32Extend16S => self.sig_unary(Val(I32_VALUE), Val(I32_VALUE)),
@@ -472,30 +453,25 @@ impl Validator for CodeValidator<'_> {
                 self.sig_unary(Val(F64_VALUE), Val(I32_VALUE))
             }
 
-            I64Const => self
-                .push_val(Val(I64_VALUE))
-                .ok_or(ValidationError::TypeMismatch),
+            I64Const => self.push_val(Val(I64_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // iunop (i64):i64
             I64Clz | I64Ctz | I64Popcnt => self.sig_unary(Val(I64_VALUE), Val(I64_VALUE)),
 
             // ibinop (i64,i64):i64
-            I64Add | I64Sub | I64Mul | I64DivS | I64DivU | I64RemS | I64RemU | I64And | I64Or
-            | I64Xor | I64Shl | I64ShrS | I64ShrU | I64Rotr | I64Rotl => {
-                self.sig_binary(Val(I64_VALUE), Val(I64_VALUE), Val(I64_VALUE))
-            }
+            I64Add | I64Sub | I64Mul | I64DivS | I64DivU | I64RemS | I64RemU | I64And | I64Or | I64Xor | I64Shl
+            | I64ShrS | I64ShrU | I64Rotr | I64Rotl => self.sig_binary(Val(I64_VALUE), Val(I64_VALUE), Val(I64_VALUE)),
 
             // itestop (i64):i32
             I64Eqz => self.sig_unary(Val(I64_VALUE), Val(I32_VALUE)),
 
             // irelop (i64,i64):i32
-            I64Eq | I64Ne | I64LtS | I64LtU | I64GtS | I64GtU | I64LeS | I64LeU | I64GeS
-            | I64GeU => self.sig_binary(Val(I64_VALUE), Val(I64_VALUE), Val(I32_VALUE)),
+            I64Eq | I64Ne | I64LtS | I64LtU | I64GtS | I64GtU | I64LeS | I64LeU | I64GeS | I64GeU => {
+                self.sig_binary(Val(I64_VALUE), Val(I64_VALUE), Val(I32_VALUE))
+            }
 
             // cvtop (i64):i64
-            I64Extend8S | I64Extend16S | I64Extend32S => {
-                self.sig_unary(Val(I64_VALUE), Val(I64_VALUE))
-            }
+            I64Extend8S | I64Extend16S | I64Extend32S => self.sig_unary(Val(I64_VALUE), Val(I64_VALUE)),
 
             // cvtop (i32):i64
             I64ExtendI32S | I64ExtendI32U => self.sig_unary(Val(I32_VALUE), Val(I64_VALUE)),
@@ -510,9 +486,7 @@ impl Validator for CodeValidator<'_> {
                 self.sig_unary(Val(F64_VALUE), Val(I64_VALUE))
             }
 
-            F32Const => self
-                .push_val(Val(F32_VALUE))
-                .ok_or(ValidationError::TypeMismatch),
+            F32Const => self.push_val(Val(F32_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // funop (f32):f32
             F32Abs | F32Neg | F32Sqrt | F32Ceil | F32Floor | F32Trunc | F32Nearest => {
@@ -533,16 +507,12 @@ impl Validator for CodeValidator<'_> {
             F32DemoteF64 => self.sig_unary(Val(F64_VALUE), Val(F32_VALUE)),
 
             // cvtop (i32):f32
-            F32ConvertI32S | F32ConvertI32U | F32ReinterpretI32 => {
-                self.sig_unary(Val(I32_VALUE), Val(F32_VALUE))
-            }
+            F32ConvertI32S | F32ConvertI32U | F32ReinterpretI32 => self.sig_unary(Val(I32_VALUE), Val(F32_VALUE)),
 
             // cvtop (i64):f32
             F32ConvertI64S | F32ConvertI64U => self.sig_unary(Val(I64_VALUE), Val(F32_VALUE)),
 
-            F64Const => self
-                .push_val(Val(F64_VALUE))
-                .ok_or(ValidationError::TypeMismatch),
+            F64Const => self.push_val(Val(F64_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // funop (f64):f64
             F64Abs | F64Neg | F64Sqrt | F64Ceil | F64Floor | F64Trunc | F64Nearest => {
@@ -566,15 +536,12 @@ impl Validator for CodeValidator<'_> {
             F64ConvertI32S | F64ConvertI32U => self.sig_unary(Val(I32_VALUE), Val(F64_VALUE)),
 
             // cvtop (i64):f64
-            F64ConvertI64S | F64ConvertI64U | F64ReinterpretI64 => {
-                self.sig_unary(Val(I64_VALUE), Val(F64_VALUE))
-            }
+            F64ConvertI64S | F64ConvertI64U | F64ReinterpretI64 => self.sig_unary(Val(I64_VALUE), Val(F64_VALUE)),
 
             LocalGet => {
                 if let InstructionData::Local { local_index: li } = *inst.get_data() {
                     let local = *self.local(li)?;
-                    self.push_val(Val(local))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.push_val(Val(local)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -584,8 +551,7 @@ impl Validator for CodeValidator<'_> {
             LocalSet => {
                 if let InstructionData::Local { local_index: li } = *inst.get_data() {
                     let local = *self.local(li)?;
-                    self.pop_expected(Val(local))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(local)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -595,10 +561,8 @@ impl Validator for CodeValidator<'_> {
             LocalTee => {
                 if let InstructionData::Local { local_index: li } = *inst.get_data() {
                     let local = *self.local(li)?;
-                    self.pop_expected(Val(local))
-                        .ok_or(ValidationError::TypeMismatch)?;
-                    self.push_val(Val(local))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(local)).ok_or(ValidationError::TypeMismatch)?;
+                    self.push_val(Val(local)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -629,10 +593,8 @@ impl Validator for CodeValidator<'_> {
 
             I32Load | I32Load8S | I32Load8U | I32Load16S | I32Load16U => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.push_val(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
                     inst,
                     match inst.get_type() {
@@ -646,10 +608,8 @@ impl Validator for CodeValidator<'_> {
 
             I64Load | I64Load8S | I64Load8U | I64Load16S | I64Load16U | I64Load32S | I64Load32U => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.push_val(Val(I64))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
                     inst,
                     match inst.get_type() {
@@ -664,28 +624,22 @@ impl Validator for CodeValidator<'_> {
 
             F32Load => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.push_val(Val(F32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Load => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.push_val(Val(F64))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 3 /* 8 bytes = 2^3 */)
             }
 
             I32Store | I32Store8 | I32Store16 => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
                     inst,
                     match inst.get_type() {
@@ -699,10 +653,8 @@ impl Validator for CodeValidator<'_> {
 
             I64Store | I64Store8 | I64Store16 | I64Store32 => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(I64))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
                     inst,
                     match inst.get_type() {
@@ -717,35 +669,28 @@ impl Validator for CodeValidator<'_> {
 
             F32Store => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(F32))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Store => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(F64))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 3 /* 8 bytes = 2^3 */)
             }
 
             MemorySize => {
                 // TODO: check that the memory index exists
-                self.push_val(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
             MemoryGrow => {
                 // TODO: check that the memory index exists
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
-                self.push_val(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
@@ -809,8 +754,7 @@ impl Validator for CodeValidator<'_> {
                         .module
                         .get_table(table_index)
                         .ok_or(ValidationError::UnknownTable)?;
-                    self.pop_expected(Val(I32))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                     self.push_val(Val(table.ref_type.into()))
                         .ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
@@ -827,8 +771,7 @@ impl Validator for CodeValidator<'_> {
                         .ok_or(ValidationError::UnknownTable)?;
                     self.pop_expected(Val(table.ref_type.into()))
                         .ok_or(ValidationError::TypeMismatch)?;
-                    self.pop_expected(Val(I32))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -851,8 +794,7 @@ impl Validator for CodeValidator<'_> {
             Block | Loop | If => {
                 // special case for If we need to pop an i32
                 if inst.get_type() == &If {
-                    self.pop_expected(Val(I32))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 }
 
                 if let InstructionData::Block { blocktype: bt } = *inst.get_data() {
@@ -908,23 +850,20 @@ impl Validator for CodeValidator<'_> {
 
             End => {
                 let ctrl = self.pop_ctrl()?;
-                self.push_vals(ctrl.end_types)
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.push_vals(ctrl.end_types).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
             Return | Br | BrIf => {
-                let li: u32 =
-                    if let InstructionData::Labelled { label_index: li } = *inst.get_data() {
-                        li
-                    } else {
-                        // Return, outermost label
-                        self.ctrls.len() as u32 - 1
-                    };
+                let li: u32 = if let InstructionData::Labelled { label_index: li } = *inst.get_data() {
+                    li
+                } else {
+                    // Return, outermost label
+                    self.ctrls.len() as u32 - 1
+                };
 
                 if inst.get_type() == &BrIf {
-                    self.pop_expected(Val(I32))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 }
 
                 let label_types = self.label_types_at(li)?;
@@ -936,8 +875,7 @@ impl Validator for CodeValidator<'_> {
                         Ok(())
                     }
                     &BrIf => {
-                        self.push_vals(label_types)
-                            .ok_or(ValidationError::TypeMismatch)?;
+                        self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
                         Ok(())
                     }
                     _ => Err(ValidationError::InvalidInstruction),
@@ -950,8 +888,7 @@ impl Validator for CodeValidator<'_> {
                     label_index: li,
                 } = *inst.get_data()
                 {
-                    self.pop_expected(Val(I32))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                     if self.ctrls.len() < li as usize {
                         return Err(ValidationError::UnknownLabel);
                     }
@@ -969,15 +906,13 @@ impl Validator for CodeValidator<'_> {
                                 if popped.is_none() {
                                     Err(ValidationError::TypeMismatch)
                                 } else {
-                                    self.push_vals(label_types)
-                                        .ok_or(ValidationError::TypeMismatch)?;
+                                    self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
                                     Ok(())
                                 }
                             }
                         }
                     })?;
-                    self.pop_expecteds(label_types)
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expecteds(label_types).ok_or(ValidationError::TypeMismatch)?;
                     self.unreachable().ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
@@ -1004,12 +939,10 @@ impl Validator for CodeValidator<'_> {
                             Some(_) => Ok(()),
                             None => Err(ValidationError::TypeMismatch),
                         })?;
-                    return_types
-                        .iter()
-                        .try_for_each(|v| match self.push_val(Val(*v)) {
-                            Some(_) => Ok(()),
-                            None => Err(ValidationError::TypeMismatch),
-                        })?;
+                    return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
+                        Some(_) => Ok(()),
+                        None => Err(ValidationError::TypeMismatch),
+                    })?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -1024,18 +957,14 @@ impl Validator for CodeValidator<'_> {
                 {
                     // TOOD: this probably should check that table_index exists in the table space
 
-                    let table = self
-                        .module
-                        .get_table(tabi)
-                        .ok_or(ValidationError::UnknownTable)?;
+                    let table = self.module.get_table(tabi).ok_or(ValidationError::UnknownTable)?;
 
                     if ValueType::from(table.ref_type) != FuncRef {
                         return Err(ValidationError::TypeMismatch);
                     }
 
                     // operand that directs us to the table entry
-                    self.pop_expected(Val(I32))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
 
                     // table entry must have this function signature
                     let ftype = self.get_type(typi)?;
@@ -1050,12 +979,10 @@ impl Validator for CodeValidator<'_> {
                             Some(_) => Ok(()),
                             None => Err(ValidationError::TypeMismatch),
                         })?;
-                    return_types
-                        .iter()
-                        .try_for_each(|v| match self.push_val(Val(*v)) {
-                            Some(_) => Ok(()),
-                            None => Err(ValidationError::TypeMismatch),
-                        })?;
+                    return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
+                        Some(_) => Ok(()),
+                        None => Err(ValidationError::TypeMismatch),
+                    })?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -1063,20 +990,15 @@ impl Validator for CodeValidator<'_> {
             }
 
             Select => {
-                self.pop_expected(Val(I32))
-                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 let t1 = self.pop_val().ok_or(ValidationError::TypeMismatch)?.clone();
                 let t2 = self.pop_val().ok_or(ValidationError::TypeMismatch)?.clone();
                 if (t1.is_num() && t2.is_num()) || (t1.is_vec() && t2.is_vec()) {
                     if t1 != t2 && t1 != Unknown && t2 != Unknown {
                         Err(ValidationError::TypeMismatch)
                     } else {
-                        self.push_val(if t1 == Unknown {
-                            t2.clone()
-                        } else {
-                            t1.clone()
-                        })
-                        .ok_or(ValidationError::TypeMismatch)?;
+                        self.push_val(if t1 == Unknown { t2.clone() } else { t1.clone() })
+                            .ok_or(ValidationError::TypeMismatch)?;
                         Ok(())
                     }
                 } else {
@@ -1087,8 +1009,7 @@ impl Validator for CodeValidator<'_> {
             RefFunc => {
                 if let InstructionData::Function { function_index: fi } = *inst.get_data() {
                     self.get_function_type(fi)?;
-                    self.push_val(Val(FuncRef))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.push_val(Val(FuncRef)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -1097,8 +1018,7 @@ impl Validator for CodeValidator<'_> {
 
             RefNull => {
                 if let InstructionData::RefType { ref_type } = *inst.get_data() {
-                    self.push_val(Val(ref_type))
-                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.push_val(Val(ref_type)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -1112,9 +1032,7 @@ impl Validator for CodeValidator<'_> {
 
             Nop => Ok(()),
 
-            _ => {
-                Err(ValidationError::UnimplementedInstruction)
-            }
+            _ => Err(ValidationError::UnimplementedInstruction),
         }
     }
 

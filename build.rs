@@ -1,7 +1,7 @@
 fn main() {
     // Tell Cargo to rerun this build script if any test fixture changes
     println!("cargo:rerun-if-changed=tests/spec");
-    
+
     // Also rerun if any JSON file in the spec directory changes
     let spec_dir = std::path::Path::new("tests/spec");
     if spec_dir.exists() {

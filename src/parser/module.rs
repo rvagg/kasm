@@ -80,7 +80,10 @@ impl Module {
         }
 
         // Check if it's exported
-        if let Some(export) = self.exports.exports.iter()
+        if let Some(export) = self
+            .exports
+            .exports
+            .iter()
             .find(|e| matches!(e.index, ExportIndex::Global(idx) if idx == index))
         {
             return Some(export.name.clone());
@@ -96,56 +99,26 @@ impl fmt::Display for Module {
         write!(f, " magic = 0x{:08x}", self.magic)?;
         write!(f, " version = {}", self.version)?;
         write!(f, " types = ").unwrap();
-        f.debug_set()
-            .entries(self.types.types.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.types.types.iter()).finish().unwrap();
         write!(f, " imports = ").unwrap();
-        f.debug_set()
-            .entries(self.imports.imports.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.imports.imports.iter()).finish().unwrap();
         write!(f, " functions = ").unwrap();
-        f.debug_set()
-            .entries(self.functions.functions.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.functions.functions.iter()).finish().unwrap();
         write!(f, " table = ").unwrap();
-        f.debug_set()
-            .entries(self.table.tables.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.table.tables.iter()).finish().unwrap();
         write!(f, " memory = ").unwrap();
-        f.debug_set()
-            .entries(self.memory.memory.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.memory.memory.iter()).finish().unwrap();
         write!(f, " globals = ").unwrap();
-        f.debug_set()
-            .entries(self.globals.globals.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.globals.globals.iter()).finish().unwrap();
         write!(f, " exports = ").unwrap();
-        f.debug_set()
-            .entries(self.exports.exports.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.exports.exports.iter()).finish().unwrap();
         write!(f, " start = {}", self.start.start)?;
         write!(f, " elements = ").unwrap();
-        f.debug_set()
-            .entries(self.elements.elements.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.elements.elements.iter()).finish().unwrap();
         write!(f, " code = ").unwrap();
-        f.debug_set()
-            .entries(self.code.code.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.code.code.iter()).finish().unwrap();
         write!(f, " data = ").unwrap();
-        f.debug_set()
-            .entries(self.data.data.iter())
-            .finish()
-            .unwrap();
+        f.debug_set().entries(self.data.data.iter()).finish().unwrap();
         Ok(())
     }
 }
@@ -271,10 +244,7 @@ impl TypeSection {
     }
 
     pub fn find(&self, function_type: &FunctionType) -> Option<u32> {
-        self.types
-            .iter()
-            .position(|t| t == function_type)
-            .map(|i| i as u32)
+        self.types.iter().position(|t| t == function_type).map(|i| i as u32)
     }
 }
 
@@ -355,11 +325,10 @@ impl ImportSection {
 
     pub fn get_table(&self, index: u32) -> Option<&TableType> {
         // return the index'th table, if we have that many
-        self.get_table_import(index)
-            .and_then(|i| match i.external_kind {
-                ExternalKind::Table(ref t) => Some(t),
-                _ => None,
-            })
+        self.get_table_import(index).and_then(|i| match i.external_kind {
+            ExternalKind::Table(ref t) => Some(t),
+            _ => None,
+        })
     }
 
     pub fn memory_count(&self) -> usize {
@@ -411,7 +380,10 @@ impl SectionToString for ImportSection {
                 ExternalKind::Function(ref f) => {
                     // Check if this function is re-exported
                     // Use the last export if there are multiple (for test compatibility)
-                    let display_name = if let Some(export) = unit.exports.exports.iter()
+                    let display_name = if let Some(export) = unit
+                        .exports
+                        .exports
+                        .iter()
                         .rev()
                         .find(|e| matches!(e.index, ExportIndex::Function(idx) if idx == function_count as u32))
                     {
@@ -689,10 +661,7 @@ impl GlobalSection {
     }
 
     pub fn find(&self, global: &Global) -> Option<u32> {
-        self.globals
-            .iter()
-            .position(|g| g == global)
-            .map(|i| i as u32)
+        self.globals.iter().position(|g| g == global).map(|i| i as u32)
     }
 
     pub fn get(&self, index: u32) -> Option<&Global> {
@@ -894,12 +863,7 @@ fn init_expr_to_offset(init: &[ast::Instruction]) -> Option<u32> {
     }
 }
 
-fn init_expr_to_string(
-    unit: &Module,
-    init: &[ast::Instruction],
-    as_unsigned: bool,
-    with_prefix: bool,
-) -> String {
+fn init_expr_to_string(unit: &Module, init: &[ast::Instruction], as_unsigned: bool, with_prefix: bool) -> String {
     let mut result: String = String::new();
     if with_prefix {
         result.push_str(" - init ");
@@ -944,10 +908,7 @@ fn init_expr_to_string(
                 if let ast::InstructionData::Global { global_index } = *init[0].get_data() {
                     match unit.imports.get_global_import(global_index) {
                         Some(import) => {
-                            result.push_str(&format!(
-                                "global={} <{}.{}>",
-                                global_index, import.module, import.name
-                            ));
+                            result.push_str(&format!("global={} <{}.{}>", global_index, import.module, import.name));
                         }
                         None => {
                             result.push_str(&format!("global={} <INVALID>", global_index));
@@ -1008,9 +969,7 @@ fn init_expr_to_string(
                             }
                         }
                         ast::InstructionType::GlobalGet => {
-                            if let ast::InstructionData::Global { global_index } =
-                                *instruction.get_data()
-                            {
+                            if let ast::InstructionData::Global { global_index } = *instruction.get_data() {
                                 result.push_str(&format!("{}", global_index));
                                 // TODO: global name?
                             }
@@ -1210,9 +1169,7 @@ impl CodeSection {
                     });
 
                 match instruction.get_type() {
-                    ast::InstructionType::Else | ast::InstructionType::End => {
-                        indent = indent.saturating_sub(1)
-                    }
+                    ast::InstructionType::Else | ast::InstructionType::End => indent = indent.saturating_sub(1),
                     _ => {}
                 }
 
@@ -1517,9 +1474,7 @@ impl Locals {
     }
 
     pub fn empty() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
+        Self { entries: Vec::new() }
     }
 
     pub fn len(&self) -> u64 {
@@ -1767,11 +1722,7 @@ impl SectionToString for DataSection {
                 let mut chars = String::new();
                 for i in (0..16).step_by(2) {
                     if pos + i + 1 < data.init.len() {
-                        byts.push_str(&format!(
-                            "{:02x}{:02x} ",
-                            data.init[pos + i],
-                            data.init[pos + i + 1]
-                        ));
+                        byts.push_str(&format!("{:02x}{:02x} ", data.init[pos + i], data.init[pos + i + 1]));
                     } else if pos + i < data.init.len() {
                         byts.push_str(&format!("{:02x}   ", data.init[pos + i]));
                     } else {
@@ -1947,11 +1898,7 @@ impl Module {
         let mut result = String::new();
         for (p, s) in components {
             if p.has_position() {
-                result.push_str(&format!(
-                    "{:>9} {}\n",
-                    s.header_prefix(),
-                    s.to_header_string()
-                ));
+                result.push_str(&format!("{:>9} {}\n", s.header_prefix(), s.to_header_string()));
             }
         }
 
@@ -2071,13 +2018,7 @@ pub enum ValueType {
 
 impl ValueType {
     pub fn is_value_type_byte(byte: u8) -> bool {
-        byte == 0x7f
-            || byte == 0x7e
-            || byte == 0x7d
-            || byte == 0x7c
-            || byte == 0x7b
-            || byte == 0x70
-            || byte == 0x6f
+        byte == 0x7f || byte == 0x7e || byte == 0x7d || byte == 0x7c || byte == 0x7b || byte == 0x70 || byte == 0x6f
     }
 
     pub fn decode(byte: u8) -> Result<Self, String> {
