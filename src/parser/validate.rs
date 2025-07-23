@@ -22,6 +22,9 @@ pub enum ValidationError {
     #[error("unknown table")]
     UnknownTable,
 
+    #[error("unknown memory")]
+    UnknownMemory,
+
     #[error("unknown element")]
     UnknownElement,
 
@@ -607,7 +610,10 @@ impl Validator for CodeValidator<'_> {
             }
 
             I32Load | I32Load8S | I32Load8U | I32Load16S | I32Load16U => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
@@ -622,7 +628,10 @@ impl Validator for CodeValidator<'_> {
             }
 
             I64Load | I64Load8S | I64Load8U | I64Load16S | I64Load16U | I64Load32S | I64Load32U => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
@@ -638,21 +647,30 @@ impl Validator for CodeValidator<'_> {
             }
 
             F32Load => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Load => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 3 /* 8 bytes = 2^3 */)
             }
 
             I32Store | I32Store8 | I32Store16 => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
@@ -667,7 +685,10 @@ impl Validator for CodeValidator<'_> {
             }
 
             I64Store | I64Store8 | I64Store16 | I64Store32 => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(
@@ -683,40 +704,59 @@ impl Validator for CodeValidator<'_> {
             }
 
             F32Store => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 2 /* 4 bytes = 2^2 */)
             }
 
             F64Store => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(inst, 3 /* 8 bytes = 2^3 */)
             }
 
             MemorySize => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
             MemoryGrow => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
             MemoryFill | MemoryCopy => {
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
             MemoryInit => {
-                // TODO: check that the memory index exists
+                // Check that memory exists (imported or declared)
+                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
+                    return Err(ValidationError::UnknownMemory);
+                }
                 if self.module.data_count.count == 0 {
                     return Err(ValidationError::DataCountSectionRequired);
                 }

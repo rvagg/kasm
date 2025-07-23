@@ -357,7 +357,7 @@ fn read_section_memory(
     }
 
     for _ in 0..count {
-        let limits = module::Limits::decode(bytes)?;
+        let limits = module::Limits::decode_memory_limits(bytes)?;
         memory.push(module::Memory { limits })
     }
 
@@ -523,7 +523,9 @@ impl module::Data {
             ref offset,
         } = mode
         {
-            if memory_index != 0 || imports.memory_count() as u32 + memory_count == 0 {
+            // Check if memory exists and memory_index is valid
+            let total_memory_count = imports.memory_count() as u32 + memory_count;
+            if memory_index >= total_memory_count {
                 return Err(
                     io::Error::new(io::ErrorKind::InvalidData, format!("unknown memory {memory_index}")).into(),
                 );
@@ -617,7 +619,7 @@ impl module::ExternalKind {
                 Ok(module::ExternalKind::Table(tabletype))
             }
             0x02 => {
-                let memtype = module::Limits::decode(bytes)?;
+                let memtype = module::Limits::decode_memory_limits(bytes)?;
                 Ok(module::ExternalKind::Memory(memtype))
             }
             0x03 => {
@@ -680,10 +682,56 @@ impl module::RefType {
 impl module::Limits {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
         let has_max = bytes.read_vu1()?;
-        Ok(module::Limits {
-            min: bytes.read_vu32()?,
-            max: if has_max { bytes.read_vu32()? } else { u32::MAX },
-        })
+        let min = bytes.read_vu32()?;
+        let max = if has_max { bytes.read_vu32()? } else { u32::MAX };
+
+        if min > max {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "size minimum must not be greater than maximum",
+            )
+            .into());
+        }
+
+        Ok(module::Limits { min, max })
+    }
+
+    pub fn decode_memory_limits(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+        let has_max = bytes.read_vu1()?;
+        let min = bytes.read_vu32()?;
+        let max = if has_max {
+            let max_val = bytes.read_vu32()?;
+            // Validate max when explicitly specified
+            if max_val > 65536 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "memory size must be at most 65536 pages (4GiB)",
+                )
+                .into());
+            }
+            max_val
+        } else {
+            u32::MAX
+        };
+
+        if min > max {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "size minimum must not be greater than maximum",
+            )
+            .into());
+        }
+
+        // Check 65536 page limit (4GiB) for memory min
+        if min > 65536 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "memory size must be at most 65536 pages (4GiB)",
+            )
+            .into());
+        }
+
+        Ok(module::Limits { min, max })
     }
 }
 
