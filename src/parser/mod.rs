@@ -685,14 +685,16 @@ impl module::Limits {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
         let has_max = bytes.read_vu1()?;
         let min = bytes.read_vu32()?;
-        let max = if has_max { bytes.read_vu32()? } else { u32::MAX };
+        let max = if has_max { Some(bytes.read_vu32()?) } else { None };
 
-        if min > max {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "size minimum must not be greater than maximum",
-            )
-            .into());
+        if let Some(max_val) = max {
+            if min > max_val {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "size minimum must not be greater than maximum",
+                )
+                .into());
+            }
         }
 
         Ok(module::Limits { min, max })
@@ -711,17 +713,19 @@ impl module::Limits {
                 )
                 .into());
             }
-            max_val
+            Some(max_val)
         } else {
-            u32::MAX
+            None
         };
 
-        if min > max {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "size minimum must not be greater than maximum",
-            )
-            .into());
+        if let Some(max_val) = max {
+            if min > max_val {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "size minimum must not be greater than maximum",
+                )
+                .into());
+            }
         }
 
         // Check 65536 page limit (4GiB) for memory min

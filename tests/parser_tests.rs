@@ -443,7 +443,7 @@ mod tests {
         {
             spectest.table.tables.push(kasm::parser::module::TableType {
                 ref_type: kasm::parser::module::RefType::FuncRef,
-                limits: kasm::parser::module::Limits { min: 10, max: u32::MAX },
+                limits: kasm::parser::module::Limits { min: 10, max: None },
             });
             let tableidx = (spectest.table.tables.len() - 1) as u32;
             spectest.exports.exports.push(kasm::parser::module::Export {
@@ -454,7 +454,7 @@ mod tests {
 
         {
             spectest.memory.memory.push(kasm::parser::module::Memory {
-                limits: kasm::parser::module::Limits { min: 1, max: u32::MAX },
+                limits: kasm::parser::module::Limits { min: 1, max: None },
             });
             let memidx = (spectest.memory.memory.len() - 1) as u32;
             spectest.exports.exports.push(kasm::parser::module::Export {

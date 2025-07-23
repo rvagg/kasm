@@ -407,10 +407,9 @@ impl SectionToString for ImportSection {
                             RefType::ExternRef => "externref",
                         },
                         t.limits.min,
-                        if t.limits.max < u32::MAX {
-                            format!(" max={}", t.limits.max as i32)
-                        } else {
-                            "".to_string()
+                        match t.limits.max {
+                            Some(max) => format!(" max={max}"),
+                            None => "".to_string(),
                         },
                         import.module,
                         import.name,
@@ -422,10 +421,9 @@ impl SectionToString for ImportSection {
                         " - memory[{}] pages: initial={}{} <- {}.{}\n",
                         memory_count,
                         m.min,
-                        if m.max < u32::MAX {
-                            format!(" max={}", m.max)
-                        } else {
-                            "".to_string()
+                        match m.max {
+                            Some(max) => format!(" max={max}"),
+                            None => "".to_string(),
                         },
                         import.module,
                         import.name
@@ -617,10 +615,9 @@ impl SectionToString for MemorySection {
                 " - memory[{}] pages: initial={}{}\n",
                 i,
                 memory.limits.min,
-                if memory.limits.max < u32::MAX {
-                    format!(" max={}", memory.limits.max)
-                } else {
-                    "".to_string()
+                match memory.limits.max {
+                    Some(max) => format!(" max={max}"),
+                    None => "".to_string(),
                 }
             ));
         }
@@ -1418,10 +1415,9 @@ impl fmt::Display for Import {
                     RefType::ExternRef => "externref",
                 },
                 table_type.limits.min,
-                if table_type.limits.max < u32::MAX {
-                    format!(" max={}", table_type.limits.max as i32)
-                } else {
-                    "".to_string()
+                match table_type.limits.max {
+                    Some(max) => format!(" max={max}"),
+                    None => "".to_string(),
                 },
                 self.module,
                 self.name
@@ -1525,7 +1521,7 @@ impl From<RefType> for ValueType {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Limits {
     pub min: u32,
-    pub max: u32, // TODO: is u32::MAX ok for unlimited?
+    pub max: Option<u32>,
 }
 
 impl Limits {
@@ -1538,17 +1534,21 @@ impl Limits {
             return false;
         }
         // If export has a max, import must have a max <= exported max
-        if exported.max != u32::MAX && (self.max == u32::MAX || self.max > exported.max) {
-            return false;
+        match (self.max, exported.max) {
+            (Some(import_max), Some(export_max)) => import_max <= export_max,
+            (Some(_), None) => true,  // Import has max, export doesn't - OK
+            (None, Some(_)) => false, // Import has no max, export does - not OK
+            (None, None) => true,     // Neither has max - OK
         }
-        // If export has no max, import can have any max (or no max)
-        true
     }
 }
 
 impl fmt::Display for Limits {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "min = {}, max = {}", self.min, self.max)
+        match self.max {
+            Some(max) => write!(f, "min = {}, max = {}", self.min, max),
+            None => write!(f, "min = {}", self.min),
+        }
     }
 }
 
@@ -1568,10 +1568,9 @@ impl fmt::Display for TableType {
                 RefType::ExternRef => "externref",
             },
             self.limits.min,
-            if self.limits.max < u32::MAX {
-                format!(" max={}", self.limits.max as i32)
-            } else {
-                "".to_string()
+            match self.limits.max {
+                Some(max) => format!(" max={max}"),
+                None => "".to_string(),
             }
         )
     }
