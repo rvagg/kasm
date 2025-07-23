@@ -695,18 +695,6 @@ impl InstructionCoding {
         }
     }
 
-    pub fn new_with_parse(typ: InstructionType, opcode: u8, name: &'static str, parse_bytes: ParseBytesFn) -> Self {
-        Self {
-            typ,
-            opcode,
-            subopcode: 0,
-            name,
-            parse_bytes,
-            emit_bytes: Arc::new(move |_| vec![opcode]),
-            emit_str: Arc::new(move |_, _| name.to_string()),
-        }
-    }
-
     pub fn new_with_options(
         typ: InstructionType,
         opcode: u8,
@@ -1073,9 +1061,10 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                 }),
             ),
             // Reference instructions¶ -----------------------------------------
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::RefNull,
                 0xd0,
+                0,
                 "ref.null",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
@@ -1085,11 +1074,32 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0xd0];
+                    if let InstructionData::RefType { ref_type } = &data {
+                        bytes.extend(ref_type.emit_bytes());
+                    } else {
+                        panic!("expected reftype instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data, _| {
+                    if let InstructionData::RefType { ref_type } = &data {
+                        match ref_type {
+                            super::module::ValueType::FuncRef => "ref.null func".to_string(),
+                            super::module::ValueType::ExternRef => "ref.null extern".to_string(),
+                            _ => panic!("invalid reftype for ref.null"),
+                        }
+                    } else {
+                        panic!("expected reftype instruction");
+                    }
+                }),
             ),
             InstructionCoding::new_simple(InstructionType::RefIsNull, 0xd1, "ref.is_null"),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::RefFunc,
                 0xd2,
+                0,
                 "ref.func",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
@@ -1098,6 +1108,23 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0xd2];
+                    if let InstructionData::Function { function_index } = &data {
+                        let mut func_bytes = reader::emit_vu32(*function_index);
+                        bytes.append(&mut func_bytes);
+                    } else {
+                        panic!("expected function instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data, _| {
+                    if let InstructionData::Function { function_index } = &data {
+                        format!("ref.func {function_index}")
+                    } else {
+                        panic!("expected function instruction");
+                    }
+                }),
             ),
             // Parametric instructions¶ ----------------------------------------
             InstructionCoding::new_simple(InstructionType::Drop, 0x1a, "drop"),
@@ -4637,6 +4664,20 @@ impl Instruction {
         decode_validate(&mut validator, ParseType::ReadTillEnd, bytes)
     }
 
+    /// Decode a constant expression that may contain ref.func instructions.
+    /// Used for global initializers where ref.func needs validation against total function count.
+    pub fn decode_constant_expression_with_ref_func(
+        bytes: &mut super::reader::Reader,
+        imports: &super::module::ImportSection,
+        return_type: super::module::ValueType,
+        total_functions: u32,
+    ) -> Result<Vec<Instruction>, DecodeError> {
+        let mut validator: super::validate::ConstantExpressionValidator<'_> =
+            super::validate::ConstantExpressionValidator::new(imports, return_type)
+                .with_function_count(total_functions);
+        decode_validate(&mut validator, ParseType::ReadTillEnd, bytes)
+    }
+
     pub fn decode_function(
         module: &super::module::Module,
         locals: &super::module::Locals,
@@ -4646,7 +4687,7 @@ impl Instruction {
         let ftype = module
             .get_function_type(function_index)
             .ok_or(super::validate::ValidationError::UnknownFunctionType)?;
-        let mut validator = super::validate::CodeValidator::new(module, locals, ftype);
+        let mut validator = super::validate::CodeValidator::new(module, locals, ftype, function_index);
         decode_validate(&mut validator, ParseType::ReadAll, bytes)
     }
 }

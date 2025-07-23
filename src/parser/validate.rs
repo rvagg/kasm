@@ -16,8 +16,8 @@ pub enum ValidationError {
     #[error("unknown type")]
     UnknownFunctionType,
 
-    #[error("unknown function")]
-    UnknownFunction,
+    #[error("unknown function {0}")]
+    UnknownFunction(u32),
 
     #[error("unknown table")]
     UnknownTable,
@@ -49,6 +49,9 @@ pub enum ValidationError {
     #[error("unknown block type")]
     UnknownBlockType,
 
+    #[error("undeclared function reference")]
+    UndeclaredFunctionReference,
+
     #[error("unimplemented instruction")]
     UnimplementedInstruction,
 
@@ -76,6 +79,7 @@ pub struct ConstantExpressionValidator<'a> {
     return_type: ValueType,
     instr_count: u32,
     has_end: bool,
+    total_functions: Option<u32>, // Total number of functions (imports + declared)
 }
 
 impl ConstantExpressionValidator<'_> {
@@ -88,7 +92,13 @@ impl ConstantExpressionValidator<'_> {
             return_type,
             instr_count: 0,
             has_end: false,
+            total_functions: None,
         }
+    }
+
+    pub fn with_function_count(mut self, count: u32) -> Self {
+        self.total_functions = Some(count);
+        self
     }
 
     fn global(&mut self, global_index: u32) -> Result<&GlobalType, ValidationError> {
@@ -146,9 +156,23 @@ impl Validator for ConstantExpressionValidator<'_> {
                     Err(ValidationError::InvalidInstruction)
                 }
             }
-            RefFunc => (self.return_type == FuncRef || self.return_type == ExternRef)
-                .then_some(())
-                .ok_or(ValidationError::TypeMismatch), // TODO: should check that the function index exists? but this implies the functions section is required
+            RefFunc => {
+                // First check the return type
+                if self.return_type != FuncRef && self.return_type != ExternRef {
+                    return Err(ValidationError::TypeMismatch);
+                }
+                // Then check if the function index is valid
+                if let InstructionData::Function { function_index } = *inst.get_data() {
+                    if let Some(total) = self.total_functions {
+                        if function_index >= total {
+                            return Err(ValidationError::UnknownFunction(function_index));
+                        }
+                    }
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidInstruction)
+                }
+            }
             GlobalGet => {
                 if let InstructionData::Global { global_index: gi } = *inst.get_data() {
                     let value_type = self.global(gi)?.value_type;
@@ -233,6 +257,7 @@ pub struct CodeValidator<'a> {
     vals: Vec<MaybeValue>,
     ctrls: Vec<CtrlFrame>,
     need_end: bool,
+    current_function_index: u32,
 }
 
 impl<'a> CodeValidator<'a> {
@@ -240,6 +265,7 @@ impl<'a> CodeValidator<'a> {
         module: &'a super::module::Module,
         locals: &'a super::module::Locals,
         function_type: &'a FunctionType,
+        current_function_index: u32,
     ) -> CodeValidator<'a> {
         let mut v = CodeValidator {
             module,
@@ -249,6 +275,7 @@ impl<'a> CodeValidator<'a> {
             vals: vec![],
             ctrls: vec![],
             need_end: false,
+            current_function_index,
         };
 
         // push the return types but leave the parameters blank as they aren't on the stack
@@ -413,13 +440,13 @@ impl<'a> CodeValidator<'a> {
             self.module
                 .imports
                 .get_function_type_index(fi)
-                .ok_or(ValidationError::UnknownFunction)
+                .ok_or(ValidationError::UnknownFunction(fi))
                 .and_then(|ti| self.get_type(ti))
         } else {
             self.module
                 .functions
                 .get((fi as u8) - (self.module.imports.function_count() as u8))
-                .ok_or(ValidationError::UnknownFunction)
+                .ok_or(ValidationError::UnknownFunction(fi))
                 .and_then(|f| self.get_type(f.ftype_index))
         }
     }
@@ -1120,6 +1147,12 @@ impl Validator for CodeValidator<'_> {
             RefFunc => {
                 if let InstructionData::Function { function_index: fi } = *inst.get_data() {
                     self.get_function_type(fi)?;
+                    // Check if this is a self-reference
+                    // During validation of a function body, that function is not yet declared
+                    // So it cannot reference itself with ref.func
+                    if fi == self.current_function_index {
+                        return Err(ValidationError::UndeclaredFunctionReference);
+                    }
                     self.push_val(Val(FuncRef)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
@@ -1134,6 +1167,17 @@ impl Validator for CodeValidator<'_> {
                 } else {
                     Err(ValidationError::InvalidInstruction)
                 }
+            }
+
+            RefIsNull => {
+                // ref.is_null pops a reference type and pushes i32
+                let ref_type = self.pop_val().ok_or(ValidationError::TypeMismatch)?;
+                // Check that popped value is a reference type
+                if !ref_type.is_ref() {
+                    return Err(ValidationError::TypeMismatch);
+                }
+                self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
             Drop => {

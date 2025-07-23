@@ -119,7 +119,12 @@ fn read_sections(
             &mut unit.memory as &mut dyn module::Positional
         }
         6 => {
-            read_section_global(bytes, &mut unit.globals, &unit.imports)?;
+            read_section_global(
+                bytes,
+                &mut unit.globals,
+                &unit.imports,
+                (unit.imports.function_count() + unit.functions.functions.len()) as u32,
+            )?;
             &mut unit.globals as &mut dyn module::Positional
         }
         7 => {
@@ -273,7 +278,7 @@ fn read_section_import(
 impl module::Import {
     pub fn decode(
         reader: &mut reader::Reader,
-        module_registry: &HashMap<String, module::Module>,
+        _module_registry: &HashMap<String, module::Module>,
         types: &module::TypeSection,
         _memory: &module::MemorySection,
         _tables: &module::TableSection,
@@ -286,23 +291,10 @@ impl module::Import {
                 return Err(e);
             }
         };
-        // Minimal validation: check if the import exists (but not compatibility)
-        // Full compatibility validation should happen at instantiation time
-        let import_mod_opt = module_registry.get(&module);
-        if let Some(import_mod) = import_mod_opt {
-            // Check if the export exists
-            let _imported_type = import_mod
-                .exports
-                .exports
-                .iter()
-                .find(|e| e.name == name)
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown import: {module}::{name}"))
-                })?;
-
-            // Type compatibility validation happens at instantiation time, not parse time
-            // This allows modules to parse successfully even with incompatible imports
-        }
+        // Import validation is deferred to instantiation time
+        // This allows modules to parse successfully even if imports are not available
+        // during parsing. The spec requires that we validate structure during parsing
+        // but not existence or type compatibility of imports.
         Ok(module::Import {
             external_kind,
             module,
@@ -644,11 +636,20 @@ impl module::GlobalType {
 }
 
 impl module::Global {
-    pub fn decode(bytes: &mut reader::Reader, imports: &module::ImportSection) -> Result<Self, ast::DecodeError> {
+    pub fn decode(
+        bytes: &mut reader::Reader,
+        imports: &module::ImportSection,
+        total_functions: u32,
+    ) -> Result<Self, ast::DecodeError> {
         let global_type = module::GlobalType::decode(bytes)?;
         Ok(module::Global {
             global_type,
-            init: ast::Instruction::decode_constant_expression(bytes, imports, global_type.value_type)?,
+            init: ast::Instruction::decode_constant_expression_with_ref_func(
+                bytes,
+                imports,
+                global_type.value_type,
+                total_functions,
+            )?,
         })
     }
 }
@@ -657,11 +658,12 @@ fn read_section_global(
     bytes: &mut reader::Reader,
     globals: &mut module::GlobalSection,
     imports: &module::ImportSection,
+    total_functions: u32,
 ) -> Result<(), ast::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
-        let data = module::Global::decode(bytes, imports)?;
+        let data = module::Global::decode(bytes, imports, total_functions)?;
         globals.globals.push(data);
     }
 

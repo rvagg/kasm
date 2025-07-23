@@ -1,0 +1,22 @@
+{
+  "bin": {
+    "ref_null.0.wasm": "AGFzbQEAAAABCQJgAAFvYAABcAMDAgABBgsCbwDQbwtwANBwCwcXAglleHRlcm5yZWYAAAdmdW5jcmVmAAEKCwIEANBvCwQA0HAL"
+  },
+  "spec": {"source_filename": "/workspace/wasm-spec/test/core/ref_null.wast",
+ "commands": [
+  {"type": "module", "line": 1, "filename": "ref_null.0.wasm"}, 
+  {"type": "assert_return", "line": 9, "action": {"type": "invoke", "field": "externref", "args": []}, "expected": [{"type": "externref", "value": "null"}]}, 
+  {"type": "assert_return", "line": 10, "action": {"type": "invoke", "field": "funcref", "args": []}, "expected": [{"type": "funcref", "value": "null"}]}]},
+  "code": [
+    "(module \n  (func (export \"externref\") (result externref) (ref.null extern))\n  (func (export \"funcref\") (result funcref) (ref.null func)) (global externref (ref.null extern)) (global funcref (ref.null func)))",
+    "(assert_return (invoke \"externref\") (ref.null extern))",
+    "(assert_return (invoke \"funcref\") (ref.null func))"
+  ],
+  "dump": {
+    "ref_null.0.wasm": {
+      "header": "\nref_null.0.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x00000013 (size=0x00000009) count: 2\n Function start=0x00000015 end=0x00000018 (size=0x00000003) count: 2\n   Global start=0x0000001a end=0x00000025 (size=0x0000000b) count: 2\n   Export start=0x00000027 end=0x0000003e (size=0x00000017) count: 2\n     Code start=0x00000040 end=0x0000004b (size=0x0000000b) count: 2\n",
+      "details": "\nref_null.0.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[2]:\n - type[0] () -> externref\n - type[1] () -> funcref\nFunction[2]:\n - func[0] sig=0 <externref>\n - func[1] sig=1 <funcref>\nGlobal[2]:\n - global[0] externref mutable=0 - init ref.null externref\n - global[1] funcref mutable=0 - init ref.null funcref\nExport[2]:\n - func[0] <externref> -> \"externref\"\n - func[1] <funcref> -> \"funcref\"\nCode[2]:\n - func[0] size=4 <externref>\n - func[1] size=4 <funcref>\n",
+      "disassemble": "\nref_null.0.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n000042 func[0] <externref>:\n 000043: d0 6f                      | ref.null extern\n 000045: 0b                         | end\n000047 func[1] <funcref>:\n 000048: d0 70                      | ref.null func\n 00004a: 0b                         | end\n"
+    }
+  }
+}
