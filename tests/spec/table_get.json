@@ -1,0 +1,53 @@
+{
+  "bin": {
+    "table_get.0.wasm": "AGFzbQEAAAABFwVgAABgAW8AYAF/AW9gAX8BcGABfwF/AwYFAAECAwQEBwJvAAJwAAMHOAQEaW5pdAABDWdldC1leHRlcm5yZWYAAgtnZXQtZnVuY3JlZgADD2lzX251bGwtZnVuY3JlZgAECQkBAgFBAQsAAQAKKwUCAAsQAEEBIAAmAEECQQElASYBCwYAIAAlAAsGACAAJQELBwAgABAD0Qs=",
+    "table_get.1.wasm": "AGFzbQEAAAABBQFgAAFvAwIBAAQEAW8ACgoGAQQAJQAL",
+    "table_get.2.wasm": "AGFzbQEAAAABBQFgAAFvAwIBAAQEAW8ACgoLAQkAQwAAgD8lAAs=",
+    "table_get.3.wasm": "AGFzbQEAAAABBAFgAAADAgEABAQBbwAKCggBBgBBACUACw==",
+    "table_get.4.wasm": "AGFzbQEAAAABBQFgAAFwAwIBAAQEAW8ACgoIAQYAQQElAAs=",
+    "table_get.5.wasm": "AGFzbQEAAAABBQFgAAFwAwIBAAQHAnAAAW8AAQoIAQYAQQAlAQs="
+  },
+  "spec": {"source_filename": "/workspace/wasm-spec/test/core/table_get.wast",
+ "commands": [
+  {"type": "module", "line": 1, "filename": "table_get.0.wasm"}, 
+  {"type": "action", "line": 24, "action": {"type": "invoke", "field": "init", "args": [{"type": "externref", "value": "1"}]}, "expected": []}, 
+  {"type": "assert_return", "line": 26, "action": {"type": "invoke", "field": "get-externref", "args": [{"type": "i32", "value": "0"}]}, "expected": [{"type": "externref", "value": "null"}]}, 
+  {"type": "assert_return", "line": 27, "action": {"type": "invoke", "field": "get-externref", "args": [{"type": "i32", "value": "1"}]}, "expected": [{"type": "externref", "value": "1"}]}, 
+  {"type": "assert_return", "line": 29, "action": {"type": "invoke", "field": "get-funcref", "args": [{"type": "i32", "value": "0"}]}, "expected": [{"type": "funcref", "value": "null"}]}, 
+  {"type": "assert_return", "line": 30, "action": {"type": "invoke", "field": "is_null-funcref", "args": [{"type": "i32", "value": "1"}]}, "expected": [{"type": "i32", "value": "0"}]}, 
+  {"type": "assert_return", "line": 31, "action": {"type": "invoke", "field": "is_null-funcref", "args": [{"type": "i32", "value": "2"}]}, "expected": [{"type": "i32", "value": "0"}]}, 
+  {"type": "assert_trap", "line": 33, "action": {"type": "invoke", "field": "get-externref", "args": [{"type": "i32", "value": "2"}]}, "text": "out of bounds table access", "expected": [{"type": "externref"}]}, 
+  {"type": "assert_trap", "line": 34, "action": {"type": "invoke", "field": "get-funcref", "args": [{"type": "i32", "value": "3"}]}, "text": "out of bounds table access", "expected": [{"type": "funcref"}]}, 
+  {"type": "assert_trap", "line": 35, "action": {"type": "invoke", "field": "get-externref", "args": [{"type": "i32", "value": "4294967295"}]}, "text": "out of bounds table access", "expected": [{"type": "externref"}]}, 
+  {"type": "assert_trap", "line": 36, "action": {"type": "invoke", "field": "get-funcref", "args": [{"type": "i32", "value": "4294967295"}]}, "text": "out of bounds table access", "expected": [{"type": "funcref"}]}, 
+  {"type": "assert_invalid", "line": 42, "filename": "table_get.1.wasm", "text": "type mismatch", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 51, "filename": "table_get.2.wasm", "text": "type mismatch", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 61, "filename": "table_get.3.wasm", "text": "type mismatch", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 70, "filename": "table_get.4.wasm", "text": "type mismatch", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 80, "filename": "table_get.5.wasm", "text": "type mismatch", "module_type": "binary"}]},
+  "code": [
+    "(module (table $t2 2 externref) (table $t3 3 funcref) (elem (table $t3) (i32.const 1) $dummy)\n  (func $dummy)\n  (func (export \"init\") (param $r externref) (table.set $t2 (i32.const 1) (local.get $r)) (table.set $t3 (i32.const 2) (table.get $t3 (i32.const 1))) )\n  (func (export \"get-externref\") (param $i i32) (result externref) (table.get (local.get $i)) )\n  (func $f3 (export \"get-funcref\") (param $i i32) (result funcref) (table.get $t3 (local.get $i)) )\n  (func (export \"is_null-funcref\") (param $i i32) (result i32) (ref.is_null (call $f3 (local.get $i))) ))",
+    "(invoke \"init\" (ref.extern 1))",
+    "(assert_return (invoke \"get-externref\" (i32.const 0)) (ref.null extern))",
+    "(assert_return (invoke \"get-externref\" (i32.const 1)) (ref.extern 1))",
+    "(assert_return (invoke \"get-funcref\" (i32.const 0)) (ref.null func))",
+    "(assert_return (invoke \"is_null-funcref\" (i32.const 1)) (i32.const 0))",
+    "(assert_return (invoke \"is_null-funcref\" (i32.const 2)) (i32.const 0))",
+    "(assert_trap (invoke \"get-externref\" (i32.const 2)) \"out of bounds table access\")",
+    "(assert_trap (invoke \"get-funcref\" (i32.const 3)) \"out of bounds table access\")",
+    "(assert_trap (invoke \"get-externref\" (i32.const -1)) \"out of bounds table access\")",
+    "(assert_trap (invoke \"get-funcref\" (i32.const -1)) \"out of bounds table access\")",
+    "(assert_invalid (module (table $t 10 externref) (func $type-index-empty-vs-i32 (result externref) (table.get $t) ) ) \"type mismatch\")",
+    "(assert_invalid (module (table $t 10 externref) (func $type-index-f32-vs-i32 (result externref) (table.get $t (f32.const 1)) ) ) \"type mismatch\")",
+    "(assert_invalid (module (table $t 10 externref) (func $type-result-externref-vs-empty (table.get $t (i32.const 0)) ) ) \"type mismatch\")",
+    "(assert_invalid (module (table $t 10 externref) (func $type-result-externref-vs-funcref (result funcref) (table.get $t (i32.const 1)) ) ) \"type mismatch\")",
+    "(assert_invalid (module (table $t1 1 funcref) (table $t2 1 externref) (func $type-result-externref-vs-funcref-multi (result funcref) (table.get $t2 (i32.const 0)) ) ) \"type mismatch\")"
+  ],
+  "dump": {
+    "table_get.0.wasm": {
+      "header": "\ntable_get.0.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x00000021 (size=0x00000017) count: 5\n Function start=0x00000023 end=0x00000029 (size=0x00000006) count: 5\n    Table start=0x0000002b end=0x00000032 (size=0x00000007) count: 2\n   Export start=0x00000034 end=0x0000006c (size=0x00000038) count: 4\n     Elem start=0x0000006e end=0x00000077 (size=0x00000009) count: 1\n     Code start=0x00000079 end=0x000000a4 (size=0x0000002b) count: 5\n",
+      "details": "\ntable_get.0.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[5]:\n - type[0] () -> nil\n - type[1] (externref) -> nil\n - type[2] (i32) -> externref\n - type[3] (i32) -> funcref\n - type[4] (i32) -> i32\nFunction[5]:\n - func[0] sig=0\n - func[1] sig=1 <init>\n - func[2] sig=2 <get-externref>\n - func[3] sig=3 <get-funcref>\n - func[4] sig=4 <is_null-funcref>\nTable[2]:\n - table[0] type=externref initial=2\n - table[1] type=funcref initial=3\nExport[4]:\n - func[1] <init> -> \"init\"\n - func[2] <get-externref> -> \"get-externref\"\n - func[3] <get-funcref> -> \"get-funcref\"\n - func[4] <is_null-funcref> -> \"is_null-funcref\"\nElem[1]:\n - segment[0] flags=2 table=1 count=1 - init i32=1\n  - elem[1] = ref.func:0\nCode[5]:\n - func[0] size=2\n - func[1] size=16 <init>\n - func[2] size=6 <get-externref>\n - func[3] size=6 <get-funcref>\n - func[4] size=7 <is_null-funcref>\n",
+      "disassemble": "\ntable_get.0.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00007b func[0]:\n 00007c: 0b                         | end\n00007e func[1] <init>:\n 00007f: 41 01                      | i32.const 1\n 000081: 20 00                      | local.get 0\n 000083: 26 00                      | table.set 0\n 000085: 41 02                      | i32.const 2\n 000087: 41 01                      | i32.const 1\n 000089: 25 01                      | table.get 1\n 00008b: 26 01                      | table.set 1\n 00008d: 0b                         | end\n00008f func[2] <get-externref>:\n 000090: 20 00                      | local.get 0\n 000092: 25 00                      | table.get 0\n 000094: 0b                         | end\n000096 func[3] <get-funcref>:\n 000097: 20 00                      | local.get 0\n 000099: 25 01                      | table.get 1\n 00009b: 0b                         | end\n00009d func[4] <is_null-funcref>:\n 00009e: 20 00                      | local.get 0\n 0000a0: 10 03                      | call 3 <get-funcref>\n 0000a2: d1                         | ref.is_null\n 0000a3: 0b                         | end\n"
+    }
+  }
+}

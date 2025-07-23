@@ -821,12 +821,26 @@ impl Validator for CodeValidator<'_> {
             }
 
             TableCopy => {
-                // TODO: check that the destination table index exists
-                // TODO: check that the source element index exists (for TableInit)
-                // TODO: check that the source table index exists (for TableInit)
-                // TODO: check that the reference type of the source and destination match
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
+                if let InstructionData::TableCopy {
+                    src_table_index,
+                    dst_table_index,
+                    ..
+                } = *inst.get_data()
+                {
+                    let src_table = self
+                        .module
+                        .get_table(src_table_index)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    let dst_table = self
+                        .module
+                        .get_table(dst_table_index)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    if src_table.ref_type != dst_table.ref_type {
+                        return Err(ValidationError::TypeMismatch);
+                    }
+                }
                 Ok(())
             }
 
@@ -861,8 +875,16 @@ impl Validator for CodeValidator<'_> {
             }
 
             ElemDrop => {
-                // TODO: check that the element index exists
-                Ok(())
+                if let InstructionData::Elem { elem_index, .. } = *inst.get_data() {
+                    self.module
+                        .elements
+                        .elements
+                        .get(elem_index as usize)
+                        .ok_or(ValidationError::UnknownElement)?;
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidInstruction)
+                }
             }
 
             DataDrop => {
@@ -1186,6 +1208,54 @@ impl Validator for CodeValidator<'_> {
             }
 
             Nop => Ok(()),
+
+            TableSize => {
+                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
+                    // Verify table exists
+                    self.module
+                        .get_table(table_index)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    // table.size pushes the current size as i32
+                    self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidInstruction)
+                }
+            }
+
+            TableGrow => {
+                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
+                    let table = self
+                        .module
+                        .get_table(table_index)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    // table.grow pops: [n:i32, init:reftype] and pushes: [prev_size:i32]
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(table.ref_type.into()))
+                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidInstruction)
+                }
+            }
+
+            TableFill => {
+                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
+                    let table = self
+                        .module
+                        .get_table(table_index)
+                        .ok_or(ValidationError::UnknownTable)?;
+                    // table.fill pops: [i:i32, val:reftype, n:i32]
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(table.ref_type.into()))
+                        .ok_or(ValidationError::TypeMismatch)?;
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidInstruction)
+                }
+            }
 
             _ => Err(ValidationError::UnimplementedInstruction),
         }

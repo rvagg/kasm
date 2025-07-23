@@ -1200,7 +1200,10 @@ impl CodeSection {
                     && coding.subopcode != /* memory.fill gets an out */ 11
                     && coding.subopcode != /* table.init gets an out */ 12
                     && coding.subopcode != /* elem.drop gets an out */ 13
-                    && coding.subopcode != /* table.copy gets an out */ 14;
+                    && coding.subopcode != /* table.copy gets an out */ 14
+                    && coding.subopcode != /* table.grow gets an out */ 15
+                    && coding.subopcode != /* table.size gets an out */ 16
+                    && coding.subopcode != /* table.fill gets an out */ 17;
                 let mut p = pos as u32;
                 // if crop_last_2, correct p to account for the skipped bytes
                 if crop_last_2 {
