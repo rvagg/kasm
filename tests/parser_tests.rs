@@ -160,60 +160,15 @@ mod tests {
 
     // Define a parameterized test
     #[rstest]
-    #[case("tests/spec/nop.json")]
-    #[case("tests/spec/type.json")]
-    #[case("tests/spec/global.json")]
-    #[case("tests/spec/unreachable.json")]
-    #[case("tests/spec/return.json")]
-    #[case("tests/spec/address.json")]
-    #[case("tests/spec/align.json")]
-    #[case("tests/spec/binary.json")]
-    #[case("tests/spec/binary-leb128.json")]
-    #[case("tests/spec/block.json")]
-    #[case("tests/spec/br.json")]
-    #[case("tests/spec/br_if.json")]
-    #[case("tests/spec/br_table.json")]
-    #[case("tests/spec/bulk.json")]
-    #[case("tests/spec/call.json")]
-    #[case("tests/spec/call_indirect.json")]
-    #[case("tests/spec/const.json")]
-    #[case("tests/spec/conversions.json")]
-    #[case("tests/spec/custom.json")]
-    #[case("tests/spec/data.json")]
-    #[case("tests/spec/elem.json")]
-    #[case("tests/spec/endianness.json")]
-    #[case("tests/spec/exports.json")]
-    #[case("tests/spec/f32.json")]
-    #[case("tests/spec/f32_bitwise.json")]
-    #[case("tests/spec/f32_cmp.json")]
-    #[case("tests/spec/f64.json")]
-    #[case("tests/spec/f64_bitwise.json")]
-    #[case("tests/spec/f64_cmp.json")]
-    #[case("tests/spec/fac.json")]
-    #[case("tests/spec/float_exprs.json")]
-    #[case("tests/spec/float_literals.json")]
-    #[case("tests/spec/float_memory.json")]
-    #[case("tests/spec/float_misc.json")]
-    #[case("tests/spec/forward.json")]
-    #[case("tests/spec/func.json")]
-    #[case("tests/spec/func_ptrs.json")]
-    #[case("tests/spec/i32.json")]
-    #[case("tests/spec/i64.json")]
-    #[case("tests/spec/imports.json")]
-    #[case("tests/spec/local_get.json")]
-    #[case("tests/spec/local_set.json")]
-    #[case("tests/spec/local_tee.json")]
-    #[case("tests/spec/loop.json")]
-    #[case("tests/spec/memory_size.json")]
-    #[case("tests/spec/select.json")]
-    fn test_with_file(#[case] path: PathBuf) {
+    fn test_with_file(#[files("tests/spec/*.json")] path: PathBuf) {
         println!("testing file: {}", path.display());
 
         let file = path.to_string_lossy().to_string();
         let json_string = fs::read_to_string(&file).unwrap_or_else(|_| panic!("couldn't read file: {}", file));
         let test_data: TestData = serde_json::from_str(&json_string).unwrap();
 
-        let mut last_module: Option<module::Module> = None;
+        let mut parsed_modules: HashMap<String, module::Module> = HashMap::new();
+        let mut last_module_name: Option<String> = None;
         let mut module_registry: HashMap<String, module::Module> = HashMap::new();
 
         setup_spectest(&mut module_registry);
@@ -234,7 +189,9 @@ mod tests {
                         println!("Error parsing module {}: {:?}", cmd.filename, err);
                         panic!("Failed to parse: {}", err);
                     }
-                    last_module = Some(parsed.unwrap());
+                    let module = parsed.unwrap();
+                    parsed_modules.insert(cmd.filename.clone(), module);
+                    last_module_name = Some(cmd.filename.clone());
                 }
                 Command::AssertReturnCommand(cmd) => {
                     println!(
@@ -253,7 +210,17 @@ mod tests {
                         "RegisterCommand: line = {}, action type = {}, as = {}",
                         cmd.line, cmd.r#type, cmd.r#as
                     );
-                    if let Some(module) = last_module.take() {
+                    // Register the last parsed module
+                    // We re-parse to avoid moving the module out of parsed_modules,
+                    // ensuring dump comparisons can still run on all modules
+                    if let Some(module_name) = &last_module_name {
+                        let bin = &test_data.bin[module_name].0;
+                        let module = kasm::parser::parse(
+                            &module_registry,
+                            format!("{}/register", module_name).as_str(),
+                            &mut kasm::parser::reader::Reader::new(bin.clone()),
+                        )
+                        .unwrap_or_else(|e| panic!("Failed to re-parse {} for registration: {}", module_name, e));
                         module_registry.insert(cmd.r#as.clone(), module);
                     } else {
                         panic!("No module to register for command: {}", cmd.r#as);
@@ -370,28 +337,36 @@ mod tests {
         for (filename, dump) in test_data.dump.iter() {
             println!("testing to_*_string for file: {filename}");
 
-            let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
-            let parsed = kasm::parser::parse(&module_registry, filename, bytes)
-                .unwrap_or_else(|_| panic!("failed to parse {}", filename));
+            // Use the already parsed module if available, otherwise parse it
+            let parsed = if let Some(module) = parsed_modules.get(filename) {
+                module
+            } else {
+                // This module wasn't part of the commands, so parse it now for dump comparison
+                let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
+                let new_module = kasm::parser::parse(&module_registry, filename, bytes)
+                    .unwrap_or_else(|_| panic!("failed to parse {}", filename));
+                parsed_modules.insert(filename.clone(), new_module);
+                parsed_modules.get(filename).unwrap()
+            };
 
             compare_format(
                 "Sections",
                 &dump.header,
-                &parsed,
+                parsed,
                 filename,
                 module::ParsedUnitFormat::Header,
             );
             compare_format(
                 "Section Details",
                 &dump.details,
-                &parsed,
+                parsed,
                 filename,
                 module::ParsedUnitFormat::Details,
             );
             compare_format(
                 "Code Disassembly",
                 &dump.disassemble,
-                &parsed,
+                parsed,
                 filename,
                 module::ParsedUnitFormat::Disassemble,
             );
