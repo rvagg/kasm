@@ -54,11 +54,17 @@ pub enum ValidationError {
 
     #[error("global is immutable")]
     GlobalIsImmutable,
+
+    #[error("invalid result arity")]
+    InvalidResultArity,
 }
 
 pub trait Validator {
     fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError>;
     fn ended(&mut self) -> bool;
+    fn finalize(&mut self) -> Result<(), ValidationError> {
+        Ok(())
+    }
 }
 
 pub struct ConstantExpressionValidator<'a> {
@@ -220,6 +226,7 @@ pub struct CodeValidator<'a> {
     module: &'a super::module::Module,
     locals: &'a super::module::Locals,
     params: Vec<ValueType>,
+    return_types: Vec<ValueType>,
     vals: Vec<MaybeValue>,
     ctrls: Vec<CtrlFrame>,
     need_end: bool,
@@ -235,6 +242,7 @@ impl<'a> CodeValidator<'a> {
             module,
             locals,
             params: function_type.parameters.clone(),
+            return_types: function_type.return_types.clone(),
             vals: vec![],
             ctrls: vec![],
             need_end: false,
@@ -304,10 +312,11 @@ impl<'a> CodeValidator<'a> {
         if self.ctrls.is_empty() {
             Err(ValidationError::UnexpectedToken)
         } else {
-            let end_types_clone = self.ctrls.last().unwrap().end_types.clone();
-            if self.pop_expecteds(end_types_clone).is_none()
-                || self.vals.len() != self.ctrls.last().unwrap().height as usize
-            {
+            let ctrl = self.ctrls.last().unwrap();
+            let end_types_clone = ctrl.end_types.clone();
+            let height = ctrl.height as usize;
+
+            if self.pop_expecteds(end_types_clone).is_none() || self.vals.len() != height {
                 Err(ValidationError::TypeMismatch)
             } else {
                 Ok(self.ctrls.pop().unwrap())
@@ -849,6 +858,7 @@ impl Validator for CodeValidator<'_> {
                 if ctrl.instruction != If {
                     Err(ValidationError::InvalidInstruction)
                 } else {
+                    // Mark that we had an else by pushing Else control frame
                     self.push_ctrl(Else, ctrl.start_types, ctrl.end_types);
                     Ok(())
                 }
@@ -856,6 +866,13 @@ impl Validator for CodeValidator<'_> {
 
             End => {
                 let ctrl = self.pop_ctrl()?;
+
+                // Special check: typed if without else is invalid
+                // This happens when we pop an If control (not Else) that has result types
+                if ctrl.instruction == If && !ctrl.end_types.is_empty() && !ctrl.unreachable {
+                    return Err(ValidationError::TypeMismatch);
+                }
+
                 self.push_vals(ctrl.end_types).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
@@ -996,19 +1013,67 @@ impl Validator for CodeValidator<'_> {
             }
 
             Select => {
+                // Select pops: [t t i32] and pushes: [t]
+                // Note: If there aren't enough values on the stack, we report TypeMismatch
+                // rather than InvalidResultArity. This differs from some validators but
+                // both errors are valid for malformed select instructions.
+
+                // Pop condition (i32)
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                let t1 = self.pop_val().ok_or(ValidationError::TypeMismatch)?.clone();
+                // Pop two values of same type
                 let t2 = self.pop_val().ok_or(ValidationError::TypeMismatch)?.clone();
+                let t1 = self.pop_val().ok_or(ValidationError::TypeMismatch)?.clone();
+
+                // Check if types are compatible
                 if (t1.is_num() && t2.is_num()) || (t1.is_vec() && t2.is_vec()) {
                     if t1 != t2 && t1 != Unknown && t2 != Unknown {
                         Err(ValidationError::TypeMismatch)
                     } else {
+                        // Push the result type
                         self.push_val(if t1 == Unknown { t2.clone() } else { t1.clone() })
                             .ok_or(ValidationError::TypeMismatch)?;
                         Ok(())
                     }
                 } else {
                     Err(ValidationError::TypeMismatch)
+                }
+            }
+
+            SelectT => {
+                // SelectT has explicit type immediates in the instruction data
+                if let InstructionData::ValueType { value_types } = inst.get_data() {
+                    if value_types.is_empty() {
+                        // Empty result arity is a specific error
+                        return Err(ValidationError::InvalidResultArity);
+                    }
+                    if value_types.len() != 1 {
+                        // Select should have exactly one result type.
+                        return Err(ValidationError::InvalidResultArity);
+                    }
+                    // Decode the value type from byte
+                    let result_type = ValueType::decode(value_types[0]).map_err(|_| ValidationError::TypeMismatch)?;
+
+                    // Pop condition (i32)
+                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+
+                    // Pop two values of the result type
+                    let t2 = self.pop_val().ok_or(ValidationError::TypeMismatch)?;
+                    let t1 = self.pop_val().ok_or(ValidationError::TypeMismatch)?;
+
+                    // Check that popped values match the expected type
+                    let expected = Val(result_type);
+                    if !matches!(t1, Unknown) && t1 != expected {
+                        return Err(ValidationError::TypeMismatch);
+                    }
+                    if !matches!(t2, Unknown) && t2 != expected {
+                        return Err(ValidationError::TypeMismatch);
+                    }
+
+                    // Push result type
+                    self.push_val(Val(result_type)).ok_or(ValidationError::TypeMismatch)?;
+                    Ok(())
+                } else {
+                    Err(ValidationError::InvalidInstruction)
                 }
             }
 
@@ -1044,6 +1109,33 @@ impl Validator for CodeValidator<'_> {
 
     fn ended(&mut self) -> bool {
         self.need_end && self.ctrls.is_empty()
+    }
+
+    fn finalize(&mut self) -> Result<(), ValidationError> {
+        // After all instructions are processed, check that the stack state
+        // matches the expected function return types
+        if !self.ctrls.is_empty() {
+            return Err(ValidationError::InvalidInstruction);
+        }
+
+        // Check that the stack has exactly the expected return values
+        let expected_count = self.return_types.len();
+        let actual_count = self.vals.len();
+
+        if actual_count != expected_count {
+            return Err(ValidationError::InvalidResultArity);
+        }
+
+        // Check that the types match
+        for (i, expected_type) in self.return_types.iter().enumerate() {
+            if let Some(Val(actual_type)) = self.vals.get(i) {
+                if actual_type != expected_type {
+                    return Err(ValidationError::TypeMismatch);
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::parser::reader;
 
-use super::module::Module;
+use super::module::{Module, ValueType};
 
 #[derive(PartialEq, Clone, Copy, Debug, Hash, Eq)]
 pub enum InstructionType {
@@ -1102,17 +1102,42 @@ pub fn get_codings() -> &'static Vec<InstructionCoding> {
             // Parametric instructions¶ ----------------------------------------
             InstructionCoding::new_simple(InstructionType::Drop, 0x1a, "drop"),
             InstructionCoding::new_simple(InstructionType::Select, 0x1b, "select"),
-            InstructionCoding::new_with_parse(
+            InstructionCoding::new_with_options(
                 InstructionType::SelectT,
                 0x1c,
-                "selectt", // TODO: name is just "select?
+                0,
+                "select",
                 Arc::new(
                     |bytes: &mut super::reader::Reader, _| -> Result<InstructionData, io::Error> {
                         Ok(InstructionData::ValueType {
-                            value_types: bytes.read_u8vec()?, // TODO: type vector?
+                            value_types: bytes.read_u8vec()?,
                         })
                     },
                 ),
+                Arc::new(|data| {
+                    let mut bytes = vec![0x1c];
+                    if let InstructionData::ValueType { value_types } = &data {
+                        let mut type_bytes = reader::emit_u8vec(value_types);
+                        bytes.append(&mut type_bytes);
+                    } else {
+                        panic!("expected value type instruction");
+                    }
+                    bytes
+                }),
+                Arc::new(|data, _| {
+                    if let InstructionData::ValueType { value_types } = &data {
+                        if value_types.is_empty() {
+                            "select".to_string()
+                        } else if value_types.len() == 1 {
+                            format!("select {}", ValueType::decode(value_types[0]).unwrap())
+                        } else {
+                            // Multiple types case - shouldn't happen for select
+                            "select".to_string()
+                        }
+                    } else {
+                        panic!("expected value type instruction");
+                    }
+                }),
             ),
             // Variable instructions¶ ------------------------------------------
             InstructionCoding::new_with_options(
@@ -4638,6 +4663,7 @@ fn decode_validate<T: super::validate::Validator>(
         validator.validate(&instruction).map_err(DecodeError::from)?;
         instructions.push(instruction);
         if validator.ended() {
+            validator.finalize().map_err(DecodeError::from)?;
             return Ok(instructions);
         }
     }

@@ -1,11 +1,11 @@
 import { readFile, writeFile, mkdtemp, readdir, rm, stat } from 'fs/promises'
 import { execSync } from 'child_process'
-import { join, basename } from 'node:path';
-import { tmpdir } from 'node:os';
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 // const wast2wasm = new URL('../webassembly/wabt/build/wat2wasm', import.meta.url).pathname
-const wast2json = 'wast2json'
-const wasmObjdump = 'wasm-objdump'
+const wast2json = '/workspace/wasm-wabt/bin/wast2json'
+const wasmObjdump = '/workspace/wasm-wabt/bin/wasm-objdump'
 
 if (process.argv.length < 4) {
   console.error('usage: compile_test.mjs <input.wast> <output.json>')
@@ -24,7 +24,7 @@ const parsed = await parseWast(input)
 const compiled = await compileWast(parsed, input)
 await writeFile(output, compiled)
 
-async function dumpWasm(wasmPath) {
+async function dumpWasm (wasmPath) {
   return {
     header: await dump(wasmPath, 'h'),
     details: await dump(wasmPath, 'x'),
@@ -32,8 +32,8 @@ async function dumpWasm(wasmPath) {
   }
 }
 
-async function compileWast(parsed, wastPath) {
-  const dir = await mkdtemp(join(tmpdir(), 'wast-'));
+async function compileWast (parsed, wastPath) {
+  const dir = await mkdtemp(join(tmpdir(), 'wast-'))
   await execSync(`${wast2json} ${wastPath.pathname}`, { cwd: dir })
 
   let spec = ''
@@ -53,8 +53,16 @@ async function compileWast(parsed, wastPath) {
   if (bins.length === 0) {
     throw new Error('binaries not found')
   }
-  if (specParsed.commands.length !== parsed.length) {
-    throw new Error(`binaries count (${bins.length}) does not match parsed count (${parsed.length})`)
+  // Count expected binaries: modules + assert_invalid/assert_malformed commands
+  const expectedBinaries = specParsed.commands.filter(cmd =>
+    cmd.type === 'module' ||
+    cmd.type === 'assert_invalid' ||
+    cmd.type === 'assert_malformed' ||
+    cmd.type === 'assert_unlinkable'
+  ).length
+
+  if (bins.length !== expectedBinaries) {
+    throw new Error(`binaries count (${bins.length}) does not match expected count (${expectedBinaries})`)
   }
   let compiled = `{\n  "bin": {\n${bins.map(({ file, bin }) => `    "${file}": "${bin}"`).join(',\n')}`
   compiled += `\n  },\n  "spec": ${spec.replace(/\n$/, '')}`
@@ -70,11 +78,11 @@ async function compileWast(parsed, wastPath) {
   for (const cmd of specParsed.commands.filter(({ type }) => type === 'module')) {
     const dump = await dumpWasm(join(dir, cmd.filename))
 
-    compiled += `    "${cmd.filename}": {\n`;
-    compiled += `      "header": ${JSON.stringify(dump.header)},\n`;
-    compiled += `      "details": ${JSON.stringify(dump.details)},\n`;
-    compiled += `      "disassemble": ${JSON.stringify(dump.disassemble)}\n`;
-    compiled += `    },\n`;
+    compiled += `    "${cmd.filename}": {\n`
+    compiled += `      "header": ${JSON.stringify(dump.header)},\n`
+    compiled += `      "details": ${JSON.stringify(dump.details)},\n`
+    compiled += `      "disassemble": ${JSON.stringify(dump.disassemble)}\n`
+    compiled += '    },\n'
   }
   compiled = compiled.slice(0, -2)
   compiled += '\n  }\n'
@@ -83,16 +91,16 @@ async function compileWast(parsed, wastPath) {
   return compiled
 }
 
-async function dump(wasmPath, opt) {
+async function dump (wasmPath, opt) {
   const stdout = await execSync(`${wasmObjdump} -${opt} ${wasmPath}`)
   return stdout.toString('utf8')
 }
 
-function cleanJsonString(str) {
+function cleanJsonString (str) {
   return str.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"').replace(/\t/g, '\\t')
 }
 
-async function parseWast(wastPath) {
+async function parseWast (wastPath) {
   const wast = await readFile(wastPath, 'utf8')
 
   const units = []
@@ -102,12 +110,12 @@ async function parseWast(wastPath) {
   let block = ''
   for (let cc = 0; cc < wast.length; cc++) {
     const ch = wast[cc]
-    if (ch === ';' && cc != wast.length - 1 && wast[cc + 1] === ';') {
+    if (ch === ';' && cc !== wast.length - 1 && wast[cc + 1] === ';') {
       while (wast[cc] !== '\n') {
         cc++
       }
       continue
-    } else if (ch === '(' && cc != wast.length - 1 && wast[cc + 1] === ';') {
+    } else if (ch === '(' && cc !== wast.length - 1 && wast[cc + 1] === ';') {
       while (wast[cc] !== ';' || wast[cc + 1] !== ')') {
         cc++
       }
@@ -115,7 +123,7 @@ async function parseWast(wastPath) {
         cc++
       }
       continue
-    } else if (ch == '\n') {
+    } else if (ch === '\n') {
       continue
     }
 
@@ -126,7 +134,7 @@ async function parseWast(wastPath) {
       }
     } else if (ch === ')') {
       br--
-      if (br === 0 && word != '') {
+      if (br === 0 && word !== '') {
         units.push({ word, block })
         block = ''
         word = ''
@@ -134,7 +142,7 @@ async function parseWast(wastPath) {
       }
     }
 
-    if (br === 1 && word == '' && /[a-zA-Z_]/.test(ch)) {
+    if (br === 1 && word === '' && /[a-zA-Z_]/.test(ch)) {
       if (block !== '') {
         console.log(`discarding block [${block}] @ ${cc}`)
         block = ''
@@ -145,7 +153,7 @@ async function parseWast(wastPath) {
       }
       cc += word.length - 1
       continue
-    } else if (br === 2 && word == 'module' && /[a-zA-Z_]/.test(ch)) {
+    } else if (br === 2 && word === 'module' && /[a-zA-Z_]/.test(ch)) {
       let nest = ch
       for (let i = cc + 1; i < wast.length && /[a-zA-Z_]/.test(wast[i]); i++) {
         nest += wast[i]
@@ -160,7 +168,7 @@ async function parseWast(wastPath) {
       }
       continue
     }
-    if (ch === ' ' && (block === '' || /[\s \(]$/.test(block))) {
+    if (ch === ' ' && (block === '' || /[\s (]$/.test(block))) {
       continue
     }
     block += ch
