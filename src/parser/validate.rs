@@ -1054,27 +1054,47 @@ impl Validator for CodeValidator<'_> {
                     if self.ctrls.len() < li as usize {
                         return Err(ValidationError::UnknownLabel);
                     }
+
+                    // Check if we're in an unreachable state
+                    let is_unreachable = self.ctrls.last().map(|c| c.unreachable).unwrap_or(false);
+
                     let label_types = self.label_types_at(li)?;
                     let arity = label_types.len();
-                    labels.iter().try_for_each(|&li| {
-                        if self.ctrls.len() < li as usize {
-                            Err(ValidationError::UnknownLabel)
-                        } else {
-                            let label_types = self.label_types_at(li)?;
-                            if label_types.len() != arity {
-                                Err(ValidationError::TypeMismatch)
+
+                    if is_unreachable {
+                        // In unreachable state, we can branch to any label regardless of type or arity
+                        // Just validate that all labels exist
+                        labels.iter().try_for_each(|&li| {
+                            if self.ctrls.len() < li as usize {
+                                Err(ValidationError::UnknownLabel)
                             } else {
-                                let popped = self.pop_expecteds(label_types.clone());
-                                if popped.is_none() {
+                                // Just check the label exists, no type/arity checking needed
+                                self.label_types_at(li)?;
+                                Ok(())
+                            }
+                        })?;
+                    } else {
+                        // Normal validation when not unreachable
+                        labels.iter().try_for_each(|&li| {
+                            if self.ctrls.len() < li as usize {
+                                Err(ValidationError::UnknownLabel)
+                            } else {
+                                let label_types = self.label_types_at(li)?;
+                                if label_types.len() != arity {
                                     Err(ValidationError::TypeMismatch)
                                 } else {
-                                    self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
-                                    Ok(())
+                                    let popped = self.pop_expecteds(label_types.clone());
+                                    if popped.is_none() {
+                                        Err(ValidationError::TypeMismatch)
+                                    } else {
+                                        self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
+                                        Ok(())
+                                    }
                                 }
                             }
-                        }
-                    })?;
-                    self.pop_expecteds(label_types).ok_or(ValidationError::TypeMismatch)?;
+                        })?;
+                        self.pop_expecteds(label_types).ok_or(ValidationError::TypeMismatch)?;
+                    }
                     self.unreachable().ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
                 } else {
