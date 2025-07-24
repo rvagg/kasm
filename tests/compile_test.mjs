@@ -72,20 +72,27 @@ async function compileWast (parsed, wastPath) {
   }
 
   compiled = compiled.slice(0, -2)
-  compiled += '\n  ],\n'
-  compiled += '  "dump": {\n'
+  compiled += '\n  ]'
 
-  for (const cmd of specParsed.commands.filter(({ type }) => type === 'module')) {
-    const dump = await dumpWasm(join(dir, cmd.filename))
+  // Only add dump section if there are regular modules
+  const moduleCommands = specParsed.commands.filter(({ type }) => type === 'module')
+  if (moduleCommands.length > 0) {
+    compiled += ',\n  "dump": {\n'
 
-    compiled += `    "${cmd.filename}": {\n`
-    compiled += `      "header": ${JSON.stringify(dump.header)},\n`
-    compiled += `      "details": ${JSON.stringify(dump.details)},\n`
-    compiled += `      "disassemble": ${JSON.stringify(dump.disassemble)}\n`
-    compiled += '    },\n'
+    for (const cmd of moduleCommands) {
+      const dump = await dumpWasm(join(dir, cmd.filename))
+
+      compiled += `    "${cmd.filename}": {\n`
+      compiled += `      "header": ${JSON.stringify(dump.header)},\n`
+      compiled += `      "details": ${JSON.stringify(dump.details)},\n`
+      compiled += `      "disassemble": ${JSON.stringify(dump.disassemble)}\n`
+      compiled += '    },\n'
+    }
+    compiled = compiled.slice(0, -2)
+    compiled += '\n  }\n'
+  } else {
+    compiled += '\n'
   }
-  compiled = compiled.slice(0, -2)
-  compiled += '\n  }\n'
   compiled += '}\n'
   await rm(dir, { recursive: true })
   return compiled

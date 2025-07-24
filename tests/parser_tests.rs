@@ -14,7 +14,7 @@ mod tests {
         bin: Bin,
         spec: Spec,
         code: Vec<String>,
-        dump: HashMap<String, Dump>,
+        dump: Option<HashMap<String, Dump>>,
     }
 
     pub type Bin = HashMap<String, Base64DecodedBytes>;
@@ -340,42 +340,44 @@ mod tests {
             assert_eq!(parsed_string, expected);
         }
 
-        for (filename, dump) in test_data.dump.iter() {
-            println!("testing to_*_string for file: {filename}");
+        if let Some(dump_data) = test_data.dump {
+            for (filename, dump) in dump_data.iter() {
+                println!("testing to_*_string for file: {filename}");
 
-            // Use the already parsed module if available, otherwise parse it
-            let parsed = if let Some(module) = parsed_modules.get(filename) {
-                module
-            } else {
-                // This module wasn't part of the commands, so parse it now for dump comparison
-                let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
-                let new_module = kasm::parser::parse(&module_registry, filename, bytes)
-                    .unwrap_or_else(|_| panic!("failed to parse {}", filename));
-                parsed_modules.insert(filename.clone(), new_module);
-                parsed_modules.get(filename).unwrap()
-            };
+                // Use the already parsed module if available, otherwise parse it
+                let parsed = if let Some(module) = parsed_modules.get(filename) {
+                    module
+                } else {
+                    // This module wasn't part of the commands, so parse it now for dump comparison
+                    let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
+                    let new_module = kasm::parser::parse(&module_registry, filename, bytes)
+                        .unwrap_or_else(|_| panic!("failed to parse {}", filename));
+                    parsed_modules.insert(filename.clone(), new_module);
+                    parsed_modules.get(filename).unwrap()
+                };
 
-            compare_format(
-                "Sections",
-                &dump.header,
-                parsed,
-                filename,
-                module::ParsedUnitFormat::Header,
-            );
-            compare_format(
-                "Section Details",
-                &dump.details,
-                parsed,
-                filename,
-                module::ParsedUnitFormat::Details,
-            );
-            compare_format(
-                "Code Disassembly",
-                &dump.disassemble,
-                parsed,
-                filename,
-                module::ParsedUnitFormat::Disassemble,
-            );
+                compare_format(
+                    "Sections",
+                    &dump.header,
+                    parsed,
+                    filename,
+                    module::ParsedUnitFormat::Header,
+                );
+                compare_format(
+                    "Section Details",
+                    &dump.details,
+                    parsed,
+                    filename,
+                    module::ParsedUnitFormat::Details,
+                );
+                compare_format(
+                    "Code Disassembly",
+                    &dump.disassemble,
+                    parsed,
+                    filename,
+                    module::ParsedUnitFormat::Disassemble,
+                );
+            }
         }
     }
 

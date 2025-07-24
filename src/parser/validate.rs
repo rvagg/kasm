@@ -1055,45 +1055,95 @@ impl Validator for CodeValidator<'_> {
                         return Err(ValidationError::UnknownLabel);
                     }
 
+                    // First, check that all labels exist
+                    for &li in labels.iter() {
+                        if self.ctrls.len() <= li as usize {
+                            return Err(ValidationError::UnknownLabel);
+                        }
+                    }
+
+                    // Get the result types for the default label
+                    let default_label_types = self.label_types_at(li)?;
+                    let arity = default_label_types.len();
+
+                    // All branch targets must have the same arity
+                    for &li in labels.iter() {
+                        let label_types = self.label_types_at(li)?;
+                        if label_types.len() != arity {
+                            return Err(ValidationError::TypeMismatch);
+                        }
+                    }
+
                     // Check if we're in an unreachable state
                     let is_unreachable = self.ctrls.last().map(|c| c.unreachable).unwrap_or(false);
 
-                    let label_types = self.label_types_at(li)?;
-                    let arity = label_types.len();
-
                     if is_unreachable {
-                        // In unreachable state, we can branch to any label regardless of type or arity
-                        // Just validate that all labels exist
-                        labels.iter().try_for_each(|&li| {
-                            if self.ctrls.len() < li as usize {
-                                Err(ValidationError::UnknownLabel)
+                        // In unreachable state, we need to be more careful
+                        // We still validate, but we allow polymorphic values
+                        let saved_stack_height = self.vals.len();
+
+                        // Try to validate each branch
+                        let mut validation_failed = false;
+                        for &li in labels.iter() {
+                            let label_types = self.label_types_at(li)?;
+
+                            // Try to pop expected types
+                            let mut can_satisfy = true;
+                            for expected_type in label_types.iter().rev() {
+                                if let Some(actual) = self.pop_val() {
+                                    // If we get Unknown (polymorphic), it can satisfy any type
+                                    // If we get a concrete type, it must match
+                                    if actual != Unknown && actual != *expected_type {
+                                        can_satisfy = false;
+                                        break;
+                                    }
+                                } else {
+                                    can_satisfy = false;
+                                    break;
+                                }
+                            }
+
+                            // Restore stack for next iteration
+                            self.vals.truncate(saved_stack_height);
+
+                            if !can_satisfy {
+                                validation_failed = true;
+                                break;
+                            }
+                        }
+
+                        if validation_failed {
+                            return Err(ValidationError::TypeMismatch);
+                        }
+
+                        // Also validate the default branch
+                        for expected_type in default_label_types.iter().rev() {
+                            if let Some(actual) = self.pop_val() {
+                                if actual != Unknown && actual != *expected_type {
+                                    self.vals.truncate(saved_stack_height);
+                                    return Err(ValidationError::TypeMismatch);
+                                }
                             } else {
-                                // Just check the label exists, no type/arity checking needed
-                                self.label_types_at(li)?;
+                                self.vals.truncate(saved_stack_height);
+                                return Err(ValidationError::TypeMismatch);
+                            }
+                        }
+                    } else {
+                        // Normal validation
+                        labels.iter().try_for_each(|&li| {
+                            let label_types = self.label_types_at(li)?;
+                            let popped = self.pop_expecteds(label_types.clone());
+                            if popped.is_none() {
+                                Err(ValidationError::TypeMismatch)
+                            } else {
+                                self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
                                 Ok(())
                             }
                         })?;
-                    } else {
-                        // Normal validation when not unreachable
-                        labels.iter().try_for_each(|&li| {
-                            if self.ctrls.len() < li as usize {
-                                Err(ValidationError::UnknownLabel)
-                            } else {
-                                let label_types = self.label_types_at(li)?;
-                                if label_types.len() != arity {
-                                    Err(ValidationError::TypeMismatch)
-                                } else {
-                                    let popped = self.pop_expecteds(label_types.clone());
-                                    if popped.is_none() {
-                                        Err(ValidationError::TypeMismatch)
-                                    } else {
-                                        self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
-                                        Ok(())
-                                    }
-                                }
-                            }
-                        })?;
-                        self.pop_expecteds(label_types).ok_or(ValidationError::TypeMismatch)?;
+
+                        // Pop for the default branch
+                        self.pop_expecteds(default_label_types)
+                            .ok_or(ValidationError::TypeMismatch)?;
                     }
                     self.unreachable().ok_or(ValidationError::TypeMismatch)?;
                     Ok(())
