@@ -28,6 +28,9 @@ pub enum ValidationError {
     #[error("unknown memory")]
     UnknownMemory,
 
+    #[error("unknown memory {0}")]
+    UnknownMemoryWithIndex(u32),
+
     #[error("unknown element")]
     UnknownElement,
 
@@ -51,6 +54,12 @@ pub enum ValidationError {
 
     #[error("data count section required")]
     DataCountSectionRequired,
+
+    #[error("unknown data segment")]
+    UnknownDataSegment,
+
+    #[error("unknown data segment {0}")]
+    UnknownDataSegmentWithIndex(u32),
 
     #[error("unknown block type")]
     UnknownBlockType,
@@ -778,7 +787,7 @@ impl Validator for CodeValidator<'_> {
             MemoryFill | MemoryCopy => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
+                    return Err(ValidationError::UnknownMemoryWithIndex(0));
                 }
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
@@ -788,10 +797,23 @@ impl Validator for CodeValidator<'_> {
             MemoryInit => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
+                    return Err(ValidationError::UnknownMemoryWithIndex(0));
                 }
-                if self.module.data_count.count == 0 {
+
+                // memory.init always requires a DataCount section for bulk memory operations
+                let has_data_count_section =
+                    self.module.data_count.position.start != 0 || self.module.data_count.position.end != 0;
+                if !has_data_count_section {
                     return Err(ValidationError::DataCountSectionRequired);
+                }
+
+                if let InstructionData::Data { data_index, .. } = *inst.get_data() {
+                    // Check if data_index >= data_count
+                    if data_index >= self.module.data_count.count {
+                        return Err(ValidationError::UnknownDataSegmentWithIndex(data_index));
+                    }
+                } else {
+                    return Err(ValidationError::InvalidInstruction);
                 }
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
@@ -894,10 +916,29 @@ impl Validator for CodeValidator<'_> {
             }
 
             DataDrop => {
-                if self.module.data_count.count == 0 {
-                    Err(ValidationError::DataCountSectionRequired)
+                if let InstructionData::Data { data_index, .. } = *inst.get_data() {
+                    let has_data_count_section =
+                        self.module.data_count.position.start != 0 || self.module.data_count.position.end != 0;
+                    let has_memory = !self.module.memory.is_empty() || self.module.imports.memory_count() > 0;
+
+                    if !has_data_count_section {
+                        // If module has memory, bulk memory ops require DataCount section
+                        // If no memory, then it's just an unknown data segment
+                        if has_memory {
+                            return Err(ValidationError::DataCountSectionRequired);
+                        } else {
+                            return Err(ValidationError::UnknownDataSegment);
+                        }
+                    }
+
+                    // DataCount section exists, check the index
+                    if data_index >= self.module.data_count.count {
+                        Err(ValidationError::UnknownDataSegmentWithIndex(data_index))
+                    } else {
+                        Ok(())
+                    }
                 } else {
-                    Ok(())
+                    Err(ValidationError::InvalidInstruction)
                 }
             }
 
