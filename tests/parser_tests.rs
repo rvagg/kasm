@@ -319,16 +319,16 @@ mod tests {
         // Compare the parsed module to the expected dump
 
         fn compare_format(
-            prefix: &str,
+            section_name: &str,
             dump_field: &str,
             parsed: &module::Module,
             filename: &str,
             format: module::ParsedUnitFormat,
         ) {
             let parsed_string = parsed.to_string(format);
-            println!("{prefix}:\n{parsed_string}");
+            println!("{section_name}:\n{parsed_string}");
 
-            let prefix = format!("\n{filename}:\tfile format wasm 0x1\n\n{prefix}:\n\n");
+            let prefix = format!("\n{filename}:\tfile format wasm 0x1\n\n{section_name}:\n\n");
             let expected = dump_field.strip_prefix(&prefix).unwrap_or(&parsed_string);
 
             assert_eq!(parsed_string, expected);

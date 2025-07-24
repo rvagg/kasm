@@ -96,3 +96,6 @@ src/parser/
 - byteorder: Binary reading
 - serde: Test fixture parsing
 - thiserror: Error types
+
+## Project Documentation
+- Prefer to document the code well; this project should also serve as an educational tool for readers and contributors.

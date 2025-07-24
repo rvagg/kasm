@@ -4760,7 +4760,7 @@ impl fmt::Display for BlockType {
         match self {
             BlockType::Empty => write!(f, ""),
             BlockType::Type(value_type) => write!(f, "{value_type}"),
-            BlockType::TypeIndex(type_index) => write!(f, "type {type_index}"),
+            BlockType::TypeIndex(type_index) => write!(f, "type[{type_index}]"),
         }
     }
 }

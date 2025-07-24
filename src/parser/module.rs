@@ -5,6 +5,41 @@ use fhex::ToHex;
 
 use crate::parser::ast;
 
+/// Checks if a string contains the specific control character sequence that WABT displays as empty.
+/// WABT shows the sequence "\x00\x01\x02...\x0F" (exactly 16 bytes, values 0-15) as empty <> or "".
+/// This is specific behavior for compatibility with WABT's wasm-objdump tool.
+fn is_wabt_empty_control_sequence(s: &str) -> bool {
+    let bytes: Vec<u8> = s.bytes().collect();
+    bytes.len() == 16 && bytes.iter().enumerate().all(|(i, &b)| b == i as u8)
+}
+
+/// Formats a function name for display according to WABT's conventions.
+/// - Empty names return an empty string
+/// - The control sequence "\x00\x01\x02...\x0F" returns " <>"
+/// - All other names return " <name>"
+///
+/// This ensures compatibility with WABT's wasm-objdump output format.
+fn format_function_name(name: &str) -> String {
+    if name.is_empty() {
+        String::new()
+    } else if is_wabt_empty_control_sequence(name) {
+        " <>".to_string()
+    } else {
+        format!(" <{name}>")
+    }
+}
+
+/// Returns the export string for display in quotes according to WABT's conventions.
+/// The control sequence "\x00\x01\x02...\x0F" is shown as an empty string "",
+/// while all other strings are returned as-is.
+fn get_export_string_display(name: &str) -> &str {
+    if is_wabt_empty_control_sequence(name) {
+        ""
+    } else {
+        name
+    }
+}
+
 #[derive(Debug)]
 pub struct Module {
     pub name: String,
@@ -27,6 +62,18 @@ pub struct Module {
 }
 
 impl Module {
+    /// Finds and formats the export name for a function at the given index.
+    /// Returns the formatted string with angle brackets if the function is exported,
+    /// or an empty string if not exported.
+    /// Note: If a function has multiple exports, returns the LAST export name (WABT behavior).
+    pub fn get_function_export_name(&self, func_index: u32) -> String {
+        // Use get_function to find the last export, then format its name
+        self.exports
+            .get_function(func_index)
+            .map(|export| format_function_name(&export.name))
+            .unwrap_or_default()
+    }
+
     pub fn get_function_type(&self, index: u32) -> Option<&FunctionType> {
         self.functions
             .get(index as u8)
@@ -503,7 +550,9 @@ impl SectionToString for FunctionSection {
                 fi,
                 function.ftype_index,
                 match unit.exports.get_function(fi as u32) {
-                    Some(export) => format!(" <{}>", export.name),
+                    Some(export) => {
+                        format_function_name(&export.name)
+                    }
                     None => "".to_string(),
                 }
             ));
@@ -693,7 +742,13 @@ impl SectionToString for GlobalSection {
                 global.global_type.value_type,
                 if global.global_type.mutable { 1 } else { 0 },
                 match unit.exports.get_global(global_index) {
-                    Some(e) => format!(" <{}>", e.name),
+                    Some(e) => {
+                        if e.name.is_empty() {
+                            "".to_string()
+                        } else {
+                            format!(" <{}>", e.name)
+                        }
+                    }
                     None => "".to_string(),
                 },
                 init_expr_to_string(unit, &global.init, false, true),
@@ -751,7 +806,7 @@ impl SectionToString for ExportSection {
         format!("{} count: {}", self.position, self.exports.len())
     }
 
-    fn to_details_string(&self, unit: &Module) -> String {
+    fn to_details_string(&self, _unit: &Module) -> String {
         let mut result = String::new();
         result.push_str(&format!("Export[{}]:\n", self.exports.len()));
         for export in &self.exports {
@@ -761,20 +816,35 @@ impl SectionToString for ExportSection {
                 ExportIndex::Memory(i) => ("memory", i),
                 ExportIndex::Global(i) => ("global", i),
             };
-            result.push_str(&format!(
-                " - {}[{}]{} -> \"{}\"\n",
-                typ,
-                idx,
-                match export.index {
-                    ExportIndex::Function(func_idx) => {
-                        match unit.exports.get_function(func_idx) {
-                            Some(export) => format!(" <{}>", export.name),
-                            None => "".to_string(),
+            let name_display = match export.index {
+                ExportIndex::Function(func_idx) => {
+                    // WABT displays export names in a specific way for functions:
+                    // 1. When a function has multiple exports, WABT shows the LAST export name
+                    //    for all instances. For example, if func[0] is exported as "a", "b", and "c",
+                    //    all three exports will show as <c> in the export list.
+                    // 2. For control characters, WABT has special handling:
+                    //    - The specific sequence "\x00\x01\x02...\x0F" (all 16 bytes) displays as <>
+                    //    - Other control characters (like \n, \r, etc.) are shown as-is
+                    //
+                    // Find the last export for this function
+                    let mut last_export_name = "";
+                    for exp in &self.exports {
+                        if let ExportIndex::Function(f_idx) = exp.index {
+                            if f_idx == func_idx {
+                                last_export_name = &exp.name;
+                            }
                         }
                     }
-                    _ => "".to_string(),
-                },
-                export.name
+
+                    format_function_name(last_export_name)
+                }
+                _ => "".to_string(),
+            };
+            // Export string display: WABT shows the control sequence "\x00\x01...\x0F" as an empty string
+            // in the quoted export name (e.g., func[22] <> -> "" instead of showing the control chars)
+            let export_string_display = get_export_string_display(&export.name);
+            result.push_str(&format!(
+                " - {typ}[{idx}]{name_display} -> \"{export_string_display}\"\n"
             ));
         }
         result
@@ -1079,15 +1149,8 @@ impl SectionToString for CodeSection {
         let mut result: String = String::new();
         result.push_str(&format!("Code[{}]:\n", self.code.len()));
         for (i, function_body) in self.code.iter().enumerate() {
-            let mut exp = String::new();
             let fi = unit.imports.function_count() + i;
-            for export in &unit.exports.exports {
-                if let ExportIndex::Function(idx) = export.index {
-                    if idx == fi as u32 {
-                        exp = format!(" <{}>", export.name);
-                    }
-                }
-            }
+            let exp = unit.get_function_export_name(fi as u32);
             result.push_str(&format!(
                 " - func[{}] size={}{}\n",
                 fi, // TODO: i is wrong when `(func $dummy)` is included - it should skip over these, need to figure out how it knows
@@ -1103,15 +1166,8 @@ impl CodeSection {
     fn to_disassemble_string(&self, unit: &Module) -> String {
         let mut result: String = String::new();
         for (i, function_body) in self.code.iter().enumerate() {
-            let mut exp = String::new();
             let fi = unit.imports.function_count() + i;
-            for export in &unit.exports.exports {
-                if let ExportIndex::Function(idx) = export.index {
-                    if idx == fi as u32 {
-                        exp = format!(" <{}>", export.name);
-                    }
-                }
-            }
+            let exp = unit.get_function_export_name(fi as u32);
             let ftype_index = match unit.functions.get(i as u8) {
                 Some(f) => f.ftype_index,
                 None => {

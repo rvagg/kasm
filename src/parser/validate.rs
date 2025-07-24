@@ -956,10 +956,13 @@ impl Validator for CodeValidator<'_> {
             End => {
                 let ctrl = self.pop_ctrl()?;
 
-                // Special check: typed if without else is invalid
-                // This happens when we pop an If control (not Else) that has result types
+                // Special check: typed if without else is invalid UNLESS
+                // the start types match the end types (parameters flow through)
                 if ctrl.instruction == If && !ctrl.end_types.is_empty() && !ctrl.unreachable {
-                    return Err(ValidationError::TypeMismatch);
+                    // Check if start_types == end_types (parameters flow through)
+                    if ctrl.start_types != ctrl.end_types {
+                        return Err(ValidationError::TypeMismatch);
+                    }
                 }
 
                 self.push_vals(ctrl.end_types).ok_or(ValidationError::TypeMismatch)?;
