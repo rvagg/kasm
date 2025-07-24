@@ -12,48 +12,32 @@ mod tests {
     /*
      * WebAssembly Spec Test Coverage
      *
-     * This test harness runs the official WebAssembly specification test suite.
+     * This test harness runs 86 out of 147 WebAssembly spec tests.
      *
-     * The following 8 tests are not yet imported due to technical limitations:
+     * Special handling:
+     * - UTF-8 errors: Accept both "malformed UTF-8 encoding" and "invalid utf-8 sequence"
+     * - select.2.wasm: Accept "type mismatch" for "invalid result arity" (binary ambiguity)
      *
-     * 1. comments.wast - Uses the `(module quote ...)` syntax which allows embedding
-     *    raw text format modules within test files. WABT's wast2json tool doesn't
-     *    support this syntax, making it impossible to compile to our JSON format.
+     * Tests not imported (61 total):
      *
-     * 2. linking.wast (167 assertions) - Requires complex multi-module linking support
-     *    including module registration, cross-module imports/exports, and runtime
-     *    state management. While our parser supports basic imports/exports, the test
-     *    harness would need significant enhancements to track module registrations
-     *    and validate cross-module type checking.
+     * === Tests using unsupported syntax (4 files) ===
+     * - comments.wast: Uses `(module quote ...)` syntax
+     * - linking.wast: Requires multi-module linking support
+     * - obsolete-keywords.wast: Tests deprecated operators, uses `(module quote ...)`
+     * - utf8-invalid-encoding.wast: All tests use `(module quote ...)` syntax
      *
-     * 3. obsolete-keywords.wast - Tests deprecated WebAssembly operators like
-     *    `current_memory` (now `memory.size`) and `grow_memory` (now `memory.grow`).
-     *    Also uses the unsupported `(module quote ...)` syntax.
+     * === SIMD Tests (57 files) ===
+     * Not supported - would require v128 type and ~400 new opcodes:
+     * - Basic operations (9): address, align, bitwise, boolean, const, conversions, lane, linking, splat
+     * - Bit shift (1): bit_shift
+     * - Float32x4 (5): base, arith, cmp, pmin_pmax, rounding
+     * - Float64x2 (5): base, arith, cmp, pmin_pmax, rounding
+     * - Integer ops (23): i16x8 (7), i32x4 (8), i64x2 (4), i8x16 (4)
+     * - Type conversions (1): int_to_int_extend
+     * - Memory ops (13): load variants (8), store variants (5)
      *
-     * 4. utf8-custom-section-id.wast (178 assertions) - Tests UTF-8 validation in
-     *    custom section names using `(module quote ...)` syntax to embed invalid
-     *    UTF-8 byte sequences. Our parser likely validates UTF-8 correctly, but
-     *    we can't test it without quote syntax support.
-     *
-     * 5. utf8-import-field.wast (178 assertions) - Tests UTF-8 validation in import
-     *    field names. Uses `(module quote ...)` syntax to create modules with
-     *    invalid UTF-8 sequences in import names.
-     *
-     * 6. utf8-import-module.wast (178 assertions) - Tests UTF-8 validation in import
-     *    module names. Uses `(module quote ...)` syntax to create modules with
-     *    invalid UTF-8 sequences in module names.
-     *
-     * 7. utf8-invalid-encoding.wast (178 assertions) - Tests various invalid UTF-8
-     *    byte sequences in export names. Uses `(module quote ...)` syntax to embed
-     *    specific byte patterns that violate UTF-8 encoding rules.
-     *
-     * Total missing assertions: 886 out of 8,389 total assertions (10.6%)
-     *
-     * Potential solutions:
-     * - Implement a custom WAST parser that supports `(module quote ...)` syntax
-     * - Manually create binary test cases for UTF-8 validation
-     * - Use an alternative WebAssembly text format parser
-     * - Enhance the test harness to support module registration for linking tests
+     * UTF-8 validation: 528 tests implemented in src/parser/utf8_tests.rs
+     * (extracted from utf8-custom-section-id, utf8-import-field, utf8-import-module)
      */
 
     #[derive(Deserialize)]
@@ -348,6 +332,16 @@ mod tests {
                                 assert!(
                                     e.to_string().contains("type mismatch") || e.to_string().contains(&icab.command.text),
                                     "Error message does not match expected. Error message = '{}', expected text = '{}' or 'type mismatch', filename = {}, line in source is {}",
+                                    e,
+                                    &icab.command.text,
+                                    icab.command.filename,
+                                    icab.command.line
+                                );
+                            } else if icab.command.text == "malformed UTF-8 encoding" {
+                                // Accept both "malformed UTF-8 encoding" and "invalid utf-8 sequence"
+                                assert!(
+                                    e.to_string().contains("malformed UTF-8") || e.to_string().contains("invalid utf-8"),
+                                    "Error message does not match UTF-8 error. Error message = '{}', expected text = '{}' or 'invalid utf-8 sequence', filename = {}, line in source is {}",
                                     e,
                                     &icab.command.text,
                                     icab.command.filename,

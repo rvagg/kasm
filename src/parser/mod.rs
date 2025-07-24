@@ -3,6 +3,9 @@ pub mod module;
 pub mod reader;
 mod validate;
 
+#[cfg(test)]
+mod utf8_tests;
+
 use std::collections::HashMap;
 use std::io;
 
