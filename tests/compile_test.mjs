@@ -50,9 +50,6 @@ async function compileWast (parsed, wastPath) {
     throw new Error('json spec not found')
   }
   const specParsed = JSON.parse(spec)
-  if (bins.length === 0) {
-    throw new Error('binaries not found')
-  }
   // Count expected binaries: modules + assert_invalid/assert_malformed commands
   const expectedBinaries = specParsed.commands.filter(cmd =>
     cmd.type === 'module' ||
