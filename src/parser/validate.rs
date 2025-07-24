@@ -1,4 +1,4 @@
-use super::module::{FunctionType, GlobalType, ValueType, ValueType::*};
+use super::module::{ElementMode, FunctionType, GlobalType, ValueType, ValueType::*};
 use crate::parser::ast;
 use ast::InstructionType::*;
 use ast::{BlockType, Instruction, InstructionData, InstructionType};
@@ -22,11 +22,17 @@ pub enum ValidationError {
     #[error("unknown table")]
     UnknownTable,
 
+    #[error("unknown table {0}")]
+    UnknownTableWithIndex(u32),
+
     #[error("unknown memory")]
     UnknownMemory,
 
     #[error("unknown element")]
     UnknownElement,
+
+    #[error("unknown elem segment {0}")]
+    UnknownElemSegment(u32),
 
     #[error("unexpected token")]
     UnexpectedToken,
@@ -806,7 +812,7 @@ impl Validator for CodeValidator<'_> {
                         .table
                         .tables
                         .get(table_index as usize)
-                        .ok_or(ValidationError::UnknownTable)?;
+                        .ok_or(ValidationError::UnknownTableWithIndex(table_index))?;
                     let elem = self
                         .module
                         .elements
@@ -880,7 +886,7 @@ impl Validator for CodeValidator<'_> {
                         .elements
                         .elements
                         .get(elem_index as usize)
-                        .ok_or(ValidationError::UnknownElement)?;
+                        .ok_or(ValidationError::UnknownElemSegment(elem_index))?;
                     Ok(())
                 } else {
                     Err(ValidationError::InvalidInstruction)
@@ -1106,9 +1112,10 @@ impl Validator for CodeValidator<'_> {
 
             Select => {
                 // Select pops: [t t i32] and pushes: [t]
-                // Note: If there aren't enough values on the stack, we report TypeMismatch
-                // rather than InvalidResultArity. This differs from some validators but
-                // both errors are valid for malformed select instructions.
+                // Note: We report TypeMismatch for insufficient operands rather than InvalidResultArity.
+                // This is technically correct at the binary level, though some validators (like the
+                // reference interpreter) may report InvalidResultArity when the original WAT had
+                // explicit result arity declarations that are lost during WAT→WASM compilation.
 
                 // Pop condition (i32)
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
@@ -1173,10 +1180,23 @@ impl Validator for CodeValidator<'_> {
                 if let InstructionData::Function { function_index: fi } = *inst.get_data() {
                     self.get_function_type(fi)?;
                     // Check if this is a self-reference
-                    // During validation of a function body, that function is not yet declared
-                    // So it cannot reference itself with ref.func
                     if fi == self.current_function_index {
-                        return Err(ValidationError::UndeclaredFunctionReference);
+                        // Allow self-reference if the function is declared in a declarative element
+                        // Declarative elements exist specifically to allow functions to be referenced
+                        // before they are fully validated, enabling self-references and forward references
+                        let is_declared_in_declarative = self.module.elements.elements.iter().any(|elem| {
+                            matches!(elem.mode, ElementMode::Declarative) &&
+                                elem.init.iter().any(|init_exprs| {
+                                    init_exprs.iter().any(|instr| {
+                                        matches!(instr.get_type(), ast::InstructionType::RefFunc) &&
+                                            matches!(instr.get_data(), ast::InstructionData::Function { function_index } if *function_index == fi)
+                                    })
+                                })
+                        });
+
+                        if !is_declared_in_declarative {
+                            return Err(ValidationError::UndeclaredFunctionReference);
+                        }
                     }
                     self.push_val(Val(FuncRef)).ok_or(ValidationError::TypeMismatch)?;
                     Ok(())

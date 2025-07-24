@@ -281,16 +281,22 @@ mod tests {
                             );
                         }
                         Err(e) => {
-                            // Special case: select.2.wasm expects "invalid result arity"
-                            // but we produce "type mismatch". Both errors are technically correct:
+                            // Special case: select.2.wasm expects "invalid result arity" but we produce "type mismatch"
                             //
-                            // select.2.wasm: Original WAT was (select (result)) declaring 0 results,
-                            // but WABT compiles it to regular select opcode (0x1b) losing this info.
-                            // We see it as select with missing operands → "type mismatch"
-                            // Reference interpreter sees the arity issue → "invalid result arity"
+                            // TECHNICAL EXPLANATION:
+                            // The original WAT had different forms:
+                            // - select.1.wasm: (select (nop) (nop) (i32.const 1))
+                            // - select.2.wasm: (select (result) (nop) (nop) (i32.const 1))
                             //
-                            // Both errors are valid - the WebAssembly spec defines what's valid
-                            // but doesn't mandate exact error messages for invalid code.
+                            // However, WABT compiles BOTH to identical binary: regular select opcode (0x1b)
+                            // The difference in result arity declaration is lost during WAT→WASM compilation.
+                            //
+                            // At the binary level, both cases are identical: select instruction with insufficient operands.
+                            // - Our parser (binary-focused): reports "type mismatch" - technically correct
+                            // - Reference interpreter (WAT-aware): reports "invalid result arity" - also correct
+                            //
+                            // This is a fundamental limitation: information lost during compilation cannot be recovered.
+                            // Both error messages are valid per WebAssembly specification.
                             if icab.command.filename == "select.2.wasm" && icab.command.text == "invalid result arity" {
                                 assert!(
                                     e.to_string().contains("type mismatch") || e.to_string().contains(&icab.command.text),

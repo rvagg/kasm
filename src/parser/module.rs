@@ -1068,16 +1068,29 @@ impl SectionToString for ElementSection {
     fn to_details_string(&self, unit: &Module) -> String {
         let mut result: String = String::new();
         result.push_str(&format!("Elem[{}]:\n", self.elements.len()));
+
+        // Track the last active segment offset to handle passive element indexing
+        // Passive elements inherit the offset from the immediately preceding active segment
+        let mut last_active_offset: i32 = 0;
+
         for (i, element) in self.elements.iter().enumerate() {
             let (expr_str, elem_offset) = match element.mode {
-                ElementMode::Active { ref offset, .. } => (
-                    init_expr_to_string(unit, offset, true, true),
-                    match init_expr_to_offset(offset) {
+                ElementMode::Active { ref offset, .. } => {
+                    let offset_val = match init_expr_to_offset(offset) {
                         Some(o) => o as i32,
                         None => -1,
-                    },
-                ),
-                _ => (String::new(), 0),
+                    };
+                    // Update the last active offset - this will be used by subsequent passive elements
+                    last_active_offset = offset_val;
+                    (init_expr_to_string(unit, offset, true, true), offset_val)
+                }
+                ElementMode::Passive => {
+                    // For passive elements, use the offset from the most recent active segment
+                    // This matches WABT's behavior where passive elements display indices
+                    // as if they were conceptually positioned after the preceding active segment
+                    (String::new(), last_active_offset)
+                }
+                ElementMode::Declarative => (String::new(), 0),
             };
             result.push_str(&format!(
                 " - segment[{}] flags={} table={} count={}{}\n",
@@ -1092,7 +1105,6 @@ impl SectionToString for ElementSection {
                 expr_str,
             ));
             element.init.iter().enumerate().for_each(|(i, _)| {
-                // TODO: probably not .. this is simplistic for now, more work to do, i.e. not even printing constant expressions yet
                 result.push_str(&format!(
                     "  - elem[{}] = {}\n",
                     match elem_offset {
