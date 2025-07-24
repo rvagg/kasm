@@ -77,6 +77,41 @@ pub fn parse(
         .into());
     }
 
+    // Validate start section if present
+    if unit.start.has_position() {
+        let total_functions = unit.imports.function_count() + unit.functions.functions.len();
+        if unit.start.start >= total_functions as u32 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unknown function").into());
+        }
+
+        // Check if the start function has the correct signature (no params, no returns)
+        let func_idx = unit.start.start;
+        let type_idx = if func_idx < unit.imports.function_count() as u32 {
+            // It's an imported function
+            unit.imports
+                .get_function_type_index(func_idx)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unknown function"))?
+        } else {
+            // It's a local function
+            let local_idx = func_idx - unit.imports.function_count() as u32;
+            unit.functions
+                .functions
+                .get(local_idx as usize)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unknown function"))?
+                .ftype_index
+        };
+
+        let func_type = unit
+            .types
+            .types
+            .get(type_idx as usize)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unknown type"))?;
+
+        if !func_type.parameters.is_empty() || !func_type.return_types.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "start function").into());
+        }
+    }
+
     Ok(unit)
 }
 

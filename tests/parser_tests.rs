@@ -9,6 +9,53 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    /*
+     * WebAssembly Spec Test Coverage
+     *
+     * This test harness runs the official WebAssembly specification test suite.
+     *
+     * The following 8 tests are not yet imported due to technical limitations:
+     *
+     * 1. comments.wast - Uses the `(module quote ...)` syntax which allows embedding
+     *    raw text format modules within test files. WABT's wast2json tool doesn't
+     *    support this syntax, making it impossible to compile to our JSON format.
+     *
+     * 2. linking.wast (167 assertions) - Requires complex multi-module linking support
+     *    including module registration, cross-module imports/exports, and runtime
+     *    state management. While our parser supports basic imports/exports, the test
+     *    harness would need significant enhancements to track module registrations
+     *    and validate cross-module type checking.
+     *
+     * 3. obsolete-keywords.wast - Tests deprecated WebAssembly operators like
+     *    `current_memory` (now `memory.size`) and `grow_memory` (now `memory.grow`).
+     *    Also uses the unsupported `(module quote ...)` syntax.
+     *
+     * 4. utf8-custom-section-id.wast (178 assertions) - Tests UTF-8 validation in
+     *    custom section names using `(module quote ...)` syntax to embed invalid
+     *    UTF-8 byte sequences. Our parser likely validates UTF-8 correctly, but
+     *    we can't test it without quote syntax support.
+     *
+     * 5. utf8-import-field.wast (178 assertions) - Tests UTF-8 validation in import
+     *    field names. Uses `(module quote ...)` syntax to create modules with
+     *    invalid UTF-8 sequences in import names.
+     *
+     * 6. utf8-import-module.wast (178 assertions) - Tests UTF-8 validation in import
+     *    module names. Uses `(module quote ...)` syntax to create modules with
+     *    invalid UTF-8 sequences in module names.
+     *
+     * 7. utf8-invalid-encoding.wast (178 assertions) - Tests various invalid UTF-8
+     *    byte sequences in export names. Uses `(module quote ...)` syntax to embed
+     *    specific byte patterns that violate UTF-8 encoding rules.
+     *
+     * Total missing assertions: 886 out of 8,389 total assertions (10.6%)
+     *
+     * Potential solutions:
+     * - Implement a custom WAST parser that supports `(module quote ...)` syntax
+     * - Manually create binary test cases for UTF-8 validation
+     * - Use an alternative WebAssembly text format parser
+     * - Enhance the test harness to support module registration for linking tests
+     */
+
     #[derive(Deserialize)]
     struct TestData {
         bin: Bin,

@@ -881,9 +881,25 @@ impl SectionToString for StartSection {
         format!("{} start: {}", self.position, self.start)
     }
 
-    fn to_details_string(&self, _: &Module) -> String {
+    fn to_details_string(&self, unit: &Module) -> String {
         let mut result = String::new();
-        result.push_str(&format!("Start:\n - start function: {}\n", self.start));
+        let func_name = if self.start < unit.imports.function_count() as u32 {
+            // It's an imported function
+            unit.imports
+                .imports
+                .iter()
+                .filter(|i| matches!(i.external_kind, ExternalKind::Function(_)))
+                .nth(self.start as usize)
+                .map(|import| format!(" <{}.{}>", import.module, import.name))
+                .unwrap_or_default()
+        } else {
+            // It's a local function - check if it has an export
+            unit.exports
+                .get_function(self.start)
+                .map(|export| format_function_name(&export.name))
+                .unwrap_or_default()
+        };
+        result.push_str(&format!("Start:\n - start function: {}{}\n", self.start, func_name));
         result
     }
 }
