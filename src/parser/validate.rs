@@ -1,7 +1,5 @@
 use super::module::{ElementMode, FunctionType, GlobalType, ValueType, ValueType::*};
-use crate::parser::ast;
-use ast::InstructionType::*;
-use ast::{BlockType, Instruction, InstructionData, InstructionType};
+use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
 use thiserror::Error;
 use MaybeValue::{Unknown, Val};
 
@@ -51,6 +49,9 @@ pub enum ValidationError {
 
     #[error("invalid instruction")]
     InvalidInstruction,
+
+    #[error("unexpected end of section or function")]
+    UnexpectedEndOfFunction,
 
     #[error("data count section required")]
     DataCountSectionRequired,
@@ -136,68 +137,66 @@ impl ConstantExpressionValidator<'_> {
 
 impl Validator for ConstantExpressionValidator<'_> {
     fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError> {
-        match *inst.get_type() {
-            I32Const | I64Const | F32Const | F64Const | RefNull | RefFunc | GlobalGet | End => {}
+        let kind = &inst.kind;
+        use InstructionKind::*;
+
+        match kind {
+            I32Const { .. }
+            | I64Const { .. }
+            | F32Const { .. }
+            | F64Const { .. }
+            | RefNull { .. }
+            | RefFunc { .. }
+            | GlobalGet { .. }
+            | End => {}
             _ => return Err(ValidationError::ConstantExpressionRequired),
         }
         self.instr_count += 1;
-        if self.instr_count >= 2 && *inst.get_type() != End {
+        if self.instr_count >= 2 && !matches!(kind, End) {
             return Err(ValidationError::TypeMismatch);
         }
-        match inst.get_type() {
+        match &kind {
             // const type must match self.return_type
-            I32Const => (self.return_type == I32)
+            I32Const { .. } => (self.return_type == I32)
                 .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
-            I64Const => (self.return_type == I64)
+            I64Const { .. } => (self.return_type == I64)
                 .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
-            F32Const => (self.return_type == F32)
+            F32Const { .. } => (self.return_type == F32)
                 .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
-            F64Const => (self.return_type == F64)
+            F64Const { .. } => (self.return_type == F64)
                 .then_some(())
                 .ok_or(ValidationError::TypeMismatch),
-            RefNull => {
-                if let InstructionData::RefType { ref_type } = *inst.get_data() {
-                    if self.return_type == FuncRef && ref_type == FuncRef
-                        || self.return_type == ExternRef && ref_type == ExternRef
-                    {
-                        Ok(())
-                    } else {
-                        Err(ValidationError::TypeMismatch)
-                    }
+            RefNull { ref_type } => {
+                if self.return_type == FuncRef && *ref_type == FuncRef
+                    || self.return_type == ExternRef && *ref_type == ExternRef
+                {
+                    Ok(())
                 } else {
-                    Err(ValidationError::InvalidInstruction)
+                    Err(ValidationError::TypeMismatch)
                 }
             }
-            RefFunc => {
+            RefFunc { func_idx } => {
                 // First check the return type
                 if self.return_type != FuncRef && self.return_type != ExternRef {
                     return Err(ValidationError::TypeMismatch);
                 }
                 // Then check if the function index is valid
-                if let InstructionData::Function { function_index } = *inst.get_data() {
-                    if let Some(total) = self.total_functions {
-                        if function_index >= total {
-                            return Err(ValidationError::UnknownFunction(function_index));
-                        }
+                if let Some(total) = self.total_functions {
+                    if *func_idx >= total {
+                        return Err(ValidationError::UnknownFunction(*func_idx));
                     }
+                }
+                Ok(())
+            }
+            GlobalGet { global_idx } => {
+                let value_type = self.global(*global_idx)?.value_type;
+                if value_type == self.return_type {
                     Ok(())
                 } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
-            }
-            GlobalGet => {
-                if let InstructionData::Global { global_index: gi } = *inst.get_data() {
-                    let value_type = self.global(gi)?.value_type;
-                    if value_type == self.return_type {
-                        Ok(())
-                    } else {
-                        Err(ValidationError::TypeMismatch)
-                    }
-                } else {
-                    Err(ValidationError::InvalidInstruction)
+                    Err(ValidationError::TypeMismatch)
                 }
             }
             End => match self.instr_count {
@@ -218,7 +217,7 @@ impl Validator for ConstantExpressionValidator<'_> {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-enum MaybeValue {
+pub enum MaybeValue {
     Val(ValueType),
     Unknown,
 }
@@ -256,7 +255,7 @@ const V128_VALUE: ValueType = V128;
 
 #[derive(Clone)]
 struct CtrlFrame {
-    instruction: InstructionType,
+    instruction: InstructionKind,
     start_types: Vec<MaybeValue>,
     end_types: Vec<MaybeValue>,
     height: u32,
@@ -296,7 +295,14 @@ impl<'a> CodeValidator<'a> {
         // push the return types but leave the parameters blank as they aren't on the stack
         // until explicitly loaded with local.get
         let end_types = function_type.return_types.iter().map(|v| Val(*v)).collect();
-        v.push_ctrl(Block, vec![], end_types);
+        // Use a dummy block for the function body
+        v.push_ctrl(
+            InstructionKind::Block {
+                block_type: BlockType::Empty,
+            },
+            vec![],
+            end_types,
+        );
 
         v
     }
@@ -341,7 +347,7 @@ impl<'a> CodeValidator<'a> {
         Some(popped)
     }
 
-    fn push_ctrl(&mut self, instruction: InstructionType, start_types: Vec<MaybeValue>, end_types: Vec<MaybeValue>) {
+    fn push_ctrl(&mut self, instruction: InstructionKind, start_types: Vec<MaybeValue>, end_types: Vec<MaybeValue>) {
         self.ctrls.push(CtrlFrame {
             instruction,
             start_types: start_types.clone(),
@@ -370,7 +376,7 @@ impl<'a> CodeValidator<'a> {
     }
 
     fn frame_types(&mut self, frame: CtrlFrame) -> Vec<MaybeValue> {
-        if frame.instruction == Loop {
+        if matches!(frame.instruction, InstructionKind::Loop { .. }) {
             frame.start_types
         } else {
             frame.end_types
@@ -476,8 +482,11 @@ impl<'a> CodeValidator<'a> {
 
 impl Validator for CodeValidator<'_> {
     fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError> {
-        match inst.get_type() {
-            I32Const => self.push_val(Val(I32_VALUE)).ok_or(ValidationError::TypeMismatch),
+        let kind = &inst.kind;
+        use InstructionKind::*;
+
+        match kind {
+            I32Const { .. } => self.push_val(Val(I32_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // iunop (i32):i32
             I32Clz | I32Ctz | I32Popcnt => self.sig_unary(Val(I32_VALUE), Val(I32_VALUE)),
@@ -510,7 +519,7 @@ impl Validator for CodeValidator<'_> {
                 self.sig_unary(Val(F64_VALUE), Val(I32_VALUE))
             }
 
-            I64Const => self.push_val(Val(I64_VALUE)).ok_or(ValidationError::TypeMismatch),
+            I64Const { .. } => self.push_val(Val(I64_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // iunop (i64):i64
             I64Clz | I64Ctz | I64Popcnt => self.sig_unary(Val(I64_VALUE), Val(I64_VALUE)),
@@ -543,7 +552,7 @@ impl Validator for CodeValidator<'_> {
                 self.sig_unary(Val(F64_VALUE), Val(I64_VALUE))
             }
 
-            F32Const => self.push_val(Val(F32_VALUE)).ok_or(ValidationError::TypeMismatch),
+            F32Const { .. } => self.push_val(Val(F32_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // funop (f32):f32
             F32Abs | F32Neg | F32Sqrt | F32Ceil | F32Floor | F32Trunc | F32Nearest => {
@@ -569,7 +578,7 @@ impl Validator for CodeValidator<'_> {
             // cvtop (i64):f32
             F32ConvertI64S | F32ConvertI64U => self.sig_unary(Val(I64_VALUE), Val(F32_VALUE)),
 
-            F64Const => self.push_val(Val(F64_VALUE)).ok_or(ValidationError::TypeMismatch),
+            F64Const { .. } => self.push_val(Val(F64_VALUE)).ok_or(ValidationError::TypeMismatch),
 
             // funop (f64):f64
             F64Abs | F64Neg | F64Sqrt | F64Ceil | F64Floor | F64Trunc | F64Nearest => {
@@ -595,174 +604,159 @@ impl Validator for CodeValidator<'_> {
             // cvtop (i64):f64
             F64ConvertI64S | F64ConvertI64U | F64ReinterpretI64 => self.sig_unary(Val(I64_VALUE), Val(F64_VALUE)),
 
-            LocalGet => {
-                if let InstructionData::Local { local_index: li } = *inst.get_data() {
-                    let local = *self.local(li)?;
-                    self.push_val(Val(local)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            LocalGet { local_idx } => {
+                let local = *self.local(*local_idx)?;
+                self.push_val(Val(local)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            LocalSet => {
-                if let InstructionData::Local { local_index: li } = *inst.get_data() {
-                    let local = *self.local(li)?;
-                    self.pop_expected(Val(local)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            LocalSet { local_idx } => {
+                let local = *self.local(*local_idx)?;
+                self.pop_expected(Val(local)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            LocalTee => {
-                if let InstructionData::Local { local_index: li } = *inst.get_data() {
-                    let local = *self.local(li)?;
-                    self.pop_expected(Val(local)).ok_or(ValidationError::TypeMismatch)?;
-                    self.push_val(Val(local)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            LocalTee { local_idx } => {
+                let local = *self.local(*local_idx)?;
+                self.pop_expected(Val(local)).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(local)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            GlobalGet => {
-                if let InstructionData::Global { global_index: gi } = *inst.get_data() {
-                    let global = *self.global(gi)?;
-                    self.push_val(Val(global.value_type))
-                        .ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            GlobalGet { global_idx } => {
+                let global = *self.global(*global_idx)?;
+                self.push_val(Val(global.value_type))
+                    .ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            GlobalSet => {
-                if let InstructionData::Global { global_index: gi } = *inst.get_data() {
-                    let global = *self.global(gi)?;
-                    if !global.mutable {
-                        return Err(ValidationError::GlobalIsImmutable);
-                    }
-                    self.pop_expected(Val(global.value_type))
-                        .ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
+            GlobalSet { global_idx } => {
+                let global = *self.global(*global_idx)?;
+                if !global.mutable {
+                    return Err(ValidationError::GlobalIsImmutable);
                 }
+                self.pop_expected(Val(global.value_type))
+                    .ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            I32Load | I32Load8S | I32Load8U | I32Load16S | I32Load16U => {
+            I32Load { ref memarg }
+            | I32Load8S { ref memarg }
+            | I32Load8U { ref memarg }
+            | I32Load16S { ref memarg }
+            | I32Load16U { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(
-                    inst,
-                    match inst.get_type() {
-                        &I32Load => 2,                  // 4 bytes = 2^2
-                        &I32Load8S | &I32Load8U => 0,   // 1 byte = 2^0
-                        &I32Load16S | &I32Load16U => 1, // 2 bytes = 2^1
-                        _ => unreachable!(),
-                    },
-                )
+                let align_exp = match &kind {
+                    I32Load { .. } => 2,                        // 4 bytes = 2^2
+                    I32Load8S { .. } | I32Load8U { .. } => 0,   // 1 byte = 2^0
+                    I32Load16S { .. } | I32Load16U { .. } => 1, // 2 bytes = 2^1
+                    _ => unreachable!(),
+                };
+                check_alignment(memarg, align_exp)
             }
 
-            I64Load | I64Load8S | I64Load8U | I64Load16S | I64Load16U | I64Load32S | I64Load32U => {
+            I64Load { ref memarg }
+            | I64Load8S { ref memarg }
+            | I64Load8U { ref memarg }
+            | I64Load16S { ref memarg }
+            | I64Load16U { ref memarg }
+            | I64Load32S { ref memarg }
+            | I64Load32U { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(
-                    inst,
-                    match inst.get_type() {
-                        &I64Load => 3,                  // 8 bytes = 2^3
-                        &I64Load8S | &I64Load8U => 0,   // 1 byte = 2^0
-                        &I64Load16S | &I64Load16U => 1, // 2 bytes = 2^1
-                        &I64Load32S | &I64Load32U => 2, // 4 bytes = 2^2
-                        _ => unreachable!(),
-                    },
-                )
+                let align_exp = match &kind {
+                    I64Load { .. } => 3,                        // 8 bytes = 2^3
+                    I64Load8S { .. } | I64Load8U { .. } => 0,   // 1 byte = 2^0
+                    I64Load16S { .. } | I64Load16U { .. } => 1, // 2 bytes = 2^1
+                    I64Load32S { .. } | I64Load32U { .. } => 2, // 4 bytes = 2^2
+                    _ => unreachable!(),
+                };
+                check_alignment(memarg, align_exp)
             }
 
-            F32Load => {
+            F32Load { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(inst, 2 /* 4 bytes = 2^2 */)
+                check_alignment(memarg, 2 /* 4 bytes = 2^2 */)
             }
 
-            F64Load => {
+            F64Load { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(inst, 3 /* 8 bytes = 2^3 */)
+                check_alignment(memarg, 3 /* 8 bytes = 2^3 */)
             }
 
-            I32Store | I32Store8 | I32Store16 => {
+            I32Store { ref memarg } | I32Store8 { ref memarg } | I32Store16 { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(
-                    inst,
-                    match inst.get_type() {
-                        I32Store => 2,   // 4 bytes = 2^2
-                        I32Store8 => 0,  // 1 byte = 2^0
-                        I32Store16 => 1, // 2 bytes = 2^1
-                        _ => unreachable!(),
-                    },
-                )
+                let align_exp = match &kind {
+                    I32Store { .. } => 2,   // 4 bytes = 2^2
+                    I32Store8 { .. } => 0,  // 1 byte = 2^0
+                    I32Store16 { .. } => 1, // 2 bytes = 2^1
+                    _ => unreachable!(),
+                };
+                check_alignment(memarg, align_exp)
             }
 
-            I64Store | I64Store8 | I64Store16 | I64Store32 => {
+            I64Store { ref memarg }
+            | I64Store8 { ref memarg }
+            | I64Store16 { ref memarg }
+            | I64Store32 { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(
-                    inst,
-                    match inst.get_type() {
-                        I64Store => 3,   // 8 bytes = 2^3
-                        I64Store8 => 0,  // 1 byte = 2^0
-                        I64Store16 => 1, // 2 bytes = 2^1
-                        I64Store32 => 2, // 4 bytes = 2^2
-                        _ => unreachable!(),
-                    },
-                )
+                let align_exp = match &kind {
+                    I64Store { .. } => 3,   // 8 bytes = 2^3
+                    I64Store8 { .. } => 0,  // 1 byte = 2^0
+                    I64Store16 { .. } => 1, // 2 bytes = 2^1
+                    I64Store32 { .. } => 2, // 4 bytes = 2^2
+                    _ => unreachable!(),
+                };
+                check_alignment(memarg, align_exp)
             }
 
-            F32Store => {
+            F32Store { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(inst, 2 /* 4 bytes = 2^2 */)
+                check_alignment(memarg, 2 /* 4 bytes = 2^2 */)
             }
 
-            F64Store => {
+            F64Store { ref memarg } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemory);
                 }
                 self.pop_expected(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                check_alignment(inst, 3 /* 8 bytes = 2^3 */)
+                check_alignment(memarg, 3 /* 8 bytes = 2^3 */)
             }
 
             MemorySize => {
@@ -794,7 +788,7 @@ impl Validator for CodeValidator<'_> {
                 Ok(())
             }
 
-            MemoryInit => {
+            MemoryInit { data_idx } => {
                 // Check that memory exists (imported or declared)
                 if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
                     return Err(ValidationError::UnknownMemoryWithIndex(0));
@@ -807,191 +801,141 @@ impl Validator for CodeValidator<'_> {
                     return Err(ValidationError::DataCountSectionRequired);
                 }
 
-                if let InstructionData::Data { data_index, .. } = *inst.get_data() {
-                    // Check if data_index >= data_count
-                    if data_index >= self.module.data_count.count {
-                        return Err(ValidationError::UnknownDataSegmentWithIndex(data_index));
-                    }
-                } else {
-                    return Err(ValidationError::InvalidInstruction);
+                // Check if data_idx >= data_count
+                if *data_idx >= self.module.data_count.count {
+                    return Err(ValidationError::UnknownDataSegmentWithIndex(*data_idx));
                 }
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
-            TableInit => {
+            TableInit { elem_idx, table_idx } => {
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
-                if let InstructionData::TableInit {
-                    table_index,
-                    elem_index,
-                    ..
-                } = *inst.get_data()
-                {
-                    let table = self
-                        .module
-                        .table
-                        .tables
-                        .get(table_index as usize)
-                        .ok_or(ValidationError::UnknownTableWithIndex(table_index))?;
-                    let elem = self
-                        .module
-                        .elements
-                        .elements
-                        .get(elem_index as usize)
-                        .ok_or(ValidationError::UnknownElement)?;
-                    if elem.ref_type != table.ref_type {
-                        return Err(ValidationError::TypeMismatch);
-                    }
+                let table = self
+                    .module
+                    .table
+                    .tables
+                    .get(*table_idx as usize)
+                    .ok_or(ValidationError::UnknownTableWithIndex(*table_idx))?;
+                let elem = self
+                    .module
+                    .elements
+                    .elements
+                    .get(*elem_idx as usize)
+                    .ok_or(ValidationError::UnknownElement)?;
+                if elem.ref_type != table.ref_type {
+                    return Err(ValidationError::TypeMismatch);
                 }
                 Ok(())
             }
 
-            TableCopy => {
+            TableCopy { src_table, dst_table } => {
                 self.pop_expecteds(vec![Val(I32), Val(I32), Val(I32)])
                     .ok_or(ValidationError::TypeMismatch)?;
-                if let InstructionData::TableCopy {
-                    src_table_index,
-                    dst_table_index,
-                    ..
-                } = *inst.get_data()
-                {
-                    let src_table = self
-                        .module
-                        .get_table(src_table_index)
-                        .ok_or(ValidationError::UnknownTable)?;
-                    let dst_table = self
-                        .module
-                        .get_table(dst_table_index)
-                        .ok_or(ValidationError::UnknownTable)?;
-                    if src_table.ref_type != dst_table.ref_type {
-                        return Err(ValidationError::TypeMismatch);
-                    }
+                let src_table_type = self.module.get_table(*src_table).ok_or(ValidationError::UnknownTable)?;
+                let dst_table_type = self.module.get_table(*dst_table).ok_or(ValidationError::UnknownTable)?;
+                if src_table_type.ref_type != dst_table_type.ref_type {
+                    return Err(ValidationError::TypeMismatch);
                 }
                 Ok(())
             }
 
-            TableGet => {
-                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
-                    let table = self
-                        .module
-                        .get_table(table_index)
-                        .ok_or(ValidationError::UnknownTable)?;
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    self.push_val(Val(table.ref_type.into()))
-                        .ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            TableGet { table_idx } => {
+                let table = self.module.get_table(*table_idx).ok_or(ValidationError::UnknownTable)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(table.ref_type.into()))
+                    .ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            TableSet => {
-                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
-                    let table = self
-                        .module
-                        .get_table(table_index)
-                        .ok_or(ValidationError::UnknownTable)?;
-                    self.pop_expected(Val(table.ref_type.into()))
-                        .ok_or(ValidationError::TypeMismatch)?;
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            TableSet { table_idx } => {
+                let table = self.module.get_table(*table_idx).ok_or(ValidationError::UnknownTable)?;
+                self.pop_expected(Val(table.ref_type.into()))
+                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            ElemDrop => {
-                if let InstructionData::Elem { elem_index, .. } = *inst.get_data() {
-                    self.module
-                        .elements
-                        .elements
-                        .get(elem_index as usize)
-                        .ok_or(ValidationError::UnknownElemSegment(elem_index))?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            ElemDrop { elem_idx } => {
+                self.module
+                    .elements
+                    .elements
+                    .get(*elem_idx as usize)
+                    .ok_or(ValidationError::UnknownElemSegment(*elem_idx))?;
+                Ok(())
             }
 
-            DataDrop => {
-                if let InstructionData::Data { data_index, .. } = *inst.get_data() {
-                    let has_data_count_section =
-                        self.module.data_count.position.start != 0 || self.module.data_count.position.end != 0;
-                    let has_memory = !self.module.memory.is_empty() || self.module.imports.memory_count() > 0;
+            DataDrop { data_idx } => {
+                let has_data_count_section =
+                    self.module.data_count.position.start != 0 || self.module.data_count.position.end != 0;
+                let has_memory = !self.module.memory.is_empty() || self.module.imports.memory_count() > 0;
 
-                    if !has_data_count_section {
-                        // If module has memory, bulk memory ops require DataCount section
-                        // If no memory, then it's just an unknown data segment
-                        if has_memory {
-                            return Err(ValidationError::DataCountSectionRequired);
-                        } else {
-                            return Err(ValidationError::UnknownDataSegment);
-                        }
-                    }
-
-                    // DataCount section exists, check the index
-                    if data_index >= self.module.data_count.count {
-                        Err(ValidationError::UnknownDataSegmentWithIndex(data_index))
+                if !has_data_count_section {
+                    // If module has memory, bulk memory ops require DataCount section
+                    // If no memory, then it's just an unknown data segment
+                    if has_memory {
+                        return Err(ValidationError::DataCountSectionRequired);
                     } else {
-                        Ok(())
+                        return Err(ValidationError::UnknownDataSegment);
                     }
+                }
+
+                // DataCount section exists, check the index
+                if *data_idx >= self.module.data_count.count {
+                    Err(ValidationError::UnknownDataSegmentWithIndex(*data_idx))
                 } else {
-                    Err(ValidationError::InvalidInstruction)
+                    Ok(())
                 }
             }
 
-            Block | Loop | If => {
+            Block { ref block_type } | Loop { ref block_type } | If { ref block_type } => {
                 // special case for If we need to pop an i32
-                if inst.get_type() == &If {
+                if matches!(kind, If { .. }) {
                     self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 }
 
-                if let InstructionData::Block { blocktype: bt } = *inst.get_data() {
-                    let mut start_types = Vec::new();
-                    let mut end_types = Vec::new();
-                    match bt {
-                        // simple []->[type] version
-                        BlockType::Type(t) => {
-                            end_types.push(Val(t));
-                            Ok(())
-                        }
-                        BlockType::Empty => Ok(()),
-                        // complex [type*]->[type*] version
-                        BlockType::TypeIndex(ti) => {
-                            let ftype = self
-                                .module
-                                .types
-                                .get(ti as u8)
-                                .ok_or(ValidationError::UnknownBlockType)?;
-                            // parameters are stack ordered, so pick them in reverse
-                            ftype.parameters.iter().rev().try_for_each(|v| {
-                                match self.pop_expected(Val(*v)) {
-                                    Some(_) => {
-                                        // insert at start because we're working in reverse
-                                        start_types.insert(0, Val(*v));
-                                        Ok(())
-                                    }
-                                    None => Err(ValidationError::TypeMismatch),
+                let mut start_types = Vec::new();
+                let mut end_types = Vec::new();
+
+                match block_type {
+                    BlockType::Empty => {
+                        // Do nothing, types remain empty
+                    }
+                    BlockType::Value(t) => {
+                        end_types.push(Val(*t));
+                    }
+                    BlockType::FuncType(ti) => {
+                        let ftype = self
+                            .module
+                            .types
+                            .get(*ti as u8)
+                            .ok_or(ValidationError::UnknownBlockType)?;
+                        // parameters are stack ordered, so pick them in reverse
+                        ftype.parameters.iter().rev().try_for_each(|v| {
+                            match self.pop_expected(Val(*v)) {
+                                Some(_) => {
+                                    // insert at start because we're working in reverse
+                                    start_types.insert(0, Val(*v));
+                                    Ok(())
                                 }
-                            })?;
-                            ftype.return_types.iter().for_each(|v| {
-                                end_types.push(Val(*v));
-                            });
-                            Ok(())
-                        }
-                    }?;
-                    self.push_ctrl(*inst.get_type(), start_types, end_types);
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+                                None => Err(ValidationError::TypeMismatch),
+                            }
+                        })?;
+                        ftype.return_types.iter().for_each(|v| {
+                            end_types.push(Val(*v));
+                        });
+                    }
+                };
+
+                self.push_ctrl(kind.clone(), start_types, end_types);
+                Ok(())
             }
 
             Else => {
                 let ctrl = self.pop_ctrl()?;
-                if ctrl.instruction != If {
+                if !matches!(ctrl.instruction, If { .. }) {
                     Err(ValidationError::InvalidInstruction)
                 } else {
                     // Mark that we had an else by pushing Else control frame
@@ -1005,7 +949,7 @@ impl Validator for CodeValidator<'_> {
 
                 // Special check: typed if without else is invalid UNLESS
                 // the start types match the end types (parameters flow through)
-                if ctrl.instruction == If && !ctrl.end_types.is_empty() && !ctrl.unreachable {
+                if matches!(ctrl.instruction, If { .. }) && !ctrl.end_types.is_empty() && !ctrl.unreachable {
                     // Check if start_types == end_types (parameters flow through)
                     if ctrl.start_types != ctrl.end_types {
                         return Err(ValidationError::TypeMismatch);
@@ -1016,140 +960,129 @@ impl Validator for CodeValidator<'_> {
                 Ok(())
             }
 
-            Return | Br | BrIf => {
-                let li: u32 = if let InstructionData::Labelled { label_index: li } = *inst.get_data() {
-                    li
-                } else {
-                    // Return, outermost label
-                    self.ctrls.len() as u32 - 1
-                };
-
-                if inst.get_type() == &BrIf {
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                }
-
+            Return => {
+                // Return targets the outermost label
+                let li = self.ctrls.len() as u32 - 1;
                 let label_types = self.label_types_at(li)?;
-                self.pop_expecteds(label_types.clone())
-                    .ok_or(ValidationError::TypeMismatch)?;
-                match inst.get_type() {
-                    &Return | &Br => {
-                        self.unreachable().ok_or(ValidationError::TypeMismatch)?;
-                        Ok(())
-                    }
-                    &BrIf => {
-                        self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
-                        Ok(())
-                    }
-                    _ => Err(ValidationError::InvalidInstruction),
-                }
+                self.pop_expecteds(label_types).ok_or(ValidationError::TypeMismatch)?;
+                self.unreachable().ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            BrTable => {
-                if let InstructionData::TableLabelled {
-                    ref labels,
-                    label_index: li,
-                } = *inst.get_data()
-                {
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    if self.ctrls.len() < li as usize {
+            Br { label_idx } => {
+                let label_types = self.label_types_at(*label_idx)?;
+                self.pop_expecteds(label_types).ok_or(ValidationError::TypeMismatch)?;
+                self.unreachable().ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
+            }
+
+            BrIf { label_idx } => {
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                let label_types = self.label_types_at(*label_idx)?;
+                self.pop_expecteds(label_types.clone())
+                    .ok_or(ValidationError::TypeMismatch)?;
+                self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
+            }
+
+            BrTable { labels, default } => {
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                if self.ctrls.len() < *default as usize {
+                    return Err(ValidationError::UnknownLabel);
+                }
+
+                // First, check that all labels exist
+                for &li in labels.iter() {
+                    if self.ctrls.len() <= li as usize {
                         return Err(ValidationError::UnknownLabel);
                     }
+                }
 
-                    // First, check that all labels exist
-                    for &li in labels.iter() {
-                        if self.ctrls.len() <= li as usize {
-                            return Err(ValidationError::UnknownLabel);
-                        }
+                // Get the result types for the default label
+                let default_label_types = self.label_types_at(*default)?;
+                let arity = default_label_types.len();
+
+                // All branch targets must have the same arity
+                for &li in labels.iter() {
+                    let label_types = self.label_types_at(li)?;
+                    if label_types.len() != arity {
+                        return Err(ValidationError::TypeMismatch);
                     }
+                }
 
-                    // Get the result types for the default label
-                    let default_label_types = self.label_types_at(li)?;
-                    let arity = default_label_types.len();
+                // Check if we're in an unreachable state
+                let is_unreachable = self.ctrls.last().map(|c| c.unreachable).unwrap_or(false);
 
-                    // All branch targets must have the same arity
+                if is_unreachable {
+                    // In unreachable state, we need to be more careful
+                    // We still validate, but we allow polymorphic values
+                    let saved_stack_height = self.vals.len();
+
+                    // Try to validate each branch
+                    let mut validation_failed = false;
                     for &li in labels.iter() {
                         let label_types = self.label_types_at(li)?;
-                        if label_types.len() != arity {
-                            return Err(ValidationError::TypeMismatch);
-                        }
-                    }
 
-                    // Check if we're in an unreachable state
-                    let is_unreachable = self.ctrls.last().map(|c| c.unreachable).unwrap_or(false);
-
-                    if is_unreachable {
-                        // In unreachable state, we need to be more careful
-                        // We still validate, but we allow polymorphic values
-                        let saved_stack_height = self.vals.len();
-
-                        // Try to validate each branch
-                        let mut validation_failed = false;
-                        for &li in labels.iter() {
-                            let label_types = self.label_types_at(li)?;
-
-                            // Try to pop expected types
-                            let mut can_satisfy = true;
-                            for expected_type in label_types.iter().rev() {
-                                if let Some(actual) = self.pop_val() {
-                                    // If we get Unknown (polymorphic), it can satisfy any type
-                                    // If we get a concrete type, it must match
-                                    if actual != Unknown && actual != *expected_type {
-                                        can_satisfy = false;
-                                        break;
-                                    }
-                                } else {
+                        // Try to pop expected types
+                        let mut can_satisfy = true;
+                        for expected_type in label_types.iter().rev() {
+                            if let Some(actual) = self.pop_val() {
+                                // If we get Unknown (polymorphic), it can satisfy any type
+                                // If we get a concrete type, it must match
+                                if actual != Unknown && actual != *expected_type {
                                     can_satisfy = false;
                                     break;
                                 }
-                            }
-
-                            // Restore stack for next iteration
-                            self.vals.truncate(saved_stack_height);
-
-                            if !can_satisfy {
-                                validation_failed = true;
+                            } else {
+                                can_satisfy = false;
                                 break;
                             }
                         }
 
-                        if validation_failed {
-                            return Err(ValidationError::TypeMismatch);
-                        }
+                        // Restore stack for next iteration
+                        self.vals.truncate(saved_stack_height);
 
-                        // Also validate the default branch
-                        for expected_type in default_label_types.iter().rev() {
-                            if let Some(actual) = self.pop_val() {
-                                if actual != Unknown && actual != *expected_type {
-                                    self.vals.truncate(saved_stack_height);
-                                    return Err(ValidationError::TypeMismatch);
-                                }
-                            } else {
+                        if !can_satisfy {
+                            validation_failed = true;
+                            break;
+                        }
+                    }
+
+                    if validation_failed {
+                        return Err(ValidationError::TypeMismatch);
+                    }
+
+                    // Also validate the default branch
+                    for expected_type in default_label_types.iter().rev() {
+                        if let Some(actual) = self.pop_val() {
+                            if actual != Unknown && actual != *expected_type {
                                 self.vals.truncate(saved_stack_height);
                                 return Err(ValidationError::TypeMismatch);
                             }
+                        } else {
+                            self.vals.truncate(saved_stack_height);
+                            return Err(ValidationError::TypeMismatch);
                         }
-                    } else {
-                        // Normal validation
-                        labels.iter().try_for_each(|&li| {
-                            let label_types = self.label_types_at(li)?;
-                            let popped = self.pop_expecteds(label_types.clone());
-                            if popped.is_none() {
-                                Err(ValidationError::TypeMismatch)
-                            } else {
-                                self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
-                                Ok(())
-                            }
-                        })?;
-
-                        // Pop for the default branch
-                        self.pop_expecteds(default_label_types)
-                            .ok_or(ValidationError::TypeMismatch)?;
                     }
-                    self.unreachable().ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
                 } else {
-                    Err(ValidationError::InvalidInstruction)
+                    // Normal validation
+                    labels.iter().try_for_each(|&li| {
+                        let label_types = self.label_types_at(li)?;
+                        let popped = self.pop_expecteds(label_types.clone());
+                        if popped.is_none() {
+                            Err(ValidationError::TypeMismatch)
+                        } else {
+                            self.push_vals(label_types).ok_or(ValidationError::TypeMismatch)?;
+                            Ok(())
+                        }
+                    })?;
+
+                    // Pop for the default branch
+                    self.pop_expecteds(default_label_types)
+                        .ok_or(ValidationError::TypeMismatch)?;
                 }
+                self.unreachable().ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
             Unreachable => {
@@ -1157,68 +1090,56 @@ impl Validator for CodeValidator<'_> {
                 Ok(())
             }
 
-            Call => {
-                if let InstructionData::Function { function_index: fi } = *inst.get_data() {
-                    let ftype: &FunctionType = self.get_function_type(fi)?;
-                    let parameters: Vec<_> = ftype.parameters.to_vec();
-                    let return_types: Vec<_> = ftype.return_types.to_vec();
+            Call { func_idx } => {
+                let ftype: &FunctionType = self.get_function_type(*func_idx)?;
+                let parameters: Vec<_> = ftype.parameters.to_vec();
+                let return_types: Vec<_> = ftype.return_types.to_vec();
 
-                    // parameters are stack ordered, so pick them in reverse
-                    parameters
-                        .iter()
-                        .rev()
-                        .try_for_each(|v| match self.pop_expected(Val(*v)) {
-                            Some(_) => Ok(()),
-                            None => Err(ValidationError::TypeMismatch),
-                        })?;
-                    return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
+                // parameters are stack ordered, so pick them in reverse
+                parameters
+                    .iter()
+                    .rev()
+                    .try_for_each(|v| match self.pop_expected(Val(*v)) {
                         Some(_) => Ok(()),
                         None => Err(ValidationError::TypeMismatch),
                     })?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+                return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
+                    Some(_) => Ok(()),
+                    None => Err(ValidationError::TypeMismatch),
+                })?;
+                Ok(())
             }
 
-            CallIndirect => {
-                if let InstructionData::Indirect {
-                    type_index: typi,
-                    table_index: tabi,
-                } = *inst.get_data()
-                {
-                    // TOOD: this probably should check that table_index exists in the table space
+            CallIndirect { type_idx, table_idx } => {
+                // TOOD: this probably should check that table_index exists in the table space
 
-                    let table = self.module.get_table(tabi).ok_or(ValidationError::UnknownTable)?;
+                let table = self.module.get_table(*table_idx).ok_or(ValidationError::UnknownTable)?;
 
-                    if ValueType::from(table.ref_type) != FuncRef {
-                        return Err(ValidationError::TypeMismatch);
-                    }
+                if ValueType::from(table.ref_type) != FuncRef {
+                    return Err(ValidationError::TypeMismatch);
+                }
 
-                    // operand that directs us to the table entry
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                // operand that directs us to the table entry
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
 
-                    // table entry must have this function signature
-                    let ftype = self.get_type(typi)?;
-                    let parameters: Vec<_> = ftype.parameters.to_vec();
-                    let return_types: Vec<_> = ftype.return_types.to_vec();
+                // table entry must have this function signature
+                let ftype = self.get_type(*type_idx)?;
+                let parameters: Vec<_> = ftype.parameters.to_vec();
+                let return_types: Vec<_> = ftype.return_types.to_vec();
 
-                    // parameters are stack ordered, so pick them in reverse
-                    parameters
-                        .iter()
-                        .rev()
-                        .try_for_each(|v| match self.pop_expected(Val(*v)) {
-                            Some(_) => Ok(()),
-                            None => Err(ValidationError::TypeMismatch),
-                        })?;
-                    return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
+                // parameters are stack ordered, so pick them in reverse
+                parameters
+                    .iter()
+                    .rev()
+                    .try_for_each(|v| match self.pop_expected(Val(*v)) {
                         Some(_) => Ok(()),
                         None => Err(ValidationError::TypeMismatch),
                     })?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+                return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
+                    Some(_) => Ok(()),
+                    None => Err(ValidationError::TypeMismatch),
+                })?;
+                Ok(())
             }
 
             Select => {
@@ -1249,80 +1170,66 @@ impl Validator for CodeValidator<'_> {
                 }
             }
 
-            SelectT => {
+            SelectTyped { val_types } => {
                 // SelectT has explicit type immediates in the instruction data
-                if let InstructionData::ValueType { value_types } = inst.get_data() {
-                    if value_types.is_empty() {
-                        // Empty result arity is a specific error
-                        return Err(ValidationError::InvalidResultArity);
-                    }
-                    if value_types.len() != 1 {
-                        // Select should have exactly one result type.
-                        return Err(ValidationError::InvalidResultArity);
-                    }
-                    // Decode the value type from byte
-                    let result_type = ValueType::decode(value_types[0]).map_err(|_| ValidationError::TypeMismatch)?;
-
-                    // Pop condition (i32)
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-
-                    // Pop two values of the result type
-                    let t2 = self.pop_val().ok_or(ValidationError::TypeMismatch)?;
-                    let t1 = self.pop_val().ok_or(ValidationError::TypeMismatch)?;
-
-                    // Check that popped values match the expected type
-                    let expected = Val(result_type);
-                    if !matches!(t1, Unknown) && t1 != expected {
-                        return Err(ValidationError::TypeMismatch);
-                    }
-                    if !matches!(t2, Unknown) && t2 != expected {
-                        return Err(ValidationError::TypeMismatch);
-                    }
-
-                    // Push result type
-                    self.push_val(Val(result_type)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
+                if val_types.is_empty() {
+                    // Empty result arity is a specific error
+                    return Err(ValidationError::InvalidResultArity);
                 }
+                if val_types.len() != 1 {
+                    // Select should have exactly one result type.
+                    return Err(ValidationError::InvalidResultArity);
+                }
+                let result_type = val_types[0];
+
+                // Pop condition (i32)
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+
+                // Pop two values of the result type
+                let t2 = self.pop_val().ok_or(ValidationError::TypeMismatch)?;
+                let t1 = self.pop_val().ok_or(ValidationError::TypeMismatch)?;
+
+                // Check that popped values match the expected type
+                let expected = Val(result_type);
+                if !matches!(t1, Unknown) && t1 != expected {
+                    return Err(ValidationError::TypeMismatch);
+                }
+                if !matches!(t2, Unknown) && t2 != expected {
+                    return Err(ValidationError::TypeMismatch);
+                }
+
+                // Push result type
+                self.push_val(Val(result_type)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            RefFunc => {
-                if let InstructionData::Function { function_index: fi } = *inst.get_data() {
-                    self.get_function_type(fi)?;
-                    // Check if this is a self-reference
-                    if fi == self.current_function_index {
-                        // Allow self-reference if the function is declared in a declarative element
-                        // Declarative elements exist specifically to allow functions to be referenced
-                        // before they are fully validated, enabling self-references and forward references
-                        let is_declared_in_declarative = self.module.elements.elements.iter().any(|elem| {
-                            matches!(elem.mode, ElementMode::Declarative) &&
-                                elem.init.iter().any(|init_exprs| {
-                                    init_exprs.iter().any(|instr| {
-                                        matches!(instr.get_type(), ast::InstructionType::RefFunc) &&
-                                            matches!(instr.get_data(), ast::InstructionData::Function { function_index } if *function_index == fi)
-                                    })
+            RefFunc { func_idx } => {
+                self.get_function_type(*func_idx)?;
+                // Check if this is a self-reference
+                if *func_idx == self.current_function_index {
+                    // Allow self-reference if the function is declared in a declarative element
+                    // Declarative elements exist specifically to allow functions to be referenced
+                    // before they are fully validated, enabling self-references and forward references
+                    let is_declared_in_declarative = self.module.elements.elements.iter().any(|elem| {
+                        matches!(elem.mode, ElementMode::Declarative)
+                            && elem.init.iter().any(|init_exprs| {
+                                init_exprs.iter().any(|instr| {
+                                    matches!(instr.kind, InstructionKind::RefFunc { func_idx: idx } if idx == *func_idx)
                                 })
-                        });
+                            })
+                    });
 
-                        if !is_declared_in_declarative {
-                            return Err(ValidationError::UndeclaredFunctionReference);
-                        }
+                    if !is_declared_in_declarative {
+                        return Err(ValidationError::UndeclaredFunctionReference);
                     }
-                    self.push_val(Val(FuncRef)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
                 }
+                self.push_val(Val(FuncRef)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            RefNull => {
-                if let InstructionData::RefType { ref_type } = *inst.get_data() {
-                    self.push_val(Val(ref_type)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            RefNull { ref_type } => {
+                self.push_val(Val(*ref_type)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
             RefIsNull => {
@@ -1343,52 +1250,32 @@ impl Validator for CodeValidator<'_> {
 
             Nop => Ok(()),
 
-            TableSize => {
-                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
-                    // Verify table exists
-                    self.module
-                        .get_table(table_index)
-                        .ok_or(ValidationError::UnknownTable)?;
-                    // table.size pushes the current size as i32
-                    self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            TableSize { table_idx } => {
+                // Verify table exists
+                self.module.get_table(*table_idx).ok_or(ValidationError::UnknownTable)?;
+                // table.size pushes the current size as i32
+                self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            TableGrow => {
-                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
-                    let table = self
-                        .module
-                        .get_table(table_index)
-                        .ok_or(ValidationError::UnknownTable)?;
-                    // table.grow pops: [n:i32, init:reftype] and pushes: [prev_size:i32]
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    self.pop_expected(Val(table.ref_type.into()))
-                        .ok_or(ValidationError::TypeMismatch)?;
-                    self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            TableGrow { table_idx } => {
+                let table = self.module.get_table(*table_idx).ok_or(ValidationError::UnknownTable)?;
+                // table.grow pops: [n:i32, init:reftype] and pushes: [prev_size:i32]
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(table.ref_type.into()))
+                    .ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
-            TableFill => {
-                if let InstructionData::Table { table_index, .. } = *inst.get_data() {
-                    let table = self
-                        .module
-                        .get_table(table_index)
-                        .ok_or(ValidationError::UnknownTable)?;
-                    // table.fill pops: [i:i32, val:reftype, n:i32]
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    self.pop_expected(Val(table.ref_type.into()))
-                        .ok_or(ValidationError::TypeMismatch)?;
-                    self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
-                    Ok(())
-                } else {
-                    Err(ValidationError::InvalidInstruction)
-                }
+            TableFill { table_idx } => {
+                let table = self.module.get_table(*table_idx).ok_or(ValidationError::UnknownTable)?;
+                // table.fill pops: [i:i32, val:reftype, n:i32]
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(table.ref_type.into()))
+                    .ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
+                Ok(())
             }
 
             _ => Err(ValidationError::UnimplementedInstruction),
@@ -1403,7 +1290,7 @@ impl Validator for CodeValidator<'_> {
         // After all instructions are processed, check that the stack state
         // matches the expected function return types
         if !self.ctrls.is_empty() {
-            return Err(ValidationError::InvalidInstruction);
+            return Err(ValidationError::UnexpectedEndOfFunction);
         }
 
         // Check that the stack has exactly the expected return values
@@ -1427,20 +1314,9 @@ impl Validator for CodeValidator<'_> {
     }
 }
 
-fn check_alignment(inst: &Instruction, align_exponent: u32) -> Result<(), ValidationError> {
-    let align: u32 = if let InstructionData::Memory {
-        subopcode_bytes: _,
-        memarg,
-    } = *inst.get_data()
-    {
-        memarg.0
-    } else {
-        return Err(ValidationError::InvalidInstruction);
-    };
-
-    if align > align_exponent {
+fn check_alignment(memarg: &crate::parser::instruction::MemArg, align_exponent: u32) -> Result<(), ValidationError> {
+    if memarg.align > align_exponent {
         return Err(ValidationError::BadAlignment);
     }
-
     Ok(())
 }

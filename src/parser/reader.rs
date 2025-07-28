@@ -26,6 +26,14 @@ impl Reader {
         self.pos
     }
 
+    pub fn set_pos(&mut self, pos: usize) -> Result<(), io::Error> {
+        if pos > self.bytes.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "position out of bounds"));
+        }
+        self.pos = pos;
+        Ok(())
+    }
+
     pub fn read_byte(&mut self) -> Result<u8, io::Error> {
         match self.next() {
             Some(byte) => Ok(byte),
@@ -391,6 +399,7 @@ fn test_read_vu64() {
     );
 }
 
+#[allow(dead_code)]
 pub fn emit_vu64(v: u64) -> Vec<u8> {
     emit_vu(v)
 }
@@ -913,6 +922,7 @@ fn test_read_f32() {
     assert_eq_with_diag(read(vec![249, 2, 21, 80]), 1.0e10);
 }
 
+#[allow(dead_code)]
 pub fn emit_f32(v: f32) -> Vec<u8> {
     let mut buf = [0u8; 4];
     let mut wtr = io::Cursor::new(&mut buf[..]);
@@ -958,6 +968,7 @@ fn test_read_f64() {
     assert_eq_with_diag(read(vec![125, 195, 148, 37, 173, 73, 178, 84]), 1.0e100);
 }
 
+#[allow(dead_code)]
 pub fn emit_f64(v: f64) -> Vec<u8> {
     let mut buf = [0u8; 8];
     let mut wtr = io::Cursor::new(&mut buf[..]);
@@ -1017,10 +1028,12 @@ fn test_read_v128() {
     );
 }
 
+#[allow(dead_code)]
 pub fn emit_v128(v: [u8; 16]) -> Vec<u8> {
     v.to_vec()
 }
 
+#[allow(dead_code)]
 pub fn emit_u8vec(v: &Vec<u8>) -> Vec<u8> {
     let mut result = emit_vu32(v.len() as u32);
     result.extend(v);

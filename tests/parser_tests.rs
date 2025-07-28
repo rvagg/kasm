@@ -12,29 +12,23 @@ mod tests {
     /*
      * WebAssembly Spec Test Coverage
      *
-     * This test harness runs 86 out of 147 WebAssembly spec tests.
+     * This test harness runs 86 out of 90 core WebAssembly spec tests.
+     * Total including SIMD: 86 out of 147 tests.
      *
      * Special handling:
      * - UTF-8 errors: Accept both "malformed UTF-8 encoding" and "invalid utf-8 sequence"
      * - select.2.wasm: Accept "type mismatch" for "invalid result arity" (binary ambiguity)
      *
-     * Tests not imported (61 total):
+     * Tests not imported (only 4 core tests + 57 SIMD):
      *
-     * === Tests using unsupported syntax (4 files) ===
+     * === Core tests using unsupported syntax (4 files) ===
      * - comments.wast: Uses `(module quote ...)` syntax
      * - linking.wast: Requires multi-module linking support
      * - obsolete-keywords.wast: Tests deprecated operators, uses `(module quote ...)`
      * - utf8-invalid-encoding.wast: All tests use `(module quote ...)` syntax
      *
      * === SIMD Tests (57 files) ===
-     * Not supported - would require v128 type and ~400 new opcodes:
-     * - Basic operations (9): address, align, bitwise, boolean, const, conversions, lane, linking, splat
-     * - Bit shift (1): bit_shift
-     * - Float32x4 (5): base, arith, cmp, pmin_pmax, rounding
-     * - Float64x2 (5): base, arith, cmp, pmin_pmax, rounding
-     * - Integer ops (23): i16x8 (7), i32x4 (8), i64x2 (4), i8x16 (4)
-     * - Type conversions (1): int_to_int_extend
-     * - Memory ops (13): load variants (8), store variants (5)
+     * Not supported - would require v128 type and ~400 new opcodes
      *
      * UTF-8 validation: 528 tests implemented in src/parser/utf8_tests.rs
      * (extracted from utf8-custom-section-id, utf8-import-field, utf8-import-module)

@@ -1,4 +1,4 @@
-pub mod ast;
+pub mod instruction;
 pub mod module;
 pub mod reader;
 mod validate;
@@ -15,7 +15,7 @@ pub fn parse(
     module_registry: &HashMap<String, module::Module>,
     name: &str,
     bytes: &mut reader::Reader,
-) -> Result<module::Module, ast::DecodeError> {
+) -> Result<module::Module, instruction::DecodeError> {
     let mut unit = module::Module::new(name);
 
     read_header(bytes, &mut unit.magic, &mut unit.version)?;
@@ -51,15 +51,17 @@ pub fn parse(
         }
         let start_pos = bytes.pos();
 
-        read_sections(sec_id, bytes, module_registry, &mut unit, sec_len).map_err(|e: ast::DecodeError| match e {
-            ast::DecodeError::Io(err) => match err.kind() {
-                io::ErrorKind::UnexpectedEof => {
-                    io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end of section or function").into()
-                }
-                _ => ast::DecodeError::Io(err),
+        read_sections(sec_id, bytes, module_registry, &mut unit, sec_len).map_err(
+            |e: instruction::DecodeError| match e {
+                instruction::DecodeError::Io(err) => match err.kind() {
+                    io::ErrorKind::UnexpectedEof => {
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end of section or function").into()
+                    }
+                    _ => instruction::DecodeError::Io(err),
+                },
+                _ => e,
             },
-            _ => e,
-        })?;
+        )?;
         let end_pos = bytes.pos();
         let actual_len = end_pos - start_pos;
         if actual_len != sec_len as usize {
@@ -126,7 +128,7 @@ fn read_sections(
     module_registry: &HashMap<String, module::Module>,
     unit: &mut module::Module,
     section_len: u32,
-) -> Result<(), ast::DecodeError> {
+) -> Result<(), instruction::DecodeError> {
     let start_pos: usize = bytes.pos();
     let positional: &mut dyn module::Positional = match sec_id {
         1 => {
@@ -292,7 +294,7 @@ fn read_section_import(
     types: &module::TypeSection,
     memory: &module::MemorySection,
     tables: &module::TableSection,
-) -> Result<(), ast::DecodeError> {
+) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
     let mut memory_import_count = 0;
 
@@ -320,7 +322,7 @@ impl module::Import {
         types: &module::TypeSection,
         _memory: &module::MemorySection,
         _tables: &module::TableSection,
-    ) -> Result<module::Import, ast::DecodeError> {
+    ) -> Result<module::Import, instruction::DecodeError> {
         let module = reader.read_string()?;
         let name = reader.read_string()?;
         let external_kind = match module::ExternalKind::decode(reader, types.len() as u32) {
@@ -371,7 +373,7 @@ fn read_section_memory(
     bytes: &mut reader::Reader,
     memory: &mut module::MemorySection,
     imports: &module::ImportSection,
-) -> Result<(), ast::DecodeError> {
+) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
     // Check if we already have imported memories
@@ -458,7 +460,7 @@ fn read_section_export(
     Ok(())
 }
 
-fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) -> Result<(), ast::DecodeError> {
+fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
     // TODO: this check is duplicated after the section read loop
@@ -489,13 +491,13 @@ fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) ->
             return Err(io::Error::new(io::ErrorKind::InvalidData, "too many locals").into());
         }
 
-        let instructions: Vec<ast::Instruction> =
-            ast::Instruction::decode_function(module, &locals, module.code.len() as u32, bytes).map_err(|err| {
+        let instructions =
+            instruction::decode_function(bytes, module, &locals, module.code.len() as u32).map_err(|err| {
                 if bytes.pos() > end_pos {
                     io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
                 } else if ii == count - 1 && bytes.pos() == end_pos {
                     match err {
-                        ast::DecodeError::Validation(_) => err,
+                        instruction::DecodeError::Validation(_) => err,
                         _ => io::Error::new(io::ErrorKind::InvalidData, "unexpected end of section or function").into(),
                     }
                 } else {
@@ -525,21 +527,21 @@ impl module::Data {
         bytes: &mut reader::Reader,
         imports: &module::ImportSection,
         memory_count: u32,
-    ) -> Result<Self, ast::DecodeError> {
+    ) -> Result<Self, instruction::DecodeError> {
         let mut mode = module::DataMode::Passive;
         let typ = bytes.read_vu32()?;
         match typ {
             0 => {
                 mode = module::DataMode::Active {
                     memory_index: 0,
-                    offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                    offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                 };
             }
             1 => {} // nothing else needed
             2 => {
                 mode = module::DataMode::Active {
                     memory_index: bytes.read_vu32()?,
-                    offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                    offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                 };
             }
             _ => Err(io::Error::new(
@@ -579,7 +581,7 @@ fn read_section_data(
     datas: &mut module::DataSection,
     data_count: Option<u32>,
     memory_count: u32,
-) -> Result<(), ast::DecodeError> {
+) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
     if let Some(expected_count) = data_count {
@@ -604,7 +606,7 @@ fn read_section_custom<'a>(
     bytes: &mut reader::Reader,
     read_len: u32,
     customs: &'a mut Vec<module::CustomSection>,
-) -> Result<&'a mut module::CustomSection, ast::DecodeError> {
+) -> Result<&'a mut module::CustomSection, instruction::DecodeError> {
     let mut custom = module::CustomSection::new();
     let start_pos = bytes.pos();
     custom.name = bytes.read_string()?;
@@ -624,13 +626,16 @@ fn read_section_custom<'a>(
 fn read_section_datacount(
     bytes: &mut reader::Reader,
     data_count: &mut module::DataCountSection,
-) -> Result<(), ast::DecodeError> {
+) -> Result<(), instruction::DecodeError> {
     data_count.count = bytes.read_vu32()?;
     Ok(())
 }
 
 impl module::ExternalKind {
-    pub fn decode(bytes: &mut reader::Reader, type_count: u32) -> Result<module::ExternalKind, ast::DecodeError> {
+    pub fn decode(
+        bytes: &mut reader::Reader,
+        type_count: u32,
+    ) -> Result<module::ExternalKind, instruction::DecodeError> {
         let byte = bytes.read_byte()?;
         match byte {
             0x00 => {
@@ -678,11 +683,11 @@ impl module::Global {
         bytes: &mut reader::Reader,
         imports: &module::ImportSection,
         total_functions: u32,
-    ) -> Result<Self, ast::DecodeError> {
+    ) -> Result<Self, instruction::DecodeError> {
         let global_type = module::GlobalType::decode(bytes)?;
         Ok(module::Global {
             global_type,
-            init: ast::Instruction::decode_constant_expression_with_ref_func(
+            init: instruction::decode_constant_expression_with_ref_func(
                 bytes,
                 imports,
                 global_type.value_type,
@@ -697,7 +702,7 @@ fn read_section_global(
     globals: &mut module::GlobalSection,
     imports: &module::ImportSection,
     total_functions: u32,
-) -> Result<(), ast::DecodeError> {
+) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
@@ -709,7 +714,7 @@ fn read_section_global(
 }
 
 impl module::RefType {
-    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, instruction::DecodeError> {
         let byte = bytes.read_byte()?;
         match byte {
             0x70 => Ok(module::RefType::FuncRef),
@@ -720,7 +725,7 @@ impl module::RefType {
 }
 
 impl module::Limits {
-    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, instruction::DecodeError> {
         let has_max = bytes.read_vu1()?;
         let min = bytes.read_vu32()?;
         let max = if has_max { Some(bytes.read_vu32()?) } else { None };
@@ -738,7 +743,7 @@ impl module::Limits {
         Ok(module::Limits { min, max })
     }
 
-    pub fn decode_memory_limits(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+    pub fn decode_memory_limits(bytes: &mut reader::Reader) -> Result<Self, instruction::DecodeError> {
         let has_max = bytes.read_vu1()?;
         let min = bytes.read_vu32()?;
         let max = if has_max {
@@ -780,7 +785,7 @@ impl module::Limits {
 }
 
 impl module::TableType {
-    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, ast::DecodeError> {
+    pub fn decode(bytes: &mut reader::Reader) -> Result<Self, instruction::DecodeError> {
         // reftype then limits
         let ref_type = module::RefType::decode(bytes)?;
         let limits = module::Limits::decode(bytes)?;
@@ -788,7 +793,10 @@ impl module::TableType {
     }
 }
 
-fn read_section_table(bytes: &mut reader::Reader, table: &mut module::TableSection) -> Result<(), ast::DecodeError> {
+fn read_section_table(
+    bytes: &mut reader::Reader,
+    table: &mut module::TableSection,
+) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
@@ -810,7 +818,7 @@ impl module::Element {
         imports: &module::ImportSection,
         table: &module::TableSection,
         function_count: u32,
-    ) -> Result<Self, ast::DecodeError> {
+    ) -> Result<Self, instruction::DecodeError> {
         let read_type = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
             let byte = bytes.read_byte()?;
             match byte {
@@ -829,19 +837,16 @@ impl module::Element {
                 )),
             }
         };
-        let read_table_index =
-            |bytes: &mut reader::Reader| -> Result<u32, ast::DecodeError> { bytes.read_vu32().map_err(|e| e.into()) };
+        let read_table_index = |bytes: &mut reader::Reader| -> Result<u32, instruction::DecodeError> {
+            bytes.read_vu32().map_err(|e| e.into())
+        };
         let read_init = |bytes: &mut reader::Reader,
                          return_type: module::ValueType|
-         -> Result<Vec<Vec<ast::Instruction>>, ast::DecodeError> {
+         -> Result<Vec<Vec<instruction::Instruction>>, instruction::DecodeError> {
             let count = bytes.read_vu32()?;
-            let mut init: Vec<Vec<ast::Instruction>> = vec![];
+            let mut init: Vec<Vec<instruction::Instruction>> = vec![];
             for _ in 0..count {
-                init.push(ast::Instruction::decode_constant_expression(
-                    bytes,
-                    imports,
-                    return_type,
-                )?);
+                init.push(instruction::decode_constant_expression(bytes, imports, return_type)?);
             }
             Ok(init)
         };
@@ -857,32 +862,27 @@ impl module::Element {
             }
             Ok(func_indexes)
         };
-        let read_func_index_init = |bytes: &mut reader::Reader| -> Result<Vec<Vec<ast::Instruction>>, io::Error> {
-            let fi = read_func_indexes(bytes)?;
-            Ok(fi
-                .into_iter()
-                .map(|func_index| {
-                    vec![
-                        ast::Instruction::new(
-                            ast::InstructionType::RefFunc,
-                            ast::InstructionData::Function {
-                                function_index: func_index,
+        let read_func_index_init =
+            |bytes: &mut reader::Reader| -> Result<Vec<Vec<instruction::Instruction>>, io::Error> {
+                let fi = read_func_indexes(bytes)?;
+                Ok(fi
+                    .into_iter()
+                    .map(|func_index| {
+                        vec![
+                            instruction::Instruction {
+                                kind: instruction::InstructionKind::RefFunc { func_idx: func_index },
+                                position: instruction::ByteRange { offset: 0, length: 0 },
+                                original_bytes: Vec::new(),
                             },
-                            0,
-                            0,
-                        ),
-                        ast::Instruction::new(
-                            ast::InstructionType::End,
-                            ast::InstructionData::Simple {
-                                subopcode_bytes: Vec::new(),
+                            instruction::Instruction {
+                                kind: instruction::InstructionKind::End,
+                                position: instruction::ByteRange { offset: 0, length: 0 },
+                                original_bytes: Vec::new(),
                             },
-                            0,
-                            0,
-                        ),
-                    ]
-                })
-                .collect())
-        };
+                        ]
+                    })
+                    .collect())
+            };
 
         let typ = bytes.read_vu32()?;
         let element = match typ {
@@ -893,7 +893,7 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                        offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                     },
                     init: read_func_index_init(bytes)?,
                 }
@@ -913,7 +913,7 @@ impl module::Element {
                     flags: typ,
                     mode: module::ElementMode::Active {
                         table_index: read_table_index(bytes)?,
-                        offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                        offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                     },
                     ref_type: read_element_kind(bytes)?,
                     init: read_func_index_init(bytes)?,
@@ -935,7 +935,7 @@ impl module::Element {
                     ref_type: module::RefType::FuncRef,
                     mode: module::ElementMode::Active {
                         table_index: 0,
-                        offset: ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                        offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                     },
                     init: read_init(bytes, module::ValueType::FuncRef)?,
                 }
@@ -954,7 +954,7 @@ impl module::Element {
             6 => {
                 // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
                 let table_index = read_table_index(bytes)?;
-                let offset = ast::Instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?;
+                let offset = instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?;
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
                 module::Element {
@@ -1005,7 +1005,7 @@ fn read_section_elements(
     table: &module::TableSection,
     elements: &mut module::ElementSection,
     function_count: u32,
-) -> Result<(), ast::DecodeError> {
+) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
     for _ in 0..count {
