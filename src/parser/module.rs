@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fmt;
 use std::io;
 
@@ -59,9 +60,26 @@ pub struct Module {
     pub data: DataSection,
     pub data_count: DataCountSection,
     pub custom: Vec<CustomSection>,
+
+    /// Cached validation context for efficient lookups
+    pub validation_context: RefCell<Option<ValidationContext>>,
 }
 
 impl Module {
+    /// Get the cached validation context, building it lazily if needed
+    pub fn validation_context(&self) -> std::cell::Ref<'_, ValidationContext> {
+        // Build context if not already cached
+        if self.validation_context.borrow().is_none() {
+            let ctx = self.build_validation_context();
+            *self.validation_context.borrow_mut() = Some(ctx);
+        }
+
+        // Return a Ref to the context
+        std::cell::Ref::map(self.validation_context.borrow(), |opt| {
+            opt.as_ref().expect("ValidationContext should be built")
+        })
+    }
+
     /// Finds and formats the export name for a function at the given index.
     /// Returns the formatted string with angle brackets if the function is exported,
     /// or an empty string if not exported.
@@ -1993,6 +2011,7 @@ impl Module {
             data: DataSection::new(),
             data_count: DataCountSection::new(),
             custom: Vec::new(),
+            validation_context: RefCell::new(None),
         }
     }
 }
@@ -2204,5 +2223,95 @@ impl fmt::Display for ValueType {
                 ValueType::ExternRef => "externref",
             }
         )
+    }
+}
+
+/// Pre-computed validation context for efficient lookups during validation
+#[derive(Debug)]
+pub struct ValidationContext {
+    /// Quick check if module has any memory (imported or defined)
+    pub has_memory: bool,
+
+    /// Quick check if module has tables by index
+    pub has_table: Vec<bool>,
+
+    /// Import type indices
+    pub import_func_types: Vec<u32>, // function_idx -> type_idx (for imports only)
+    pub import_global_types: Vec<GlobalType>, // global_idx -> type (for imports only)
+    pub import_table_types: Vec<TableType>,   // table_idx -> type (for imports only)
+
+    /// Counts of imported items
+    pub import_counts: ImportCounts,
+
+    /// Combined function type lookup (imports + defined)
+    pub function_type_indices: Vec<u32>, // function_idx -> type_idx
+
+    /// Cached function names for display
+    pub function_names: std::collections::HashMap<u32, String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImportCounts {
+    pub functions: u32,
+    pub tables: u32,
+    pub memories: u32,
+    pub globals: u32,
+}
+
+impl Module {
+    /// Build a validation context with pre-computed indices
+    pub fn build_validation_context(&self) -> ValidationContext {
+        // Check if module has memory
+        let has_memory = !self.memory.is_empty() || self.imports.memory_count() > 0;
+
+        // Build table existence vector
+        let total_tables = self.imports.table_count() + self.table.tables.len();
+        let has_table = vec![true; total_tables];
+
+        // Extract import types
+        let mut import_func_types = Vec::new();
+        let mut import_global_types = Vec::new();
+        let mut import_table_types = Vec::new();
+
+        for import in &self.imports.imports {
+            match &import.external_kind {
+                ExternalKind::Function(type_idx) => {
+                    import_func_types.push(*type_idx);
+                }
+                ExternalKind::Global(global_type) => {
+                    import_global_types.push(*global_type);
+                }
+                ExternalKind::Table(table_type) => {
+                    import_table_types.push(*table_type);
+                }
+                _ => {}
+            }
+        }
+
+        // Count imports
+        let import_counts = ImportCounts {
+            functions: import_func_types.len() as u32,
+            tables: import_table_types.len() as u32,
+            memories: self.imports.memory_count() as u32,
+            globals: import_global_types.len() as u32,
+        };
+
+        // Build combined function type indices (imports + defined)
+        let mut function_type_indices = import_func_types.clone();
+        function_type_indices.extend(self.functions.functions.iter().map(|f| f.ftype_index));
+
+        // Cache function names (simplified for now)
+        let function_names = std::collections::HashMap::new();
+
+        ValidationContext {
+            has_memory,
+            has_table,
+            import_func_types,
+            import_global_types,
+            import_table_types,
+            import_counts,
+            function_type_indices,
+            function_names,
+        }
     }
 }

@@ -44,7 +44,8 @@ pub fn decode_function(
     let ftype = module
         .get_function_type(function_index)
         .ok_or(super::validate::ValidationError::UnknownFunctionType)?;
-    let mut validator = super::validate::CodeValidator::new(module, locals, ftype, function_index);
+    let ctx = module.validation_context();
+    let mut validator = super::validate::CodeValidator::new(module, &ctx, locals, ftype, function_index);
     decode_validate(&mut validator, ParseType::ReadAll, reader)
 }
 

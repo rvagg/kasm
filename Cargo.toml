@@ -16,3 +16,10 @@ regex = "1.10.2"
 fhex = "1.0.0"
 rand = "0.8.5"
 thiserror = "1.0.56"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "validation"
+harness = false

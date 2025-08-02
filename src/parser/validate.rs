@@ -262,12 +262,11 @@ struct CtrlFrame {
     unreachable: bool,
 }
 
-// TODO: this should probably just augment the Module Unit itself so we have access to all of this
 pub struct CodeValidator<'a> {
     module: &'a super::module::Module,
+    ctx: &'a super::module::ValidationContext,
     locals: &'a super::module::Locals,
-    params: Vec<ValueType>,
-    return_types: Vec<ValueType>,
+    function_type: &'a FunctionType,
     vals: Vec<MaybeValue>,
     ctrls: Vec<CtrlFrame>,
     need_end: bool,
@@ -275,17 +274,26 @@ pub struct CodeValidator<'a> {
 }
 
 impl<'a> CodeValidator<'a> {
+    #[inline]
+    fn validate_memory_exists(&self) -> Result<(), ValidationError> {
+        if !self.ctx.has_memory {
+            return Err(ValidationError::UnknownMemory);
+        }
+        Ok(())
+    }
+
     pub fn new(
         module: &'a super::module::Module,
+        ctx: &'a super::module::ValidationContext,
         locals: &'a super::module::Locals,
         function_type: &'a FunctionType,
         current_function_index: u32,
     ) -> CodeValidator<'a> {
         let mut v = CodeValidator {
             module,
+            ctx,
             locals,
-            params: function_type.parameters.clone(),
-            return_types: function_type.return_types.clone(),
+            function_type,
             vals: vec![],
             ctrls: vec![],
             need_end: false,
@@ -414,10 +422,11 @@ impl<'a> CodeValidator<'a> {
 
     fn local(&mut self, local_index: u32) -> Result<&ValueType, ValidationError> {
         let li = local_index;
-        let local: Option<&ValueType> = if (li as usize) < self.params.len() {
-            self.params.get(li as usize)
+        let param_count = self.function_type.parameters.len();
+        let local: Option<&ValueType> = if (li as usize) < param_count {
+            self.function_type.parameters.get(li as usize)
         } else {
-            let li = li - self.params.len() as u32;
+            let li = li - param_count as u32;
             self.locals.get(li)
         };
 
@@ -457,19 +466,12 @@ impl<'a> CodeValidator<'a> {
     }
 
     fn get_function_type(&self, fi: u32) -> Result<&FunctionType, ValidationError> {
-        if (fi as usize) < self.module.imports.function_count() {
-            self.module
-                .imports
-                .get_function_type_index(fi)
-                .ok_or(ValidationError::UnknownFunction(fi))
-                .and_then(|ti| self.get_type(ti))
-        } else {
-            self.module
-                .functions
-                .get((fi as u8) - (self.module.imports.function_count() as u8))
-                .ok_or(ValidationError::UnknownFunction(fi))
-                .and_then(|f| self.get_type(f.ftype_index))
-        }
+        // Use pre-computed function type indices for O(1) lookup
+        self.ctx
+            .function_type_indices
+            .get(fi as usize)
+            .ok_or(ValidationError::UnknownFunction(fi))
+            .and_then(|&type_idx| self.get_type(type_idx))
     }
 
     fn get_type(&self, ti: u32) -> Result<&FunctionType, ValidationError> {
@@ -646,9 +648,7 @@ impl Validator for CodeValidator<'_> {
             | I32Load16S { ref memarg }
             | I32Load16U { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 let align_exp = match &kind {
@@ -668,9 +668,7 @@ impl Validator for CodeValidator<'_> {
             | I64Load32S { ref memarg }
             | I64Load32U { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
                 let align_exp = match &kind {
@@ -685,9 +683,7 @@ impl Validator for CodeValidator<'_> {
 
             F32Load { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(memarg, 2 /* 4 bytes = 2^2 */)
@@ -695,9 +691,7 @@ impl Validator for CodeValidator<'_> {
 
             F64Load { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(memarg, 3 /* 8 bytes = 2^3 */)
@@ -705,9 +699,7 @@ impl Validator for CodeValidator<'_> {
 
             I32Store { ref memarg } | I32Store8 { ref memarg } | I32Store16 { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 let align_exp = match &kind {
@@ -724,9 +716,7 @@ impl Validator for CodeValidator<'_> {
             | I64Store16 { ref memarg }
             | I64Store32 { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 let align_exp = match &kind {
@@ -741,9 +731,7 @@ impl Validator for CodeValidator<'_> {
 
             F32Store { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(memarg, 2 /* 4 bytes = 2^2 */)
@@ -751,9 +739,7 @@ impl Validator for CodeValidator<'_> {
 
             F64Store { ref memarg } => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 check_alignment(memarg, 3 /* 8 bytes = 2^3 */)
@@ -761,18 +747,14 @@ impl Validator for CodeValidator<'_> {
 
             MemorySize => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
             }
 
             MemoryGrow => {
                 // Check that memory exists (imported or declared)
-                if self.module.memory.is_empty() && self.module.imports.memory_count() == 0 {
-                    return Err(ValidationError::UnknownMemory);
-                }
+                self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 self.push_val(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
                 Ok(())
@@ -1091,27 +1073,35 @@ impl Validator for CodeValidator<'_> {
             }
 
             Call { func_idx } => {
-                let ftype: &FunctionType = self.get_function_type(*func_idx)?;
-                let parameters: Vec<_> = ftype.parameters.to_vec();
-                let return_types: Vec<_> = ftype.return_types.to_vec();
+                // Get type index directly from pre-computed data
+                let type_idx = self
+                    .ctx
+                    .function_type_indices
+                    .get(*func_idx as usize)
+                    .ok_or(ValidationError::UnknownFunction(*func_idx))?;
+
+                let ftype = self
+                    .module
+                    .types
+                    .get(*type_idx as u8)
+                    .ok_or(ValidationError::UnknownFunctionType)?;
 
                 // parameters are stack ordered, so pick them in reverse
-                parameters
-                    .iter()
-                    .rev()
-                    .try_for_each(|v| match self.pop_expected(Val(*v)) {
-                        Some(_) => Ok(()),
-                        None => Err(ValidationError::TypeMismatch),
-                    })?;
-                return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
-                    Some(_) => Ok(()),
-                    None => Err(ValidationError::TypeMismatch),
-                })?;
+                for param in ftype.parameters.iter().rev() {
+                    self.pop_expected(Val(*param)).ok_or(ValidationError::TypeMismatch)?;
+                }
+
+                for return_type in &ftype.return_types {
+                    self.push_val(Val(*return_type)).ok_or(ValidationError::TypeMismatch)?;
+                }
                 Ok(())
             }
 
             CallIndirect { type_idx, table_idx } => {
-                // TOOD: this probably should check that table_index exists in the table space
+                // Validate table exists using pre-computed data
+                if *table_idx as usize >= self.ctx.has_table.len() || !self.ctx.has_table[*table_idx as usize] {
+                    return Err(ValidationError::UnknownTable);
+                }
 
                 let table = self.module.get_table(*table_idx).ok_or(ValidationError::UnknownTable)?;
 
@@ -1123,22 +1113,20 @@ impl Validator for CodeValidator<'_> {
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
 
                 // table entry must have this function signature
-                let ftype = self.get_type(*type_idx)?;
-                let parameters: Vec<_> = ftype.parameters.to_vec();
-                let return_types: Vec<_> = ftype.return_types.to_vec();
+                let ftype = self
+                    .module
+                    .types
+                    .get(*type_idx as u8)
+                    .ok_or(ValidationError::UnknownFunctionType)?;
 
                 // parameters are stack ordered, so pick them in reverse
-                parameters
-                    .iter()
-                    .rev()
-                    .try_for_each(|v| match self.pop_expected(Val(*v)) {
-                        Some(_) => Ok(()),
-                        None => Err(ValidationError::TypeMismatch),
-                    })?;
-                return_types.iter().try_for_each(|v| match self.push_val(Val(*v)) {
-                    Some(_) => Ok(()),
-                    None => Err(ValidationError::TypeMismatch),
-                })?;
+                for param in ftype.parameters.iter().rev() {
+                    self.pop_expected(Val(*param)).ok_or(ValidationError::TypeMismatch)?;
+                }
+
+                for return_type in &ftype.return_types {
+                    self.push_val(Val(*return_type)).ok_or(ValidationError::TypeMismatch)?;
+                }
                 Ok(())
             }
 
@@ -1294,7 +1282,7 @@ impl Validator for CodeValidator<'_> {
         }
 
         // Check that the stack has exactly the expected return values
-        let expected_count = self.return_types.len();
+        let expected_count = self.function_type.return_types.len();
         let actual_count = self.vals.len();
 
         if actual_count != expected_count {
@@ -1302,7 +1290,7 @@ impl Validator for CodeValidator<'_> {
         }
 
         // Check that the types match
-        for (i, expected_type) in self.return_types.iter().enumerate() {
+        for (i, expected_type) in self.function_type.return_types.iter().enumerate() {
             if let Some(Val(actual_type)) = self.vals.get(i) {
                 if actual_type != expected_type {
                     return Err(ValidationError::TypeMismatch);
