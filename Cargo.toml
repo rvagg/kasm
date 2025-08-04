@@ -23,3 +23,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "validation"
 harness = false
+
+[[bin]]
+name = "test-coverage"
+path = "src/bin/test_coverage.rs"
