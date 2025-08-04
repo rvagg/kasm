@@ -163,6 +163,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("nop".to_string());
     implemented.insert("drop".to_string());
     implemented.insert("end".to_string());
+    implemented.insert("local.get".to_string());
+    implemented.insert("local.set".to_string());
+    implemented.insert("local.tee".to_string());
 
     let args: Vec<String> = std::env::args().collect();
 

@@ -124,6 +124,48 @@ impl<'a> Executor<'a> {
                 Ok(())
             }
 
+            // local.set 𝑥
+            // 1. Let 𝐹 be the current frame.
+            // 2. Assert: due to validation, 𝐹.locals[𝑥] exists.
+            // 3. Assert: due to validation, a value is on the top of the stack.
+            // 4. Pop the value val from the stack.
+            // 5. Replace 𝐹.locals[𝑥] with the value val.
+            LocalSet { local_idx } => {
+                let frame = self.frame.as_mut().ok_or(RuntimeError::InvalidFunctionType)?;
+                let value = self.stack.pop()?;
+
+                // Bounds check
+                if *local_idx as usize >= frame.locals.len() {
+                    return Err(RuntimeError::LocalIndexOutOfBounds(*local_idx));
+                }
+
+                frame.locals[*local_idx as usize] = value;
+                Ok(())
+            }
+
+            // local.tee 𝑥
+            // 1. Assert: due to validation, a value is on the top of the stack.
+            // 2. Pop the value val from the stack.
+            // 3. Push the value val to the stack.
+            // 4. Push the value val to the stack.
+            // 5. Execute the instruction local.set 𝑥.
+            LocalTee { local_idx } => {
+                let frame = self.frame.as_mut().ok_or(RuntimeError::InvalidFunctionType)?;
+                let value = self.stack.pop()?;
+
+                // Bounds check
+                if *local_idx as usize >= frame.locals.len() {
+                    return Err(RuntimeError::LocalIndexOutOfBounds(*local_idx));
+                }
+
+                // Push value back to stack (tee leaves it on the stack)
+                self.stack.push(value.clone());
+
+                // Store in local
+                frame.locals[*local_idx as usize] = value;
+                Ok(())
+            }
+
             // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
@@ -423,6 +465,139 @@ mod tests {
                 .inst(InstructionKind::Drop)
                 .returns(vec![ValueType::I32])
                 .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_set_basic() {
+            // Set a local and read it back
+            ExecutorTest::new()
+                .args(vec![Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalSet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_set_multiple() {
+            // Set multiple locals
+            ExecutorTest::new()
+                .args(vec![Value::I32(1), Value::I64(2), Value::F32(3.0)])
+                .inst(InstructionKind::I32Const { value: 10 })
+                .inst(InstructionKind::LocalSet { local_idx: 0 })
+                .inst(InstructionKind::I64Const { value: 20 })
+                .inst(InstructionKind::LocalSet { local_idx: 1 })
+                .inst(InstructionKind::F32Const { value: 30.0 })
+                .inst(InstructionKind::LocalSet { local_idx: 2 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .inst(InstructionKind::LocalGet { local_idx: 2 })
+                .returns(vec![ValueType::I32, ValueType::I64, ValueType::F32])
+                .expect_stack(vec![Value::I32(10), Value::I64(20), Value::F32(30.0)]);
+        }
+
+        #[test]
+        fn local_set_out_of_bounds() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::LocalSet { local_idx: 1 })
+                .expect_error("Local variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn local_set_empty_stack() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalSet { local_idx: 0 })
+                .expect_error("Stack underflow");
+        }
+
+        #[test]
+        fn local_set_get_sequence() {
+            // Complex sequence of sets and gets
+            ExecutorTest::new()
+                .args(vec![Value::I32(1), Value::I32(2)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 }) // stack: [1]
+                .inst(InstructionKind::LocalGet { local_idx: 1 }) // stack: [1, 2]
+                .inst(InstructionKind::LocalSet { local_idx: 0 }) // stack: [1], local[0] = 2
+                .inst(InstructionKind::LocalSet { local_idx: 1 }) // stack: [], local[1] = 1
+                .inst(InstructionKind::LocalGet { local_idx: 0 }) // stack: [2]
+                .inst(InstructionKind::LocalGet { local_idx: 1 }) // stack: [2, 1]
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(2), Value::I32(1)]);
+        }
+
+        #[test]
+        fn local_tee_basic() {
+            // Tee sets local but leaves value on stack
+            ExecutorTest::new()
+                .args(vec![Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_tee_verify_stored() {
+            // Verify that tee actually stores the value
+            ExecutorTest::new()
+                .args(vec![Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_tee_multiple() {
+            // Use tee with multiple locals
+            ExecutorTest::new()
+                .args(vec![Value::I32(1), Value::I64(2), Value::F32(3.0)])
+                .inst(InstructionKind::I32Const { value: 10 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .inst(InstructionKind::I64Const { value: 20 })
+                .inst(InstructionKind::LocalTee { local_idx: 1 })
+                .inst(InstructionKind::F32Const { value: 30.0 })
+                .inst(InstructionKind::LocalTee { local_idx: 2 })
+                .returns(vec![ValueType::I32, ValueType::I64, ValueType::F32])
+                .expect_stack(vec![Value::I32(10), Value::I64(20), Value::F32(30.0)]);
+        }
+
+        #[test]
+        fn local_tee_out_of_bounds() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::LocalTee { local_idx: 1 })
+                .expect_error("Local variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn local_tee_empty_stack() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .expect_error("Stack underflow");
+        }
+
+        #[test]
+        fn local_tee_chain() {
+            // Chain multiple tees
+            ExecutorTest::new()
+                .args(vec![Value::I32(0), Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .inst(InstructionKind::LocalTee { local_idx: 1 })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(42)]);
         }
     }
 
