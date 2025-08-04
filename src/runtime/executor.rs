@@ -1,6 +1,6 @@
 //! WebAssembly instruction executor
 
-use super::{stack::Stack, RuntimeError, Value};
+use super::{frame::Frame, stack::Stack, RuntimeError, Value};
 use crate::parser::instruction::{Instruction, InstructionKind};
 use crate::parser::module::{Module, ValueType};
 
@@ -9,6 +9,8 @@ pub struct Executor<'a> {
     #[allow(dead_code)] // Will be used in the future
     module: &'a Module,
     stack: Stack,
+    /// Current execution frame (contains locals)
+    frame: Option<Frame>,
 }
 
 impl<'a> Executor<'a> {
@@ -17,6 +19,7 @@ impl<'a> Executor<'a> {
         Executor {
             module,
             stack: Stack::new(),
+            frame: None,
         }
     }
 
@@ -28,8 +31,10 @@ impl<'a> Executor<'a> {
         args: Vec<Value>,
         return_types: &[ValueType],
     ) -> Result<Vec<Value>, RuntimeError> {
-        // Push arguments onto the stack
-        self.stack.push_all(args);
+        // Create frame with arguments as initial locals
+        // In WebAssembly, function parameters are the first locals
+        let frame = Frame::new(args);
+        self.frame = Some(frame);
 
         // Execute instructions
         self.execute_instructions(instructions)?;
@@ -97,6 +102,25 @@ impl<'a> Executor<'a> {
             // 2. Pop the value val from the stack.
             Drop => {
                 self.stack.pop()?;
+                Ok(())
+            }
+
+            // ----------------------------------------------------------------
+            // 4.4.5 Variable Instructions
+            //
+            // local.get 𝑥
+            // 1. Let 𝐹 be the current frame.
+            // 2. Assert: due to validation, 𝐹.locals[𝑥] exists.
+            // 3. Let val be the value 𝐹.locals[𝑥].
+            // 4. Push the value val to the stack.
+            LocalGet { local_idx } => {
+                let frame = self.frame.as_ref().ok_or(RuntimeError::InvalidFunctionType)?;
+                let value = frame
+                    .locals
+                    .get(*local_idx as usize)
+                    .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))?
+                    .clone();
+                self.stack.push(value);
                 Ok(())
             }
 
@@ -266,7 +290,9 @@ mod tests {
         #[test]
         fn drop_multiple_values() {
             ExecutorTest::new()
-                .args(vec![Value::I32(1), Value::I32(2), Value::I32(3)])
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::I32Const { value: 2 })
+                .inst(InstructionKind::I32Const { value: 3 })
                 .inst(InstructionKind::Drop)
                 .inst(InstructionKind::Drop)
                 .returns(vec![ValueType::I32])
@@ -325,6 +351,7 @@ mod tests {
             ExecutorTest::new()
                 .args(vec![Value::I32(42)])
                 .inst(InstructionKind::Nop)
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
                 .returns(vec![ValueType::I32])
                 .expect_stack(vec![Value::I32(42)]);
         }
@@ -340,6 +367,66 @@ mod tests {
     }
 
     // ============================================================================
+    // Variable Instruction Tests
+    // ============================================================================
+    mod variable_instructions {
+        use super::*;
+
+        #[test]
+        fn local_get_first_arg() {
+            // First function argument is local 0
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_get_multiple_args() {
+            // Multiple arguments become locals 0, 1, 2, etc.
+            ExecutorTest::new()
+                .args(vec![Value::I32(10), Value::I64(20), Value::F32(30.0)])
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 2 })
+                .returns(vec![ValueType::I64, ValueType::I32, ValueType::F32])
+                .expect_stack(vec![Value::I64(20), Value::I32(10), Value::F32(30.0)]);
+        }
+
+        #[test]
+        fn local_get_same_local_twice() {
+            // Getting the same local multiple times
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_get_out_of_bounds() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .expect_error("Local variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn local_get_with_drop() {
+            // Test interaction with drop
+            ExecutorTest::new()
+                .args(vec![Value::I32(42), Value::I64(84)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .inst(InstructionKind::Drop)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+    }
+
+    // ============================================================================
     // Function Argument Tests
     // ============================================================================
     mod function_arguments {
@@ -347,16 +434,22 @@ mod tests {
 
         #[test]
         fn single_arg_passthrough() {
+            // Arguments are stored as locals
             ExecutorTest::new()
                 .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
                 .returns(vec![ValueType::I32])
                 .expect_stack(vec![Value::I32(42)]);
         }
 
         #[test]
         fn multiple_args_passthrough() {
+            // Arguments are stored as locals in order
             ExecutorTest::new()
                 .args(vec![Value::I32(1), Value::I64(2), Value::F32(3.0)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .inst(InstructionKind::LocalGet { local_idx: 2 })
                 .returns(vec![ValueType::I32, ValueType::I64, ValueType::F32])
                 .expect_stack(vec![Value::I32(1), Value::I64(2), Value::F32(3.0)]);
         }
@@ -365,6 +458,7 @@ mod tests {
         fn args_with_operations() {
             ExecutorTest::new()
                 .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
                 .inst(InstructionKind::I32Const { value: 100 })
                 .returns(vec![ValueType::I32, ValueType::I32])
                 .expect_stack(vec![Value::I32(42), Value::I32(100)]);
@@ -380,7 +474,7 @@ mod tests {
         #[test]
         fn unimplemented_instruction() {
             ExecutorTest::new()
-                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::I32Add)
                 .expect_error("Unimplemented instruction");
         }
 

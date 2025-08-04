@@ -4,6 +4,7 @@
 //! including the stack machine, value representation, and instruction interpreter.
 
 pub mod executor;
+pub mod frame;
 pub mod instance;
 pub mod stack;
 pub mod value;
@@ -27,4 +28,6 @@ pub enum RuntimeError {
     UnimplementedInstruction(String),
     #[error("Invalid function type")]
     InvalidFunctionType,
+    #[error("Local variable index out of bounds: {0}")]
+    LocalIndexOutOfBounds(u32),
 }
