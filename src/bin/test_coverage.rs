@@ -172,6 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("br_if".to_string());
     implemented.insert("if".to_string());
     implemented.insert("else".to_string());
+    implemented.insert("return".to_string());
 
     let args: Vec<String> = std::env::args().collect();
 

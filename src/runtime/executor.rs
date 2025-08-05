@@ -15,6 +15,7 @@ use crate::parser::module::{Module, ValueType};
 /// - `Continue`: Increment pc by 1 to execute the next instruction
 /// - `Branch(depth)`: Jump to a different location (handled by `handle_branch`)
 /// - `SkipToElseOrEnd`: Skip forward to else or end (used by if/else control flow)
+/// - `Return`: Exit the current function
 #[derive(Debug)]
 enum ExecutionResult {
     /// Continue to next instruction (pc += 1)
@@ -23,6 +24,8 @@ enum ExecutionResult {
     Branch(u32),
     /// Skip to next else or end at current nesting level
     SkipToElseOrEnd,
+    /// Return from the current function
+    Return,
 }
 
 /// Executes WebAssembly instructions
@@ -89,6 +92,10 @@ impl<'a> Executor<'a> {
                 ExecutionResult::SkipToElseOrEnd => {
                     // Skip to else/end for if control flow
                     pc = self.skip_to_else_or_end(pc, instructions)?;
+                }
+                ExecutionResult::Return => {
+                    // Exit the function early
+                    break;
                 }
             }
         }
@@ -514,6 +521,16 @@ impl<'a> Executor<'a> {
                     Ok(ExecutionResult::Continue)
                 }
             }
+
+            // return
+            // From the spec (4.4.8 return):
+            // The return instruction is a shortcut for an unconditional branch
+            // to the outermost block, which implicitly is the body of the current function.
+            //
+            // Note: We handle this differently than a branch - we don't pop labels
+            // or manipulate the stack. The function epilogue in execute_function
+            // will handle popping the return values.
+            Return => Ok(ExecutionResult::Return),
 
             // ----------------------------------------------------------------
             // Unimplemented instructions
@@ -1248,6 +1265,112 @@ mod tests {
                 .inst(InstructionKind::Br { label_idx: 0 })
                 .inst(InstructionKind::Drop)
                 .inst(InstructionKind::I32Const { value: 99 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        // ============================================================================
+        // Return Tests
+        // ============================================================================
+        #[test]
+        fn return_simple() {
+            // Simple return with value
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Return)
+                .inst(InstructionKind::I32Const { value: 99 }) // Should not be executed
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn return_no_value() {
+            // Return with no value
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::Return)
+                .inst(InstructionKind::I32Const { value: 99 }) // Should not be executed
+                .returns(vec![])
+                .expect_stack(vec![]);
+        }
+
+        #[test]
+        fn return_multiple_values() {
+            // Return with multiple values
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::I32Const { value: 2 })
+                .inst(InstructionKind::Return)
+                .inst(InstructionKind::I32Const { value: 99 }) // Should not be executed
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(1), Value::I32(2)]);
+        }
+
+        #[test]
+        fn return_from_block() {
+            // Return from inside a block
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Return)
+                .inst(InstructionKind::I32Const { value: 88 }) // Should not be executed
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 99 }) // Should not be executed
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn return_from_nested_blocks() {
+            // Return from deeply nested blocks
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Return)
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 99 }) // Should not be executed
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn return_from_if() {
+            // Return from inside if branch
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Return)
+                .inst(InstructionKind::Else)
+                .inst(InstructionKind::I32Const { value: 88 })
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 99 }) // Should not be executed
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn return_from_loop() {
+            // Return from inside a loop
+            ExecutorTest::new()
+                .inst(InstructionKind::Loop {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Return)
+                .inst(InstructionKind::Br { label_idx: 0 }) // Should not be executed
                 .inst(InstructionKind::End)
                 .returns(vec![ValueType::I32])
                 .expect_stack(vec![Value::I32(42)]);
