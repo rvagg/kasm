@@ -14,12 +14,15 @@ use crate::parser::module::{Module, ValueType};
 /// This enum controls the program counter (pc) after instruction execution:
 /// - `Continue`: Increment pc by 1 to execute the next instruction
 /// - `Branch(depth)`: Jump to a different location (handled by `handle_branch`)
+/// - `SkipToElseOrEnd`: Skip forward to else or end (used by if/else control flow)
 #[derive(Debug)]
 enum ExecutionResult {
     /// Continue to next instruction (pc += 1)
     Continue,
     /// Branch to a label at given depth (pc = calculated branch target)
     Branch(u32),
+    /// Skip to next else or end at current nesting level
+    SkipToElseOrEnd,
 }
 
 /// Executes WebAssembly instructions
@@ -82,6 +85,10 @@ impl<'a> Executor<'a> {
                 ExecutionResult::Branch(depth) => {
                     // Branch flow: calculate and jump to branch target
                     pc = self.handle_branch(pc, instructions, depth)?;
+                }
+                ExecutionResult::SkipToElseOrEnd => {
+                    // Skip to else/end for if control flow
+                    pc = self.skip_to_else_or_end(pc, instructions)?;
                 }
             }
         }
@@ -230,6 +237,53 @@ impl<'a> Executor<'a> {
         }
     }
 
+    /// Skip to the next else or end at the current nesting level
+    ///
+    /// This is used when:
+    /// 1. An if condition is false - skip to else (to execute else branch) or end
+    /// 2. We hit else during then branch - skip to end
+    ///
+    /// In both cases, we just skip to whatever comes first (else or end) at our
+    /// nesting level. The logic works because:
+    /// - After if: we'll find else or end
+    /// - After else: we'll only find end (no else after else)
+    fn skip_to_else_or_end(&mut self, current_pc: usize, instructions: &[Instruction]) -> Result<usize, RuntimeError> {
+        let mut pc = current_pc + 1;
+        let mut nesting_level = 0;
+
+        while pc < instructions.len() {
+            match &instructions[pc].kind {
+                // Entering nested structures increases nesting
+                InstructionKind::Block { .. } | InstructionKind::Loop { .. } | InstructionKind::If { .. } => {
+                    nesting_level += 1;
+                }
+                // Found else
+                InstructionKind::Else => {
+                    if nesting_level == 0 {
+                        // This is at our level - stop here
+                        return Ok(pc + 1); // Skip past the else instruction
+                    }
+                    // Else at a different nesting level, ignore it
+                }
+                // Found end
+                InstructionKind::End => {
+                    if nesting_level == 0 {
+                        // This is our if's end - don't pop label here,
+                        // the End instruction will handle it
+                        return Ok(pc);
+                    }
+                    nesting_level -= 1;
+                }
+                _ => {}
+            }
+            pc += 1;
+        }
+
+        Err(RuntimeError::UnimplementedInstruction(
+            "could not find matching else or end for if".to_string(),
+        ))
+    }
+
     /// Execute a single instruction
     fn execute_instruction(&mut self, instruction: &Instruction) -> Result<ExecutionResult, RuntimeError> {
         use InstructionKind::*;
@@ -375,6 +429,53 @@ impl<'a> Executor<'a> {
                 // Extend label stack as per spec: "gets extended with new labels when entering structured control instructions"
                 self.label_stack.push(label);
                 Ok(ExecutionResult::Continue)
+            }
+
+            // if blocktype instr* else instr* end
+            // From the spec (4.4.8.3):
+            // The if instruction is a conditional: it pops an i32 condition and executes
+            // one of two instruction sequences based on its value.
+            If { block_type } => {
+                // Pop condition value
+                let condition = self.stack.pop_i32()?;
+
+                // Push label for the if construct
+                let label = Label {
+                    label_type: LabelType::If,
+                    block_type: block_type.clone(),
+                    stack_height: self.stack.len(),
+                    unreachable: false,
+                };
+                self.label_stack.push(label);
+
+                if condition != 0 {
+                    // Non-zero: execute the 'then' branch
+                    Ok(ExecutionResult::Continue)
+                } else {
+                    // Zero: skip to 'else' or 'end'
+                    Ok(ExecutionResult::SkipToElseOrEnd)
+                }
+            }
+
+            // else
+            // From the spec: else marks the beginning of the else branch
+            // This instruction can be reached in two ways:
+            // 1. From skip_to_else_or_end when if condition was false
+            // 2. During execution of the 'then' branch (need to skip to end)
+            Else => {
+                // Check if we're in an if block
+                if let Some(label) = self.label_stack.get(0) {
+                    if label.label_type == LabelType::If {
+                        // We're executing the then branch and hit else, skip to end
+                        Ok(ExecutionResult::SkipToElseOrEnd)
+                    } else {
+                        Err(RuntimeError::UnimplementedInstruction(
+                            "else not inside if block".to_string(),
+                        ))
+                    }
+                } else {
+                    Err(RuntimeError::UnimplementedInstruction("else without if".to_string()))
+                }
             }
 
             // end
@@ -1029,6 +1130,125 @@ mod tests {
                 .inst(InstructionKind::BrIf { label_idx: 0 }) // Continue loop if non-zero
                 .inst(InstructionKind::End)
                 .inst(InstructionKind::I32Const { value: 42 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        // ============================================================================
+        // If/Else Tests
+        // ============================================================================
+        #[test]
+        fn if_true_no_else() {
+            // If with true condition, no else branch
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 }) // True condition
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 99 })
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(99)]);
+        }
+
+        #[test]
+        fn if_false_no_else() {
+            // If with false condition, no else branch
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0 }) // False condition
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 99 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(99)]);
+        }
+
+        #[test]
+        fn if_true_with_else() {
+            // If with true condition and else branch
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 }) // True condition
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Else)
+                .inst(InstructionKind::I32Const { value: 88 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn if_false_with_else() {
+            // If with false condition and else branch
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0 }) // False condition
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 }) // Should be skipped
+                .inst(InstructionKind::Else)
+                .inst(InstructionKind::I32Const { value: 88 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(88)]);
+        }
+
+        #[test]
+        fn if_with_value() {
+            // If that produces a value
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Else)
+                .inst(InstructionKind::I32Const { value: 88 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn nested_if() {
+            // Nested if statements
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 11 }) // Should be skipped
+                .inst(InstructionKind::Else)
+                .inst(InstructionKind::I32Const { value: 22 })
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(22)]);
+        }
+
+        #[test]
+        fn if_br() {
+            // Branch out of if
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::If {
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Br { label_idx: 0 })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::I32Const { value: 99 })
+                .inst(InstructionKind::End)
                 .returns(vec![ValueType::I32])
                 .expect_stack(vec![Value::I32(42)]);
         }
