@@ -1,8 +1,26 @@
 //! WebAssembly instruction executor
 
-use super::{frame::Frame, stack::Stack, RuntimeError, Value};
+use super::{
+    control::{Label, LabelStack, LabelType},
+    frame::Frame,
+    stack::Stack,
+    RuntimeError, Value,
+};
 use crate::parser::instruction::{Instruction, InstructionKind};
 use crate::parser::module::{Module, ValueType};
+
+/// Result of executing an instruction
+///
+/// This enum controls the program counter (pc) after instruction execution:
+/// - `Continue`: Increment pc by 1 to execute the next instruction
+/// - `Branch(depth)`: Jump to a different location (handled by `handle_branch`)
+#[derive(Debug)]
+enum ExecutionResult {
+    /// Continue to next instruction (pc += 1)
+    Continue,
+    /// Branch to a label at given depth (pc = calculated branch target)
+    Branch(u32),
+}
 
 /// Executes WebAssembly instructions
 pub struct Executor<'a> {
@@ -11,6 +29,8 @@ pub struct Executor<'a> {
     stack: Stack,
     /// Current execution frame (contains locals)
     frame: Option<Frame>,
+    /// Label stack for control flow
+    label_stack: LabelStack,
 }
 
 impl<'a> Executor<'a> {
@@ -20,6 +40,7 @@ impl<'a> Executor<'a> {
             module,
             stack: Stack::new(),
             frame: None,
+            label_stack: LabelStack::new(),
         }
     }
 
@@ -32,14 +53,14 @@ impl<'a> Executor<'a> {
         return_types: &[ValueType],
     ) -> Result<Vec<Value>, RuntimeError> {
         // Create frame with arguments as initial locals
-        // In WebAssembly, function parameters are the first locals
+        // Function parameters are the first locals
         let frame = Frame::new(args);
         self.frame = Some(frame);
 
         // Execute instructions
         self.execute_instructions(instructions)?;
 
-        // Pop return values in reverse order (WebAssembly stack convention)
+        // Pop return values in reverse order
         let mut results = Vec::new();
         for return_type in return_types.iter().rev() {
             let value = self.stack.pop_typed(*return_type)?;
@@ -52,14 +73,165 @@ impl<'a> Executor<'a> {
 
     /// Execute a sequence of instructions
     fn execute_instructions(&mut self, instructions: &[Instruction]) -> Result<(), RuntimeError> {
-        for instruction in instructions {
-            self.execute_instruction(instruction)?;
+        let mut pc = 0; // Program counter
+
+        while pc < instructions.len() {
+            // Execute the instruction and determine how to update the program counter
+            match self.execute_instruction(&instructions[pc])? {
+                ExecutionResult::Continue => pc += 1, // Normal flow: move to next instruction
+                ExecutionResult::Branch(depth) => {
+                    // Branch flow: calculate and jump to branch target
+                    pc = self.handle_branch(pc, instructions, depth)?;
+                }
+            }
         }
         Ok(())
     }
 
+    /// Handle a branch instruction by calculating the target program counter
+    ///
+    /// This method implements the WebAssembly branch semantics:
+    /// 1. Pops values from the stack based on the target label's arity
+    /// 2. Pops labels from the label stack up to and including the target
+    /// 3. Pushes the values back onto the stack
+    /// 4. Returns the new program counter position
+    ///
+    /// We have deal with structured control flow without explicit jump
+    /// addresses. When we encounter a branch instruction, we only know the
+    /// label depth (e.g., "branch to the 2nd enclosing block"), not the
+    /// actual instruction address to jump to.
+    ///
+    /// - **For blocks**: Branch to the end → scan forward to find matching `end`
+    /// - **For loops**: Branch to the beginning → scan backward to find matching `loop`
+    ///
+    /// The scanning must track nesting levels to handle nested control
+    /// structures correctly.
+    ///
+    /// # Returns
+    /// The new program counter position to continue execution from
+    fn handle_branch(
+        &mut self,
+        current_pc: usize,
+        instructions: &[Instruction],
+        depth: u32,
+    ) -> Result<usize, RuntimeError> {
+        // Get the target label
+        // From the spec (4.4.8 br l):
+        // "Let L be the l-th label appearing on the stack, starting from the top and counting from zero"
+        let label = self
+            .label_stack
+            .get(depth)
+            .ok_or_else(|| RuntimeError::UnimplementedInstruction(format!("invalid branch depth {depth}")))?;
+
+        // Get the arity and check if it's a loop
+        // From the spec: "Let n be the arity of L"
+        let arity = label.arity()?;
+        let is_loop = label.label_type == LabelType::Loop;
+
+        // Pop arity values from stack (these will be the block results)
+        // We collect them in a temporary vec because we need to:
+        // 1. Pop them all before popping labels (to maintain stack discipline)
+        // 2. Push them back in the same order after popping labels
+        let mut values = Vec::with_capacity(arity);
+        for _ in 0..arity {
+            values.push(self.stack.pop()?);
+        }
+        values.reverse(); // Restore original order
+
+        // Pop control frames up to and including the target
+        for _ in 0..=depth {
+            self.label_stack.pop();
+        }
+
+        // Push values back in their original order
+        for value in values {
+            self.stack.push(value);
+        }
+
+        // Find the target position based on the label type
+        if is_loop {
+            // LOOP BRANCH: Jump to the beginning of the loop
+            //
+            // Loops branch to their start, but we only know our current
+            // position. We must scan backwards through the instruction
+            // stream to find where this loop began.
+            //
+            // We might encounter other loops/blocks while scanning
+            // backward so use nesting_level to ensure we match the correct loop.
+            let mut scan_pc = current_pc;
+            let mut nesting_level = 0;
+            let mut target_depth = depth as i32;
+
+            // Scan backward through instructions
+            while scan_pc > 0 {
+                scan_pc -= 1;
+                match &instructions[scan_pc].kind {
+                    InstructionKind::End => {
+                        // Found an 'end' while going backward - we're entering a nested structure
+                        nesting_level += 1;
+                    }
+                    InstructionKind::Block { .. } | InstructionKind::Loop { .. } | InstructionKind::If { .. } => {
+                        if nesting_level == 0 {
+                            // Not inside a nested structure
+                            if target_depth == 0 {
+                                // Found our target loop!
+                                // Return the loop instruction position so it gets re-executed
+                                // (which will re-push the label onto the label stack)
+                                return Ok(scan_pc);
+                            }
+                            // This is a label, but not our target - keep searching
+                            target_depth -= 1;
+                        } else {
+                            // Exiting a nested structure
+                            nesting_level -= 1;
+                        }
+                    }
+                    _ => {} // Other instructions don't affect our search
+                }
+            }
+
+            // Should not reach here - indicates malformed bytecode that got
+            // past the validator.
+            Err(RuntimeError::UnimplementedInstruction(
+                "could not find loop start".to_string(),
+            ))
+        } else {
+            // BLOCK BRANCH: Jump to the end of the block
+            //
+            // Blocks branch to their end. We need to find the matching 'end'
+            // instruction for our target block.
+            //
+            // We need to skip 'depth' labels PLUS the current block we're
+            // branching out of.
+            let mut block_depth = depth + 1;
+            let mut new_pc = current_pc + 1;
+
+            // Scan forward through instructions
+            while new_pc < instructions.len() && block_depth > 0 {
+                match &instructions[new_pc].kind {
+                    InstructionKind::Block { .. } | InstructionKind::Loop { .. } | InstructionKind::If { .. } => {
+                        // Entering a nested structure
+                        block_depth += 1;
+                    }
+                    InstructionKind::End => {
+                        // Exiting a structure
+                        block_depth -= 1;
+                        if block_depth == 0 {
+                            // Found the target! new_pc is now just after the 'end'
+                            break;
+                        }
+                    }
+                    _ => {} // Other instructions don't affect our search
+                }
+                new_pc += 1;
+            }
+
+            Ok(new_pc)
+        }
+    }
+
     /// Execute a single instruction
-    fn execute_instruction(&mut self, instruction: &Instruction) -> Result<(), RuntimeError> {
+    fn execute_instruction(&mut self, instruction: &Instruction) -> Result<ExecutionResult, RuntimeError> {
         use InstructionKind::*;
 
         match &instruction.kind {
@@ -70,30 +242,26 @@ impl<'a> Executor<'a> {
             // 1. Push the value 𝑡.const 𝑐 to the stack.
             I32Const { value } => {
                 self.stack.push(Value::I32(*value));
-                Ok(())
+                Ok(ExecutionResult::Continue)
             }
             I64Const { value } => {
                 self.stack.push(Value::I64(*value));
-                Ok(())
+                Ok(ExecutionResult::Continue)
             }
             F32Const { value } => {
                 self.stack.push(Value::F32(*value));
-                Ok(())
+                Ok(ExecutionResult::Continue)
             }
             F64Const { value } => {
                 self.stack.push(Value::F64(*value));
-                Ok(())
+                Ok(ExecutionResult::Continue)
             }
 
             // ----------------------------------------------------------------
             // Control (4.4.8 Control Instructions)
             // nop
             // 1. Do nothing.
-            Nop => Ok(()),
-
-            // End of block/function - handled by validation so considered
-            // implicit by blocks that require it and can be ignored here.
-            End => Ok(()),
+            Nop => Ok(ExecutionResult::Continue),
 
             // ----------------------------------------------------------------
             // Parametric (4.4.4 Parametric Instructions)
@@ -102,7 +270,7 @@ impl<'a> Executor<'a> {
             // 2. Pop the value val from the stack.
             Drop => {
                 self.stack.pop()?;
-                Ok(())
+                Ok(ExecutionResult::Continue)
             }
 
             // ----------------------------------------------------------------
@@ -121,7 +289,7 @@ impl<'a> Executor<'a> {
                     .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))?
                     .clone();
                 self.stack.push(value);
-                Ok(())
+                Ok(ExecutionResult::Continue)
             }
 
             // local.set 𝑥
@@ -140,7 +308,7 @@ impl<'a> Executor<'a> {
                 }
 
                 frame.locals[*local_idx as usize] = value;
-                Ok(())
+                Ok(ExecutionResult::Continue)
             }
 
             // local.tee 𝑥
@@ -163,7 +331,87 @@ impl<'a> Executor<'a> {
 
                 // Store in local
                 frame.locals[*local_idx as usize] = value;
-                Ok(())
+                Ok(ExecutionResult::Continue)
+            }
+
+            // ----------------------------------------------------------------
+            // 4.4.8 Control Instructions
+            // See: https://webassembly.github.io/spec/core/exec/instructions.html#control-instructions
+            //
+            // block blocktype instr* end
+            // From the spec (4.4.8.1):
+            // 1. Let 𝐹 be the current frame.
+            // 2. Assert: due to validation, expand𝐹(blocktype) is defined.
+            // 3. Let [𝑡ᵐ₁] → [𝑡ⁿ₂] be the function type expand𝐹(blocktype).
+            // 4. Let 𝐿 be the label whose arity is 𝑛 and whose continuation is the end of the block.
+            // 5. Assert: due to validation, there are at least 𝑚 values on the top of the stack.
+            // 6. Pop the values val^𝑚 from the stack.
+            // 7. Enter the block instr* with label 𝐿 and values val^𝑚.
+            Block { block_type } => {
+                // Create label as per spec step 4
+                // "Let L be the label whose arity is n and whose continuation is the end of the block"
+                let label = Label {
+                    label_type: LabelType::Block,
+                    block_type: block_type.clone(),
+                    stack_height: self.stack.len(),
+                    unreachable: false,
+                };
+                // Extend label stack as per spec: "gets extended with new labels when entering structured control instructions"
+                self.label_stack.push(label);
+                Ok(ExecutionResult::Continue)
+            }
+
+            // loop blocktype instr* end
+            // From the spec (4.4.8.2):
+            // "Let L be the label whose arity is n and whose continuation is the start of the loop"
+            // Note: Unlike blocks, "the label of a loop does not target the end, but the beginning of the loop"
+            Loop { block_type } => {
+                let label = Label {
+                    label_type: LabelType::Loop,
+                    block_type: block_type.clone(),
+                    stack_height: self.stack.len(),
+                    unreachable: false,
+                };
+                // Extend label stack as per spec: "gets extended with new labels when entering structured control instructions"
+                self.label_stack.push(label);
+                Ok(ExecutionResult::Continue)
+            }
+
+            // end
+            // Handled implicitly by block/loop/if execution
+            End => {
+                // Pop control frame if there is one
+                if !self.label_stack.is_empty() {
+                    self.label_stack.pop();
+                }
+                Ok(ExecutionResult::Continue)
+            }
+
+            // br l
+            // From the spec (4.4.8 br l):
+            // 1. Assert: due to validation, the stack contains at least l + 1 labels.
+            // 2. Let L be the l-th label appearing on the stack, starting from the top and counting from zero.
+            // 3. Let n be the arity of L.
+            // 4. Assert: due to validation, there are at least n values on the top of the stack.
+            // 5. Pop the values val^n from the stack.
+            // 6. Repeat l + 1 times: pop a label from the stack.
+            // 7. Push the values val^n to the stack.
+            // 8. Jump to the continuation of L.
+            Br { label_idx } => Ok(ExecutionResult::Branch(*label_idx)),
+
+            // br_if l
+            // From the spec (4.4.8 br_if l):
+            // 1. Assert: due to validation, a value of type i32 is on the top of the stack.
+            // 2. Pop the value c from the stack.
+            // 3. If c is non-zero, then execute the instruction br l.
+            // 4. Else, do nothing.
+            BrIf { label_idx } => {
+                let condition = self.stack.pop_i32()?;
+                if condition != 0 {
+                    Ok(ExecutionResult::Branch(*label_idx))
+                } else {
+                    Ok(ExecutionResult::Continue)
+                }
             }
 
             // ----------------------------------------------------------------
@@ -598,6 +846,191 @@ mod tests {
                 .inst(InstructionKind::LocalGet { local_idx: 1 })
                 .returns(vec![ValueType::I32, ValueType::I32])
                 .expect_stack(vec![Value::I32(42), Value::I32(42)]);
+        }
+    }
+
+    // ============================================================================
+    // Block and Control Flow Tests
+    // ============================================================================
+    mod block_tests {
+        use super::*;
+
+        #[test]
+        fn block_empty() {
+            // Empty block
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 42 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn block_with_value() {
+            // Block that produces a value
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn nested_blocks() {
+            // Nested blocks
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_simple() {
+            // Branch out of a block
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Br { label_idx: 0 })
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_with_value() {
+            // Branch with a value
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Br { label_idx: 0 })
+                .inst(InstructionKind::Drop) // Should be skipped
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_nested() {
+            // Branch from inner to outer block
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Br { label_idx: 1 }) // Branch to outer block
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 88 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_if_true() {
+            // Conditional branch taken
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 1 }) // True condition
+                .inst(InstructionKind::BrIf { label_idx: 0 })
+                .inst(InstructionKind::Drop) // Should be skipped
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_if_false() {
+            // Conditional branch not taken
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 }) // False condition
+                .inst(InstructionKind::BrIf { label_idx: 0 })
+                .inst(InstructionKind::Drop) // Should execute
+                .inst(InstructionKind::I32Const { value: 99 }) // Should execute
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(99)]);
+        }
+
+        #[test]
+        fn br_if_with_value() {
+            // Conditional branch with block value
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: -1 }) // True condition (non-zero)
+                .inst(InstructionKind::BrIf { label_idx: 0 })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::I32Const { value: 99 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn loop_simple() {
+            // Simple loop that exits immediately
+            ExecutorTest::new()
+                .inst(InstructionKind::Loop {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn loop_with_counter() {
+            // Loop with a counter (simplified - normally would use locals)
+            ExecutorTest::new()
+                .args(vec![Value::I32(3)]) // Counter in local 0
+                .inst(InstructionKind::Loop {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::I32Const { value: 0 }) // Simulate i32.sub result of 0
+                .inst(InstructionKind::LocalSet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::BrIf { label_idx: 0 }) // Continue loop if non-zero
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 42 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
         }
     }
 

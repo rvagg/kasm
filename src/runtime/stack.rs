@@ -87,6 +87,11 @@ impl Stack {
         self.values.len()
     }
 
+    /// Get the current stack length (alias for depth)
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
     /// Check if the stack is empty
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()

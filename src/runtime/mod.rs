@@ -3,6 +3,7 @@
 //! This module provides the execution engine for WebAssembly modules,
 //! including the stack machine, value representation, and instruction interpreter.
 
+pub mod control;
 pub mod executor;
 pub mod frame;
 pub mod instance;
