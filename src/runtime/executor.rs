@@ -522,6 +522,26 @@ impl<'a> Executor<'a> {
                 }
             }
 
+            // br_table l* lN
+            // From the spec (4.4.8 br_table l* lN):
+            // A br_table performs an indirect branch through an operand indexing into
+            // a list of labels.
+            // 1. Pop i32 index from stack
+            // 2. If index < len(labels), branch to labels[index]
+            // 3. Else branch to default
+            BrTable { labels, default } => {
+                let index = self.stack.pop_i32()?;
+
+                // Choose the target label based on index
+                let target = if index >= 0 && (index as usize) < labels.len() {
+                    labels[index as usize]
+                } else {
+                    *default
+                };
+
+                Ok(ExecutionResult::Branch(target))
+            }
+
             // return
             // From the spec (4.4.8 return):
             // The return instruction is a shortcut for an unconditional branch
@@ -592,10 +612,12 @@ mod tests {
             let mut executor = Executor::new(&module);
             let result = executor.execute_function(0, &self.instructions, self.args, &self.return_types);
             assert!(result.is_err(), "Expected error but execution succeeded");
+            let actual_error = result.unwrap_err().to_string();
             assert!(
-                result.unwrap_err().to_string().contains(error_contains),
-                "Error should contain '{}'",
-                error_contains
+                actual_error.contains(error_contains),
+                "Error should contain '{}', but got: '{}'",
+                error_contains,
+                actual_error
             );
         }
     }
@@ -1374,6 +1396,273 @@ mod tests {
                 .inst(InstructionKind::End)
                 .returns(vec![ValueType::I32])
                 .expect_stack(vec![Value::I32(42)]);
+        }
+
+        // ============================================================================
+        // BrTable Tests
+        // ============================================================================
+        #[test]
+        fn br_table_index_0() {
+            // Branch to first label in table (innermost block)
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 }) // index 0
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0, 1],
+                    default: 1,
+                })
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 88 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(88)]);
+        }
+
+        #[test]
+        fn br_table_index_1() {
+            // Branch to second label in table (outer block)
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 1 }) // index 1 -> label 1
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0, 1],
+                    default: 0,
+                })
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 88 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_table_default() {
+            // Index out of bounds, use default
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 5 }) // index out of bounds
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0, 1],
+                    default: 1,
+                })
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 88 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_table_negative_index() {
+            // Negative index uses default
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: -1 }) // negative index
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0],
+                    default: 0,
+                })
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_table_single_label() {
+            // Table with only one label plus default
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0],
+                    default: 0,
+                })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::I32Const { value: 99 })
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn br_table_simple() {
+            // Simple br_table in a single block
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0],
+                    default: 0,
+                })
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 88 })
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(88)]);
+        }
+
+        #[test]
+        fn br_table_three_way_branch() {
+            // Test 3-way branch with clear signal which path was taken
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    // Label 2 (outermost)
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Block {
+                    // Label 1 (middle)
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::Block {
+                    // Label 0 (innermost)
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 1 }) // index 1 -> middle block
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0, 1, 2],
+                    default: 2,
+                })
+                .inst(InstructionKind::I32Const { value: 100 }) // innermost - skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 200 }) // middle - skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 300 }) // outermost - executed
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(300)]);
+        }
+
+        #[test]
+        fn br_table_with_stack_values() {
+            // Test that branch properly handles stack values according to label arity
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
+                })
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::I32Const { value: 200 })
+                .inst(InstructionKind::I32Const { value: 0 }) // index 0 -> inner block (Empty)
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0, 1],
+                    default: 1,
+                })
+                .inst(InstructionKind::Drop) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 300 }) // Should execute after inner branch
+                .inst(InstructionKind::End)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(300)]); // The 300 value pushed after the branch
+        }
+    }
+
+    // ============================================================================
+    // BrTable Error/Edge Case Tests
+    // ============================================================================
+    mod br_table_errors {
+        use super::*;
+
+        #[test]
+        fn br_table_empty_stack_error() {
+            // br_table should fail if there's no index on stack
+            ExecutorTest::new()
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0],
+                    default: 0,
+                })
+                .expect_error("Stack underflow");
+        }
+
+        #[test]
+        fn br_table_invalid_label_depth() {
+            // br_table with label depth greater than available labels should fail
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::BrTable {
+                    labels: vec![5], // Label 5 doesn't exist (no blocks)
+                    default: 0,
+                })
+                .expect_error("invalid branch depth");
+        }
+
+        #[test]
+        fn br_table_invalid_default_label() {
+            // br_table with invalid default label
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 99 }) // Out of bounds index
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0],
+                    default: 5, // Invalid default label
+                })
+                .expect_error("invalid branch depth");
+        }
+
+        #[test]
+        fn br_table_mixed_valid_invalid_labels() {
+            // Some labels valid, some invalid - should catch during execution
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 1 }) // index 1 -> invalid label 5
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0, 5], // label 5 doesn't exist
+                    default: 0,
+                })
+                .expect_error("invalid branch depth");
+        }
+
+        #[test]
+        fn br_table_very_large_index() {
+            // Test with very large index (should use default)
+            ExecutorTest::new()
+                .inst(InstructionKind::Block {
+                    block_type: crate::parser::instruction::BlockType::Empty,
+                })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 1000000 }) // Very large index
+                .inst(InstructionKind::BrTable {
+                    labels: vec![0],
+                    default: 0,
+                })
+                .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
+                .inst(InstructionKind::End)
+                .inst(InstructionKind::I32Const { value: 88 })
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(88)]);
         }
     }
 
