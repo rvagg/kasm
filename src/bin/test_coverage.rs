@@ -174,6 +174,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("else".to_string());
     implemented.insert("return".to_string());
     implemented.insert("br_table".to_string());
+    implemented.insert("memory.size".to_string());
+    implemented.insert("memory.grow".to_string());
+    implemented.insert("i32.load".to_string());
+    implemented.insert("i32.store".to_string());
 
     let args: Vec<String> = std::env::args().collect();
 

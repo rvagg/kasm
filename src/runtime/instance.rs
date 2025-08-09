@@ -78,7 +78,7 @@ impl<'a> Instance<'a> {
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         // Execute the function
-        let mut executor = Executor::new(self.module);
+        let mut executor = Executor::new(self.module)?;
         executor.execute_function(func_idx, &body.instructions, args, &func_type.return_types)
     }
 

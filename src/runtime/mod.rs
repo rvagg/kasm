@@ -7,10 +7,12 @@ pub mod control;
 pub mod executor;
 pub mod frame;
 pub mod instance;
+pub mod memory;
 pub mod stack;
 pub mod value;
 
 pub use instance::Instance;
+pub use memory::Memory;
 pub use value::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -31,4 +33,8 @@ pub enum RuntimeError {
     InvalidFunctionType,
     #[error("Local variable index out of bounds: {0}")]
     LocalIndexOutOfBounds(u32),
+    #[error("Invalid label: {0}")]
+    InvalidLabel(u32),
+    #[error("Memory error: {0}")]
+    MemoryError(String),
 }

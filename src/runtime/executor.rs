@@ -3,6 +3,7 @@
 use super::{
     control::{Label, LabelStack, LabelType},
     frame::Frame,
+    memory::Memory,
     stack::Stack,
     RuntimeError, Value,
 };
@@ -37,17 +38,44 @@ pub struct Executor<'a> {
     frame: Option<Frame>,
     /// Label stack for control flow
     label_stack: LabelStack,
+    /// Memory instances (WebAssembly 1.0 supports only 1)
+    memories: Vec<Memory>,
 }
 
 impl<'a> Executor<'a> {
     /// Create a new executor for a module
-    pub fn new(module: &'a Module) -> Self {
-        Executor {
+    ///
+    /// # Errors
+    /// - If the module has more than one memory (WebAssembly 1.0 limitation)
+    /// - If memory initialization fails
+    pub fn new(module: &'a Module) -> Result<Self, RuntimeError> {
+        // Initialize memories from module definition
+        let memories = if module.memory.memory.is_empty() {
+            vec![]
+        } else {
+            // WebAssembly 1.0: Only one memory allowed per module
+            // This restriction is relaxed in the multi-memory proposal, but we don't support that yet
+            if module.memory.memory.len() > 1 {
+                return Err(RuntimeError::MemoryError(format!(
+                    "WebAssembly 1.0 only supports one memory per module, found {}",
+                    module.memory.memory.len()
+                )));
+            }
+
+            let mem_def = &module.memory.memory[0];
+            match Memory::new(mem_def.limits.min, mem_def.limits.max) {
+                Ok(memory) => vec![memory],
+                Err(e) => return Err(e),
+            }
+        };
+
+        Ok(Executor {
             module,
             stack: Stack::new(),
             frame: None,
             label_stack: LabelStack::new(),
-        }
+            memories,
+        })
     }
 
     /// Execute a function
@@ -553,6 +581,138 @@ impl<'a> Executor<'a> {
             Return => Ok(ExecutionResult::Return),
 
             // ----------------------------------------------------------------
+            // 4.4.7 Memory Instructions
+            // ----------------------------------------------------------------
+
+            // memory.size
+            // From the spec (4.4.7 memory.size):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Let sz be the length of mem.data divided by the page size.
+            // 7. Push the value i32.const sz to the stack.
+            MemorySize => {
+                // WebAssembly 1.0 only supports memory index 0
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+                let size = self.memories[0].size();
+                self.stack.push(Value::I32(size as i32));
+                Ok(ExecutionResult::Continue)
+            }
+
+            // memory.grow
+            // From the spec (4.4.7 memory.grow):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Let sz be the length of mem.data divided by the page size.
+            // 7. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 8. Pop the value i32.const n from the stack.
+            // 9. Let err be the integer sz if growing mem by n pages exceeds the maximum size,
+            //    or −1 if insufficient memory is available.
+            // 10. If err is non-negative, then push the value i32.const err to the stack.
+            // 11. Else, grow mem by n pages and push sz to the stack.
+            MemoryGrow => {
+                // WebAssembly 1.0 only supports memory index 0
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+                let delta = self.stack.pop_i32()?;
+                if delta < 0 {
+                    // Negative delta always fails
+                    self.stack.push(Value::I32(-1));
+                } else {
+                    let result = self.memories[0].grow(delta as u32);
+                    self.stack.push(Value::I32(result));
+                }
+                Ok(ExecutionResult::Continue)
+            }
+
+            // i32.load
+            // From the spec (4.4.7 i32.load memarg):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 7. Pop the value i32.const i from the stack.
+            // 8. Let ea be i + memarg.offset.
+            // 9. If ea + 4 is larger than the length of mem.data, then trap.
+            // 10. Let b* be the byte sequence mem.data[ea : ea + 4].
+            // 11. Let c be the constant for which b* = bytes_i32(c).
+            // 12. Push the value i32.const c to the stack.
+            I32Load { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                // Pop address from stack
+                let addr = self.stack.pop_i32()?;
+
+                // Calculate effective address (checking for overflow)
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                // Check if address fits in u32 (WebAssembly 1.0 uses 32-bit addressing)
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                // Load the value
+                let value = self.memories[0].read_i32(ea as u32)?;
+                self.stack.push(Value::I32(value));
+                Ok(ExecutionResult::Continue)
+            }
+
+            // i32.store
+            // From the spec (4.4.7 i32.store memarg):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 7. Pop the value i32.const c from the stack.
+            // 8. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 9. Pop the value i32.const i from the stack.
+            // 10. Let ea be i + memarg.offset.
+            // 11. If ea + 4 is larger than the length of mem.data, then trap.
+            // 12. Let b* be bytes_i32(c).
+            // 13. Replace the bytes mem.data[ea : ea + 4] with b*.
+            I32Store { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                // Pop value to store
+                let value = self.stack.pop_i32()?;
+
+                // Pop address
+                let addr = self.stack.pop_i32()?;
+
+                // Calculate effective address (checking for overflow)
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                // Check if address fits in u32
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                // Store the value
+                self.memories[0].write_i32(ea as u32, value)?;
+                Ok(ExecutionResult::Continue)
+            }
+
+            // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
         }
@@ -562,7 +722,7 @@ impl<'a> Executor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::instruction::{ByteRange, Instruction, InstructionKind};
+    use crate::parser::instruction::{ByteRange, Instruction, InstructionKind, MemArg};
     use crate::parser::module::Module;
 
     /// Test builder for creating executor tests fluently
@@ -599,7 +759,7 @@ mod tests {
         fn expect_stack(mut self, expected: Vec<Value>) {
             self.instructions.push(make_instruction(InstructionKind::End));
             let module = Module::new("test");
-            let mut executor = Executor::new(&module);
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
             let results = executor
                 .execute_function(0, &self.instructions, self.args, &self.return_types)
                 .expect("Execution should succeed");
@@ -609,7 +769,7 @@ mod tests {
         fn expect_error(mut self, error_contains: &str) {
             self.instructions.push(make_instruction(InstructionKind::End));
             let module = Module::new("test");
-            let mut executor = Executor::new(&module);
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
             let result = executor.execute_function(0, &self.instructions, self.args, &self.return_types);
             assert!(result.is_err(), "Expected error but execution succeeded");
             let actual_error = result.unwrap_err().to_string();
@@ -1763,7 +1923,570 @@ mod tests {
 
     // Memory Tests
     mod memory {
-        // Tests for load/store operations will go here
+        use super::*;
+        use crate::parser::module::{Limits, Memory as MemoryDef};
+        use crate::runtime::memory::PAGE_SIZE;
+
+        #[test]
+        fn multiple_memories_error() {
+            // WebAssembly 1.0 only supports one memory
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let result = Executor::new(&module);
+            assert!(result.is_err());
+            let error_msg = result.err().unwrap().to_string();
+            assert!(error_msg.contains("only supports one memory"));
+        }
+
+        #[test]
+        fn memory_size_no_memory() {
+            // memory.size with no memory should error
+            ExecutorTest::new()
+                .inst(InstructionKind::MemorySize)
+                .expect_error("No memory instance available");
+        }
+
+        #[test]
+        fn memory_grow_no_memory() {
+            // memory.grow with no memory should error
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::MemoryGrow)
+                .expect_error("No memory instance available");
+        }
+
+        #[test]
+        fn memory_size_initial() {
+            // Create module with 1 page of memory
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        make_instruction(InstructionKind::MemorySize),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+
+            assert_eq!(result, vec![Value::I32(1)]);
+        }
+
+        #[test]
+        fn memory_grow_success() {
+            // Create module with 1 page of memory, max 10
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: Some(10) },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Grow by 2 pages
+                        make_instruction(InstructionKind::I32Const { value: 2 }),
+                        make_instruction(InstructionKind::MemoryGrow),
+                        // Check new size
+                        make_instruction(InstructionKind::MemorySize),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32, ValueType::I32],
+                )
+                .unwrap();
+
+            // Should return old size (1) and new size (3)
+            assert_eq!(result, vec![Value::I32(1), Value::I32(3)]);
+        }
+
+        #[test]
+        fn memory_grow_failure_max() {
+            // Create module with 1 page of memory, max 2
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: Some(2) },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Try to grow by 5 pages (would exceed max)
+                        make_instruction(InstructionKind::I32Const { value: 5 }),
+                        make_instruction(InstructionKind::MemoryGrow),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+
+            // Should return -1 (failure)
+            assert_eq!(result, vec![Value::I32(-1)]);
+        }
+
+        #[test]
+        fn memory_grow_negative() {
+            // Create module with 1 page of memory
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Try to grow by negative pages
+                        make_instruction(InstructionKind::I32Const { value: -1 }),
+                        make_instruction(InstructionKind::MemoryGrow),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+
+            // Should return -1 (failure)
+            assert_eq!(result, vec![Value::I32(-1)]);
+        }
+
+        #[test]
+        fn memory_grow_zero() {
+            // Create module with 2 pages of memory
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 2, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Grow by 0 pages (valid, returns current size)
+                        make_instruction(InstructionKind::I32Const { value: 0 }),
+                        make_instruction(InstructionKind::MemoryGrow),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+
+            // Should return current size (2)
+            assert_eq!(result, vec![Value::I32(2)]);
+        }
+
+        #[test]
+        fn memory_operations_sequence() {
+            // Test a sequence of memory operations
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: Some(5) },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Get initial size
+                        make_instruction(InstructionKind::MemorySize),
+                        // Grow by 1
+                        make_instruction(InstructionKind::I32Const { value: 1 }),
+                        make_instruction(InstructionKind::MemoryGrow),
+                        // Grow by 2 more
+                        make_instruction(InstructionKind::I32Const { value: 2 }),
+                        make_instruction(InstructionKind::MemoryGrow),
+                        // Get final size
+                        make_instruction(InstructionKind::MemorySize),
+                        // Try to grow beyond max
+                        make_instruction(InstructionKind::I32Const { value: 2 }),
+                        make_instruction(InstructionKind::MemoryGrow),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[
+                        ValueType::I32,
+                        ValueType::I32,
+                        ValueType::I32,
+                        ValueType::I32,
+                        ValueType::I32,
+                    ],
+                )
+                .unwrap();
+
+            // Results: initial size (1), grow result (1), grow result (2),
+            // final size (4), failed grow (-1)
+            assert_eq!(
+                result,
+                vec![
+                    Value::I32(1),  // Initial size
+                    Value::I32(1),  // Old size after first grow
+                    Value::I32(2),  // Old size after second grow
+                    Value::I32(4),  // Final size
+                    Value::I32(-1), // Failed grow
+                ]
+            );
+        }
+
+        #[test]
+        fn i32_load_basic() {
+            // Create module with 1 page of memory
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Store value 42 at address 100
+                        make_instruction(InstructionKind::I32Const { value: 100 }), // address
+                        make_instruction(InstructionKind::I32Const { value: 42 }),  // value
+                        make_instruction(InstructionKind::I32Store {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        // Load it back
+                        make_instruction(InstructionKind::I32Const { value: 100 }),
+                        make_instruction(InstructionKind::I32Load {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+
+            assert_eq!(result, vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn i32_load_with_offset() {
+            // Create module with 1 page of memory
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Store value at address 100
+                        make_instruction(InstructionKind::I32Const { value: 100 }),
+                        make_instruction(InstructionKind::I32Const { value: 0x12345678 }),
+                        make_instruction(InstructionKind::I32Store {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        // Load with offset (base address 90, offset 10 = effective address 100)
+                        make_instruction(InstructionKind::I32Const { value: 90 }),
+                        make_instruction(InstructionKind::I32Load {
+                            memarg: MemArg { offset: 10, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+
+            assert_eq!(result, vec![Value::I32(0x12345678)]);
+        }
+
+        #[test]
+        fn i32_store_multiple() {
+            // Test storing multiple values
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        // Store at address 0
+                        make_instruction(InstructionKind::I32Const { value: 0 }),
+                        make_instruction(InstructionKind::I32Const { value: 100 }),
+                        make_instruction(InstructionKind::I32Store {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        // Store at address 4
+                        make_instruction(InstructionKind::I32Const { value: 4 }),
+                        make_instruction(InstructionKind::I32Const { value: 200 }),
+                        make_instruction(InstructionKind::I32Store {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        // Store at address 8
+                        make_instruction(InstructionKind::I32Const { value: 8 }),
+                        make_instruction(InstructionKind::I32Const { value: 300 }),
+                        make_instruction(InstructionKind::I32Store {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        // Load all three back
+                        make_instruction(InstructionKind::I32Const { value: 0 }),
+                        make_instruction(InstructionKind::I32Load {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::I32Const { value: 4 }),
+                        make_instruction(InstructionKind::I32Load {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::I32Const { value: 8 }),
+                        make_instruction(InstructionKind::I32Load {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32, ValueType::I32, ValueType::I32],
+                )
+                .unwrap();
+
+            assert_eq!(result, vec![Value::I32(100), Value::I32(200), Value::I32(300)]);
+        }
+
+        #[test]
+        fn i32_load_bounds_check() {
+            // Test bounds checking
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+
+            // Try to load from last valid address (PAGE_SIZE - 4)
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        make_instruction(InstructionKind::I32Const {
+                            value: (PAGE_SIZE - 4) as i32,
+                        }),
+                        make_instruction(InstructionKind::I32Load {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+            assert_eq!(result, vec![Value::I32(0)]); // Memory is zero-initialized
+
+            // Try to load from out of bounds address
+            let result = executor.execute_function(
+                0,
+                &[
+                    make_instruction(InstructionKind::I32Const {
+                        value: (PAGE_SIZE - 3) as i32,
+                    }),
+                    make_instruction(InstructionKind::I32Load {
+                        memarg: MemArg { offset: 0, align: 2 },
+                    }),
+                    make_instruction(InstructionKind::End),
+                ],
+                vec![],
+                &[ValueType::I32],
+            );
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Out of bounds"));
+        }
+
+        #[test]
+        fn i32_store_bounds_check() {
+            // Test bounds checking for store
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+
+            // Try to store at last valid address
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        make_instruction(InstructionKind::I32Const {
+                            value: (PAGE_SIZE - 4) as i32,
+                        }),
+                        make_instruction(InstructionKind::I32Const { value: 42 }),
+                        make_instruction(InstructionKind::I32Store {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::I32Const { value: 1 }), // Return success indicator
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+            assert_eq!(result, vec![Value::I32(1)]);
+
+            // Try to store at out of bounds address
+            let result = executor.execute_function(
+                0,
+                &[
+                    make_instruction(InstructionKind::I32Const {
+                        value: (PAGE_SIZE - 3) as i32,
+                    }),
+                    make_instruction(InstructionKind::I32Const { value: 42 }),
+                    make_instruction(InstructionKind::I32Store {
+                        memarg: MemArg { offset: 0, align: 2 },
+                    }),
+                    make_instruction(InstructionKind::End),
+                ],
+                vec![],
+                &[],
+            );
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("Out of bounds"));
+        }
+
+        #[test]
+        fn i32_load_offset_overflow() {
+            // Test address calculation overflow
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor.execute_function(
+                0,
+                &[
+                    make_instruction(InstructionKind::I32Const { value: i32::MAX }),
+                    make_instruction(InstructionKind::I32Load {
+                        memarg: MemArg { offset: 10, align: 2 },
+                    }),
+                    make_instruction(InstructionKind::End),
+                ],
+                vec![],
+                &[ValueType::I32],
+            );
+            assert!(result.is_err());
+            let error_msg = result.unwrap_err().to_string();
+            assert!(
+                error_msg.contains("overflow") || error_msg.contains("bounds"),
+                "Expected overflow or bounds error, got: {}",
+                error_msg
+            );
+        }
+
+        #[test]
+        fn i32_load_no_memory() {
+            // Test load with no memory
+            let module = Module::new("test");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor.execute_function(
+                0,
+                &[
+                    make_instruction(InstructionKind::I32Const { value: 0 }),
+                    make_instruction(InstructionKind::I32Load {
+                        memarg: MemArg { offset: 0, align: 2 },
+                    }),
+                    make_instruction(InstructionKind::End),
+                ],
+                vec![],
+                &[ValueType::I32],
+            );
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("No memory instance available"));
+        }
+
+        #[test]
+        fn i32_store_no_memory() {
+            // Test store with no memory
+            let module = Module::new("test");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor.execute_function(
+                0,
+                &[
+                    make_instruction(InstructionKind::I32Const { value: 0 }),
+                    make_instruction(InstructionKind::I32Const { value: 42 }),
+                    make_instruction(InstructionKind::I32Store {
+                        memarg: MemArg { offset: 0, align: 2 },
+                    }),
+                    make_instruction(InstructionKind::End),
+                ],
+                vec![],
+                &[],
+            );
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("No memory instance available"));
+        }
+
+        #[test]
+        fn i32_memory_persistence() {
+            // Test that memory persists across multiple function calls
+            let mut module = Module::new("test");
+            module.memory.memory.push(MemoryDef {
+                limits: Limits { min: 1, max: None },
+            });
+
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+
+            // First call: store a value
+            executor
+                .execute_function(
+                    0,
+                    &[
+                        make_instruction(InstructionKind::I32Const { value: 100 }),
+                        make_instruction(InstructionKind::I32Const { value: 42 }),
+                        make_instruction(InstructionKind::I32Store {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[],
+                )
+                .unwrap();
+
+            // Second call: load the value back
+            let result = executor
+                .execute_function(
+                    0,
+                    &[
+                        make_instruction(InstructionKind::I32Const { value: 100 }),
+                        make_instruction(InstructionKind::I32Load {
+                            memarg: MemArg { offset: 0, align: 2 },
+                        }),
+                        make_instruction(InstructionKind::End),
+                    ],
+                    vec![],
+                    &[ValueType::I32],
+                )
+                .unwrap();
+
+            assert_eq!(result, vec![Value::I32(42)]);
+        }
     }
 
     // Control Flow Tests
