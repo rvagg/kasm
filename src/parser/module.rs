@@ -8,7 +8,7 @@ use crate::parser::instruction::{self, InstructionKind};
 
 /// Checks if a string contains the specific control character sequence that WABT displays as empty.
 /// WABT shows the sequence "\x00\x01\x02...\x0F" (exactly 16 bytes, values 0-15) as empty <> or "".
-/// This is specific behavior for compatibility with WABT's wasm-objdump tool.
+/// This is specific behaviour for compatibility with WABT's wasm-objdump tool.
 fn is_wabt_empty_control_sequence(s: &str) -> bool {
     let bytes: Vec<u8> = s.bytes().collect();
     bytes.len() == 16 && bytes.iter().enumerate().all(|(i, &b)| b == i as u8)
@@ -83,7 +83,7 @@ impl Module {
     /// Finds and formats the export name for a function at the given index.
     /// Returns the formatted string with angle brackets if the function is exported,
     /// or an empty string if not exported.
-    /// Note: If a function has multiple exports, returns the LAST export name (WABT behavior).
+    /// Note: If a function has multiple exports, returns the LAST export name (WABT behaviour).
     pub fn get_function_export_name(&self, func_index: u32) -> String {
         // Use get_function to find the last export, then format its name
         self.exports
@@ -1118,7 +1118,7 @@ impl SectionToString for ElementSection {
                 }
                 ElementMode::Passive => {
                     // For passive elements, use the offset from the most recent active segment
-                    // This matches WABT's behavior where passive elements display indices
+                    // This matches WABT's behaviour where passive elements display indices
                     // as if they were conceptually positioned after the preceding active segment
                     (String::new(), last_active_offset)
                 }
@@ -1312,13 +1312,13 @@ impl CodeSection {
                     };
 
                     if is_trunc_sat {
-                        // WABT has a bug where it normalizes the display of non-canonical LEB128
+                        // WABT has a bug where it normalises the display of non-canonical LEB128
                         // encodings for saturating truncation instructions (0xFC prefix, subopcodes 0-7).
                         // When the subopcode is encoded with more bytes than necessary (e.g., 0x81 0x80 0x00
-                        // instead of just 0x01), WABT displays it as the normalized form "80 00" and
+                        // instead of just 0x01), WABT displays it as the normalised form "80 00" and
                         // adjusts the position offset.
                         //
-                        // To match WABT's output exactly for tests, we need to replicate this behavior.
+                        // To match WABT's output exactly for tests, we need to replicate this behaviour.
                         // This appears to be related to how WABT prints certain instructions when they
                         // have non-canonical LEB128 encodings.
 
@@ -1328,7 +1328,7 @@ impl CodeSection {
                         let is_non_canonical = subopcode_bytes.len() > 1;
 
                         if is_non_canonical {
-                            // For non-canonical encodings, WABT shows normalized "80 00"
+                            // For non-canonical encodings, WABT shows normalised "80 00"
                             // and adjusts position. The offset is the number of extra bytes
                             // beyond what's needed for the canonical encoding.
                             // For values 0-7, canonical encoding is 1 byte, so:
@@ -1625,7 +1625,7 @@ pub struct Locals {
 }
 
 impl Locals {
-    // Initialize with a list of count+ValueType pairs
+    // Initialise with a list of count+ValueType pairs
     pub fn new(entries: Vec<(u32, ValueType)>) -> Self {
         Self { entries }
     }
@@ -1661,6 +1661,9 @@ impl Locals {
 #[derive(Debug)]
 pub struct FunctionBody {
     pub locals: Locals,
+		// TODO: this should use a StructuredFunction rather than a list of
+		// instructions to avoid having to re-process them into a
+		// StructuredFunction later on when we need it.
     pub instructions: Vec<instruction::Instruction>,
     pub position: SectionPosition, // sub-section position
 }

@@ -1,7 +1,7 @@
-//! Test coverage analyzer for WebAssembly runtime
+//! Test coverage analyser for WebAssembly runtime
 //!
-//! This tool analyzes which spec tests would be enabled by implementing
-//! specific instructions, helping prioritize development efforts.
+//! This tool analyses which spec tests would be enabled by implementing
+//! specific instructions, helping prioritise development efforts.
 
 use base64::{engine::general_purpose, Engine as _};
 use kasm::parser::{self, module::Module};
@@ -47,8 +47,8 @@ struct TestAction {
     module: String,
 }
 
-/// Analyzes a single test file
-fn analyze_test_file(
+/// Analyses a single test file
+fn analyse_test_file(
     path: &Path,
     implemented: &HashSet<String>,
 ) -> Result<TestFileAnalysis, Box<dyn std::error::Error>> {
@@ -81,7 +81,7 @@ fn analyze_test_file(
         }
     }
 
-    // Analyze assert_return commands
+    // Analyse assert_return commands
     for cmd in &test_data.spec.commands {
         if let TestCommand::AssertReturn { r#type, action, .. } = cmd {
             if r#type != "assert_return" {
@@ -199,13 +199,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut total_tests = 0;
     let mut instruction_impact = HashMap::new();
 
-    // Analyze each test file
+    // Analyse each test file
     let mut results = Vec::new();
     for entry in fs::read_dir(test_dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Ok(analysis) = analyze_test_file(&path, &implemented) {
+            if let Ok(analysis) = analyse_test_file(&path, &implemented) {
                 total_runnable += analysis.runnable_tests;
                 total_tests += analysis.total_tests;
 
@@ -278,7 +278,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\n{:-<60}", "");
         println!("Impact of adding '{}':", args[2]);
 
-        // Re-analyze without the new instruction
+        // Re-analyse without the new instruction
         let mut base_implemented = implemented.clone();
         base_implemented.remove(&args[2]);
 
@@ -287,8 +287,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let entry = entry?;
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                if let Ok(base_analysis) = analyze_test_file(&path, &base_implemented) {
-                    if let Ok(new_analysis) = analyze_test_file(&path, &implemented) {
+                if let Ok(base_analysis) = analyse_test_file(&path, &base_implemented) {
+                    if let Ok(new_analysis) = analyse_test_file(&path, &implemented) {
                         if new_analysis.runnable_tests > base_analysis.runnable_tests {
                             let delta = new_analysis.runnable_tests - base_analysis.runnable_tests;
                             new_runnable += delta;

@@ -73,7 +73,7 @@ impl Memory {
         // Calculate initial size in bytes
         let initial_bytes = initial_pages as usize * PAGE_SIZE;
 
-        // Allocate memory - initialized to zero per WebAssembly spec
+        // Allocate memory - initialised to zero per WebAssembly spec
         let data = vec![0u8; initial_bytes];
 
         Ok(Memory {
@@ -117,7 +117,7 @@ impl Memory {
         // This can fail if system is out of memory
         match self.data.try_reserve(new_bytes - self.data.len()) {
             Ok(()) => {
-                // Resize and zero-initialize new pages
+                // Resize and zero-initialise new pages
                 self.data.resize(new_bytes, 0);
                 self.current_pages = new_pages;
                 current as i32
@@ -507,10 +507,10 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_initialization() {
+    fn test_zero_initialisation() {
         let mem = Memory::new(2, None).unwrap();
 
-        // Check that memory is zero-initialized
+        // Check that memory is zero-initialised
         for i in 0..100 {
             assert_eq!(mem.read_u8(i).unwrap(), 0);
         }
@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn test_grow_zero_initialization() {
+    fn test_grow_zero_initialisation() {
         let mut mem = Memory::new(1, None).unwrap();
 
         // Write some data

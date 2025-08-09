@@ -2,6 +2,7 @@
 
 use super::{executor::Executor, RuntimeError, Value};
 use crate::parser::module::{ExportIndex, Module};
+use crate::parser::structure_builder::StructureBuilder;
 use std::collections::HashMap;
 
 /// A WebAssembly module instance
@@ -77,9 +78,17 @@ impl<'a> Instance<'a> {
             .get(func_idx as usize)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
+        // Build structured representation
+        let structured_func = StructureBuilder::build_function(
+            &body.instructions,
+            body.locals.len() as usize,
+            func_type.return_types.clone(),
+        )
+        .map_err(|e| RuntimeError::UnimplementedInstruction(format!("Failed to build structure: {e}")))?;
+
         // Execute the function
         let mut executor = Executor::new(self.module)?;
-        executor.execute_function(func_idx, &body.instructions, args, &func_type.return_types)
+        executor.execute_function(&structured_func, args, &func_type.return_types)
     }
 
     /// Get the module reference

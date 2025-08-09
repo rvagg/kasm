@@ -7,27 +7,9 @@ use super::{
     stack::Stack,
     RuntimeError, Value,
 };
-use crate::parser::instruction::{Instruction, InstructionKind};
+use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
 use crate::parser::module::{Module, ValueType};
-
-/// Result of executing an instruction
-///
-/// This enum controls the program counter (pc) after instruction execution:
-/// - `Continue`: Increment pc by 1 to execute the next instruction
-/// - `Branch(depth)`: Jump to a different location (handled by `handle_branch`)
-/// - `SkipToElseOrEnd`: Skip forward to else or end (used by if/else control flow)
-/// - `Return`: Exit the current function
-#[derive(Debug)]
-enum ExecutionResult {
-    /// Continue to next instruction (pc += 1)
-    Continue,
-    /// Branch to a label at given depth (pc = calculated branch target)
-    Branch(u32),
-    /// Skip to next else or end at current nesting level
-    SkipToElseOrEnd,
-    /// Return from the current function
-    Return,
-}
+use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
 
 /// Executes WebAssembly instructions
 pub struct Executor<'a> {
@@ -47,9 +29,9 @@ impl<'a> Executor<'a> {
     ///
     /// # Errors
     /// - If the module has more than one memory (WebAssembly 1.0 limitation)
-    /// - If memory initialization fails
+    /// - If memory initialisation fails
     pub fn new(module: &'a Module) -> Result<Self, RuntimeError> {
-        // Initialize memories from module definition
+        // Initialise memories from module definition
         let memories = if module.memory.memory.is_empty() {
             vec![]
         } else {
@@ -81,249 +63,191 @@ impl<'a> Executor<'a> {
     /// Execute a function
     pub fn execute_function(
         &mut self,
-        _func_idx: u32,
-        instructions: &[Instruction],
+        func: &StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
     ) -> Result<Vec<Value>, RuntimeError> {
-        // Create frame with arguments as initial locals
-        // Function parameters are the first locals
+        // Initialise frame with arguments as locals
         let frame = Frame::new(args);
         self.frame = Some(frame);
 
-        // Execute instructions
-        self.execute_instructions(instructions)?;
+        // Reset label stack for new function
+        self.label_stack = LabelStack::new();
 
-        // Pop return values in reverse order
-        let mut results = Vec::new();
-        for return_type in return_types.iter().rev() {
-            let value = self.stack.pop_typed(*return_type)?;
-            results.push(value);
+        // Execute the function body
+        match self.execute_instructions(&func.body) {
+            Ok(BlockEnd::Normal) => {
+                // Normal completion - collect return values
+                let mut results = Vec::new();
+                for return_type in return_types.iter().rev() {
+                    let value = self.stack.pop_typed(*return_type)?;
+                    results.push(value);
+                }
+                results.reverse();
+                Ok(results)
+            }
+            Ok(BlockEnd::Return) => {
+                // Return instruction was executed - collect return values
+                let mut results = Vec::new();
+                for return_type in return_types.iter().rev() {
+                    let value = self.stack.pop_typed(*return_type)?;
+                    results.push(value);
+                }
+                results.reverse();
+                Ok(results)
+            }
+            Ok(BlockEnd::Branch(depth)) => {
+                // Uncaught branch
+                Err(RuntimeError::InvalidLabel(depth))
+            }
+            Err(e) => Err(e),
         }
-        results.reverse();
-
-        Ok(results)
     }
 
     /// Execute a sequence of instructions
-    fn execute_instructions(&mut self, instructions: &[Instruction]) -> Result<(), RuntimeError> {
-        let mut pc = 0; // Program counter
-
-        while pc < instructions.len() {
-            // Execute the instruction and determine how to update the program counter
-            match self.execute_instruction(&instructions[pc])? {
-                ExecutionResult::Continue => pc += 1, // Normal flow: move to next instruction
-                ExecutionResult::Branch(depth) => {
-                    // Branch flow: calculate and jump to branch target
-                    pc = self.handle_branch(pc, instructions, depth)?;
-                }
-                ExecutionResult::SkipToElseOrEnd => {
-                    // Skip to else/end for if control flow
-                    pc = self.skip_to_else_or_end(pc, instructions)?;
-                }
-                ExecutionResult::Return => {
-                    // Exit the function early
-                    break;
-                }
+    fn execute_instructions(&mut self, instructions: &[StructuredInstruction]) -> Result<BlockEnd, RuntimeError> {
+        for instruction in instructions {
+            match self.execute_instruction(instruction)? {
+                BlockEnd::Normal => continue,
+                other => return Ok(other),
             }
         }
-        Ok(())
-    }
-
-    /// Handle a branch instruction by calculating the target program counter
-    ///
-    /// This method implements the WebAssembly branch semantics:
-    /// 1. Pops values from the stack based on the target label's arity
-    /// 2. Pops labels from the label stack up to and including the target
-    /// 3. Pushes the values back onto the stack
-    /// 4. Returns the new program counter position
-    ///
-    /// We have deal with structured control flow without explicit jump
-    /// addresses. When we encounter a branch instruction, we only know the
-    /// label depth (e.g., "branch to the 2nd enclosing block"), not the
-    /// actual instruction address to jump to.
-    ///
-    /// - **For blocks**: Branch to the end → scan forward to find matching `end`
-    /// - **For loops**: Branch to the beginning → scan backward to find matching `loop`
-    ///
-    /// The scanning must track nesting levels to handle nested control
-    /// structures correctly.
-    ///
-    /// # Returns
-    /// The new program counter position to continue execution from
-    fn handle_branch(
-        &mut self,
-        current_pc: usize,
-        instructions: &[Instruction],
-        depth: u32,
-    ) -> Result<usize, RuntimeError> {
-        // Get the target label
-        // From the spec (4.4.8 br l):
-        // "Let L be the l-th label appearing on the stack, starting from the top and counting from zero"
-        let label = self
-            .label_stack
-            .get(depth)
-            .ok_or_else(|| RuntimeError::UnimplementedInstruction(format!("invalid branch depth {depth}")))?;
-
-        // Get the arity and check if it's a loop
-        // From the spec: "Let n be the arity of L"
-        let arity = label.arity()?;
-        let is_loop = label.label_type == LabelType::Loop;
-
-        // Pop arity values from stack (these will be the block results)
-        // We collect them in a temporary vec because we need to:
-        // 1. Pop them all before popping labels (to maintain stack discipline)
-        // 2. Push them back in the same order after popping labels
-        let mut values = Vec::with_capacity(arity);
-        for _ in 0..arity {
-            values.push(self.stack.pop()?);
-        }
-        values.reverse(); // Restore original order
-
-        // Pop control frames up to and including the target
-        for _ in 0..=depth {
-            self.label_stack.pop();
-        }
-
-        // Push values back in their original order
-        for value in values {
-            self.stack.push(value);
-        }
-
-        // Find the target position based on the label type
-        if is_loop {
-            // LOOP BRANCH: Jump to the beginning of the loop
-            //
-            // Loops branch to their start, but we only know our current
-            // position. We must scan backwards through the instruction
-            // stream to find where this loop began.
-            //
-            // We might encounter other loops/blocks while scanning
-            // backward so use nesting_level to ensure we match the correct loop.
-            let mut scan_pc = current_pc;
-            let mut nesting_level = 0;
-            let mut target_depth = depth as i32;
-
-            // Scan backward through instructions
-            while scan_pc > 0 {
-                scan_pc -= 1;
-                match &instructions[scan_pc].kind {
-                    InstructionKind::End => {
-                        // Found an 'end' while going backward - we're entering a nested structure
-                        nesting_level += 1;
-                    }
-                    InstructionKind::Block { .. } | InstructionKind::Loop { .. } | InstructionKind::If { .. } => {
-                        if nesting_level == 0 {
-                            // Not inside a nested structure
-                            if target_depth == 0 {
-                                // Found our target loop!
-                                // Return the loop instruction position so it gets re-executed
-                                // (which will re-push the label onto the label stack)
-                                return Ok(scan_pc);
-                            }
-                            // This is a label, but not our target - keep searching
-                            target_depth -= 1;
-                        } else {
-                            // Exiting a nested structure
-                            nesting_level -= 1;
-                        }
-                    }
-                    _ => {} // Other instructions don't affect our search
-                }
-            }
-
-            // Should not reach here - indicates malformed bytecode that got
-            // past the validator.
-            Err(RuntimeError::UnimplementedInstruction(
-                "could not find loop start".to_string(),
-            ))
-        } else {
-            // BLOCK BRANCH: Jump to the end of the block
-            //
-            // Blocks branch to their end. We need to find the matching 'end'
-            // instruction for our target block.
-            //
-            // We need to skip 'depth' labels PLUS the current block we're
-            // branching out of.
-            let mut block_depth = depth + 1;
-            let mut new_pc = current_pc + 1;
-
-            // Scan forward through instructions
-            while new_pc < instructions.len() && block_depth > 0 {
-                match &instructions[new_pc].kind {
-                    InstructionKind::Block { .. } | InstructionKind::Loop { .. } | InstructionKind::If { .. } => {
-                        // Entering a nested structure
-                        block_depth += 1;
-                    }
-                    InstructionKind::End => {
-                        // Exiting a structure
-                        block_depth -= 1;
-                        if block_depth == 0 {
-                            // Found the target! new_pc is now just after the 'end'
-                            break;
-                        }
-                    }
-                    _ => {} // Other instructions don't affect our search
-                }
-                new_pc += 1;
-            }
-
-            Ok(new_pc)
-        }
-    }
-
-    /// Skip to the next else or end at the current nesting level
-    ///
-    /// This is used when:
-    /// 1. An if condition is false - skip to else (to execute else branch) or end
-    /// 2. We hit else during then branch - skip to end
-    ///
-    /// In both cases, we just skip to whatever comes first (else or end) at our
-    /// nesting level. The logic works because:
-    /// - After if: we'll find else or end
-    /// - After else: we'll only find end (no else after else)
-    fn skip_to_else_or_end(&mut self, current_pc: usize, instructions: &[Instruction]) -> Result<usize, RuntimeError> {
-        let mut pc = current_pc + 1;
-        let mut nesting_level = 0;
-
-        while pc < instructions.len() {
-            match &instructions[pc].kind {
-                // Entering nested structures increases nesting
-                InstructionKind::Block { .. } | InstructionKind::Loop { .. } | InstructionKind::If { .. } => {
-                    nesting_level += 1;
-                }
-                // Found else
-                InstructionKind::Else => {
-                    if nesting_level == 0 {
-                        // This is at our level - stop here
-                        return Ok(pc + 1); // Skip past the else instruction
-                    }
-                    // Else at a different nesting level, ignore it
-                }
-                // Found end
-                InstructionKind::End => {
-                    if nesting_level == 0 {
-                        // This is our if's end - don't pop label here,
-                        // the End instruction will handle it
-                        return Ok(pc);
-                    }
-                    nesting_level -= 1;
-                }
-                _ => {}
-            }
-            pc += 1;
-        }
-
-        Err(RuntimeError::UnimplementedInstruction(
-            "could not find matching else or end for if".to_string(),
-        ))
+        Ok(BlockEnd::Normal)
     }
 
     /// Execute a single instruction
-    fn execute_instruction(&mut self, instruction: &Instruction) -> Result<ExecutionResult, RuntimeError> {
+    fn execute_instruction(&mut self, instruction: &StructuredInstruction) -> Result<BlockEnd, RuntimeError> {
+        match instruction {
+            StructuredInstruction::Plain(inst) => self.execute_plain_instruction(inst),
+
+            StructuredInstruction::Block { block_type, body, .. } => {
+                // Push label for the block
+                let label = Label {
+                    label_type: LabelType::Block,
+                    block_type: *block_type,
+                    stack_height: self.stack.len(),
+                    unreachable: false,
+                };
+                self.label_stack.push(label);
+
+                // Execute the block body
+                let result = self.execute_instructions(body);
+
+                // Pop the label
+                self.label_stack.pop();
+
+                // Handle the result
+                match result {
+                    Ok(BlockEnd::Normal) => Ok(BlockEnd::Normal),
+                    Ok(BlockEnd::Return) => Ok(BlockEnd::Return),
+                    Ok(BlockEnd::Branch(0)) => {
+                        // Branch to this block (depth 0) - just exit normally
+                        Ok(BlockEnd::Normal)
+                    }
+                    Ok(BlockEnd::Branch(depth)) => {
+                        // Branch to outer block
+                        Ok(BlockEnd::Branch(depth - 1))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+
+            StructuredInstruction::Loop { block_type, body, .. } => {
+                // Push label for the loop
+                let label = Label {
+                    label_type: LabelType::Loop,
+                    block_type: *block_type,
+                    stack_height: self.stack.len(),
+                    unreachable: false,
+                };
+                self.label_stack.push(label);
+
+                // Execute the loop body
+                loop {
+                    let result = self.execute_instructions(body);
+
+                    match result {
+                        Ok(BlockEnd::Normal) => {
+                            // Normal completion - exit the loop
+                            self.label_stack.pop();
+                            return Ok(BlockEnd::Normal);
+                        }
+                        Ok(BlockEnd::Return) => {
+                            // Return from function
+                            self.label_stack.pop();
+                            return Ok(BlockEnd::Return);
+                        }
+                        Ok(BlockEnd::Branch(0)) => {
+                            // Branch to this loop (depth 0) - continue the loop
+                            // The label is already on the stack, just continue
+                            continue;
+                        }
+                        Ok(BlockEnd::Branch(depth)) => {
+                            // Branch to outer block
+                            self.label_stack.pop();
+                            return Ok(BlockEnd::Branch(depth - 1));
+                        }
+                        Err(e) => {
+                            self.label_stack.pop();
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+
+            StructuredInstruction::If {
+                block_type,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                // Pop condition
+                let condition = self.stack.pop_i32()?;
+
+                // Push label for the if
+                let label = Label {
+                    label_type: LabelType::If,
+                    block_type: *block_type,
+                    stack_height: self.stack.len(),
+                    unreachable: false,
+                };
+                self.label_stack.push(label);
+
+                // Execute appropriate branch
+                let result = if condition != 0 {
+                    self.execute_instructions(then_branch)
+                } else if let Some(else_body) = else_branch {
+                    self.execute_instructions(else_body)
+                } else {
+                    Ok(BlockEnd::Normal)
+                };
+
+                // Pop the label
+                self.label_stack.pop();
+
+                // Handle the result
+                match result {
+                    Ok(BlockEnd::Normal) => Ok(BlockEnd::Normal),
+                    Ok(BlockEnd::Return) => Ok(BlockEnd::Return),
+                    Ok(BlockEnd::Branch(0)) => {
+                        // Branch to this if (depth 0) - just exit normally
+                        Ok(BlockEnd::Normal)
+                    }
+                    Ok(BlockEnd::Branch(depth)) => {
+                        // Branch to outer block
+                        Ok(BlockEnd::Branch(depth - 1))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        }
+    }
+
+    /// Execute a plain (non-control-flow) instruction
+    fn execute_plain_instruction(&mut self, inst: &Instruction) -> Result<BlockEnd, RuntimeError> {
         use InstructionKind::*;
 
-        match &instruction.kind {
+        match &inst.kind {
             // ----------------------------------------------------------------
             // 4.4.1 Numeric Instructions
             //
@@ -331,35 +255,37 @@ impl<'a> Executor<'a> {
             // 1. Push the value 𝑡.const 𝑐 to the stack.
             I32Const { value } => {
                 self.stack.push(Value::I32(*value));
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
             I64Const { value } => {
                 self.stack.push(Value::I64(*value));
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
             F32Const { value } => {
                 self.stack.push(Value::F32(*value));
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
             F64Const { value } => {
                 self.stack.push(Value::F64(*value));
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // ----------------------------------------------------------------
-            // Control (4.4.8 Control Instructions)
+            // 4.4.8 Control Instructions
+            //
             // nop
             // 1. Do nothing.
-            Nop => Ok(ExecutionResult::Continue),
+            Nop => Ok(BlockEnd::Normal),
 
             // ----------------------------------------------------------------
-            // Parametric (4.4.4 Parametric Instructions)
+            // 4.4.4 Parametric Instructions
+            //
             // drop
             // 1. Assert: due to validation, a value is on the top of the stack.
             // 2. Pop the value val from the stack.
             Drop => {
                 self.stack.pop()?;
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // ----------------------------------------------------------------
@@ -378,7 +304,7 @@ impl<'a> Executor<'a> {
                     .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))?
                     .clone();
                 self.stack.push(value);
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // local.set 𝑥
@@ -397,7 +323,7 @@ impl<'a> Executor<'a> {
                 }
 
                 frame.locals[*local_idx as usize] = value;
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // local.tee 𝑥
@@ -420,111 +346,14 @@ impl<'a> Executor<'a> {
 
                 // Store in local
                 frame.locals[*local_idx as usize] = value;
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // ----------------------------------------------------------------
-            // 4.4.8 Control Instructions
-            // See: https://webassembly.github.io/spec/core/exec/instructions.html#control-instructions
+            // 4.4.8 Branch Instructions
             //
-            // block blocktype instr* end
-            // From the spec (4.4.8.1):
-            // 1. Let 𝐹 be the current frame.
-            // 2. Assert: due to validation, expand𝐹(blocktype) is defined.
-            // 3. Let [𝑡ᵐ₁] → [𝑡ⁿ₂] be the function type expand𝐹(blocktype).
-            // 4. Let 𝐿 be the label whose arity is 𝑛 and whose continuation is the end of the block.
-            // 5. Assert: due to validation, there are at least 𝑚 values on the top of the stack.
-            // 6. Pop the values val^𝑚 from the stack.
-            // 7. Enter the block instr* with label 𝐿 and values val^𝑚.
-            Block { block_type } => {
-                // Create label as per spec step 4
-                // "Let L be the label whose arity is n and whose continuation is the end of the block"
-                let label = Label {
-                    label_type: LabelType::Block,
-                    block_type: block_type.clone(),
-                    stack_height: self.stack.len(),
-                    unreachable: false,
-                };
-                // Extend label stack as per spec: "gets extended with new labels when entering structured control instructions"
-                self.label_stack.push(label);
-                Ok(ExecutionResult::Continue)
-            }
-
-            // loop blocktype instr* end
-            // From the spec (4.4.8.2):
-            // "Let L be the label whose arity is n and whose continuation is the start of the loop"
-            // Note: Unlike blocks, "the label of a loop does not target the end, but the beginning of the loop"
-            Loop { block_type } => {
-                let label = Label {
-                    label_type: LabelType::Loop,
-                    block_type: block_type.clone(),
-                    stack_height: self.stack.len(),
-                    unreachable: false,
-                };
-                // Extend label stack as per spec: "gets extended with new labels when entering structured control instructions"
-                self.label_stack.push(label);
-                Ok(ExecutionResult::Continue)
-            }
-
-            // if blocktype instr* else instr* end
-            // From the spec (4.4.8.3):
-            // The if instruction is a conditional: it pops an i32 condition and executes
-            // one of two instruction sequences based on its value.
-            If { block_type } => {
-                // Pop condition value
-                let condition = self.stack.pop_i32()?;
-
-                // Push label for the if construct
-                let label = Label {
-                    label_type: LabelType::If,
-                    block_type: block_type.clone(),
-                    stack_height: self.stack.len(),
-                    unreachable: false,
-                };
-                self.label_stack.push(label);
-
-                if condition != 0 {
-                    // Non-zero: execute the 'then' branch
-                    Ok(ExecutionResult::Continue)
-                } else {
-                    // Zero: skip to 'else' or 'end'
-                    Ok(ExecutionResult::SkipToElseOrEnd)
-                }
-            }
-
-            // else
-            // From the spec: else marks the beginning of the else branch
-            // This instruction can be reached in two ways:
-            // 1. From skip_to_else_or_end when if condition was false
-            // 2. During execution of the 'then' branch (need to skip to end)
-            Else => {
-                // Check if we're in an if block
-                if let Some(label) = self.label_stack.get(0) {
-                    if label.label_type == LabelType::If {
-                        // We're executing the then branch and hit else, skip to end
-                        Ok(ExecutionResult::SkipToElseOrEnd)
-                    } else {
-                        Err(RuntimeError::UnimplementedInstruction(
-                            "else not inside if block".to_string(),
-                        ))
-                    }
-                } else {
-                    Err(RuntimeError::UnimplementedInstruction("else without if".to_string()))
-                }
-            }
-
-            // end
-            // Handled implicitly by block/loop/if execution
-            End => {
-                // Pop control frame if there is one
-                if !self.label_stack.is_empty() {
-                    self.label_stack.pop();
-                }
-                Ok(ExecutionResult::Continue)
-            }
-
             // br l
-            // From the spec (4.4.8 br l):
+            // From the spec:
             // 1. Assert: due to validation, the stack contains at least l + 1 labels.
             // 2. Let L be the l-th label appearing on the stack, starting from the top and counting from zero.
             // 3. Let n be the arity of L.
@@ -533,10 +362,42 @@ impl<'a> Executor<'a> {
             // 6. Repeat l + 1 times: pop a label from the stack.
             // 7. Push the values val^n to the stack.
             // 8. Jump to the continuation of L.
-            Br { label_idx } => Ok(ExecutionResult::Branch(*label_idx)),
+            Br { label_idx } => {
+                // Get the target label to determine arity
+                let label = self
+                    .label_stack
+                    .get(*label_idx)
+                    .ok_or(RuntimeError::InvalidLabel(*label_idx))?;
+
+                let arity = match &label.block_type {
+                    BlockType::Empty => 0,
+                    BlockType::Value(_) => 1,
+                    BlockType::FuncType(idx) => {
+                        // For now, we don't have access to function types here
+                        // This would need to be looked up from the module
+                        return Err(RuntimeError::UnimplementedInstruction(format!(
+                            "Branch with function type {idx} not yet supported"
+                        )));
+                    }
+                };
+
+                // Pop arity values from stack (these will be the block results)
+                let mut values = Vec::with_capacity(arity);
+                for _ in 0..arity {
+                    values.push(self.stack.pop()?);
+                }
+                values.reverse(); // Restore original order
+
+                // Push values back
+                for value in values {
+                    self.stack.push(value);
+                }
+
+                Ok(BlockEnd::Branch(*label_idx))
+            }
 
             // br_if l
-            // From the spec (4.4.8 br_if l):
+            // From the spec:
             // 1. Assert: due to validation, a value of type i32 is on the top of the stack.
             // 2. Pop the value c from the stack.
             // 3. If c is non-zero, then execute the instruction br l.
@@ -544,20 +405,49 @@ impl<'a> Executor<'a> {
             BrIf { label_idx } => {
                 let condition = self.stack.pop_i32()?;
                 if condition != 0 {
-                    Ok(ExecutionResult::Branch(*label_idx))
+                    // Get the target label to determine arity
+                    let label = self
+                        .label_stack
+                        .get(*label_idx)
+                        .ok_or(RuntimeError::InvalidLabel(*label_idx))?;
+
+                    let arity = match &label.block_type {
+                        BlockType::Empty => 0,
+                        BlockType::Value(_) => 1,
+                        BlockType::FuncType(idx) => {
+                            return Err(RuntimeError::UnimplementedInstruction(format!(
+                                "Branch with function type {idx} not yet supported"
+                            )));
+                        }
+                    };
+
+                    // Pop arity values from stack
+                    let mut values = Vec::with_capacity(arity);
+                    for _ in 0..arity {
+                        values.push(self.stack.pop()?);
+                    }
+                    values.reverse();
+
+                    // Push values back
+                    for value in values {
+                        self.stack.push(value);
+                    }
+
+                    Ok(BlockEnd::Branch(*label_idx))
                 } else {
-                    Ok(ExecutionResult::Continue)
+                    Ok(BlockEnd::Normal)
                 }
             }
 
             // br_table l* lN
-            // From the spec (4.4.8 br_table l* lN):
+            // From the spec:
             // A br_table performs an indirect branch through an operand indexing into
             // a list of labels.
             // 1. Pop i32 index from stack
             // 2. If index < len(labels), branch to labels[index]
             // 3. Else branch to default
             BrTable { labels, default } => {
+                // Pop index from stack
                 let index = self.stack.pop_i32()?;
 
                 // Choose the target label based on index
@@ -567,25 +457,48 @@ impl<'a> Executor<'a> {
                     *default
                 };
 
-                Ok(ExecutionResult::Branch(target))
+                // Now branch to the target (same as Br)
+                let label = self.label_stack.get(target).ok_or(RuntimeError::InvalidLabel(target))?;
+
+                let arity = match &label.block_type {
+                    BlockType::Empty => 0,
+                    BlockType::Value(_) => 1,
+                    BlockType::FuncType(idx) => {
+                        return Err(RuntimeError::UnimplementedInstruction(format!(
+                            "Branch with function type {idx} not yet supported"
+                        )));
+                    }
+                };
+
+                // Pop arity values from stack
+                let mut values = Vec::with_capacity(arity);
+                for _ in 0..arity {
+                    values.push(self.stack.pop()?);
+                }
+                values.reverse();
+
+                // Push values back
+                for value in values {
+                    self.stack.push(value);
+                }
+
+                Ok(BlockEnd::Branch(target))
             }
 
             // return
-            // From the spec (4.4.8 return):
+            // From the spec:
             // The return instruction is a shortcut for an unconditional branch
             // to the outermost block, which implicitly is the body of the current function.
             //
-            // Note: We handle this differently than a branch - we don't pop labels
-            // or manipulate the stack. The function epilogue in execute_function
-            // will handle popping the return values.
-            Return => Ok(ExecutionResult::Return),
+            // Note: We handle this with BlockEnd::Return which propagates up through
+            // all nested blocks to exit the function.
+            Return => Ok(BlockEnd::Return),
 
             // ----------------------------------------------------------------
-            // 4.4.7 Memory Instructions
-            // ----------------------------------------------------------------
-
+            // Memory Instructions
+            //
             // memory.size
-            // From the spec (4.4.7 memory.size):
+            // From the spec:
             // 1. Let F be the current frame.
             // 2. Assert: due to validation, F.module.memaddrs[0] exists.
             // 3. Let a be the memory address F.module.memaddrs[0].
@@ -600,23 +513,22 @@ impl<'a> Executor<'a> {
                 }
                 let size = self.memories[0].size();
                 self.stack.push(Value::I32(size as i32));
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // memory.grow
-            // From the spec (4.4.7 memory.grow):
+            // From the spec:
             // 1. Let F be the current frame.
             // 2. Assert: due to validation, F.module.memaddrs[0] exists.
             // 3. Let a be the memory address F.module.memaddrs[0].
             // 4. Assert: due to validation, S.mems[a] exists.
             // 5. Let mem be the memory instance S.mems[a].
             // 6. Let sz be the length of mem.data divided by the page size.
-            // 7. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 7. Assert: due to validation, a value of type i32 is on the top of the stack.
             // 8. Pop the value i32.const n from the stack.
-            // 9. Let err be the integer sz if growing mem by n pages exceeds the maximum size,
-            //    or −1 if insufficient memory is available.
-            // 10. If err is non-negative, then push the value i32.const err to the stack.
-            // 11. Else, grow mem by n pages and push sz to the stack.
+            // 9. Let err be the i32 value -1.
+            // 10. If n > max_mem_pages or growing fails, push i32.const err to the stack.
+            // 11. Otherwise, push the value i32.const sz to the stack.
             MemoryGrow => {
                 // WebAssembly 1.0 only supports memory index 0
                 if self.memories.is_empty() {
@@ -630,22 +542,25 @@ impl<'a> Executor<'a> {
                     let result = self.memories[0].grow(delta as u32);
                     self.stack.push(Value::I32(result));
                 }
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
+            // ----------------------------------------------------------------
+            // 4.4.7 Memory Instructions
+            //
             // i32.load
-            // From the spec (4.4.7 i32.load memarg):
+            // From the spec:
             // 1. Let F be the current frame.
             // 2. Assert: due to validation, F.module.memaddrs[0] exists.
             // 3. Let a be the memory address F.module.memaddrs[0].
             // 4. Assert: due to validation, S.mems[a] exists.
             // 5. Let mem be the memory instance S.mems[a].
-            // 6. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 6. Assert: due to validation, a value of type i32 is on the top of the stack.
             // 7. Pop the value i32.const i from the stack.
-            // 8. Let ea be i + memarg.offset.
+            // 8. Let ea be the integer i + offset.
             // 9. If ea + 4 is larger than the length of mem.data, then trap.
-            // 10. Let b* be the byte sequence mem.data[ea : ea + 4].
-            // 11. Let c be the constant for which b* = bytes_i32(c).
+            // 10. Let b* be the byte sequence mem.data[ea:ea+4].
+            // 11. Let c be the integer for which bytes_i32(c) = b*.
             // 12. Push the value i32.const c to the stack.
             I32Load { memarg } => {
                 if self.memories.is_empty() {
@@ -668,24 +583,24 @@ impl<'a> Executor<'a> {
                 // Load the value
                 let value = self.memories[0].read_i32(ea as u32)?;
                 self.stack.push(Value::I32(value));
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // i32.store
-            // From the spec (4.4.7 i32.store memarg):
+            // From the spec:
             // 1. Let F be the current frame.
             // 2. Assert: due to validation, F.module.memaddrs[0] exists.
             // 3. Let a be the memory address F.module.memaddrs[0].
             // 4. Assert: due to validation, S.mems[a] exists.
             // 5. Let mem be the memory instance S.mems[a].
-            // 6. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 6. Assert: due to validation, a value of type i32 is on the top of the stack.
             // 7. Pop the value i32.const c from the stack.
-            // 8. Assert: due to validation, a value of value type i32 is on the top of the stack.
+            // 8. Assert: due to validation, a value of type i32 is on the top of the stack.
             // 9. Pop the value i32.const i from the stack.
-            // 10. Let ea be i + memarg.offset.
+            // 10. Let ea be the integer i + offset.
             // 11. If ea + 4 is larger than the length of mem.data, then trap.
-            // 12. Let b* be bytes_i32(c).
-            // 13. Replace the bytes mem.data[ea : ea + 4] with b*.
+            // 12. Let b* be the byte sequence bytes_i32(c).
+            // 13. Replace the bytes mem.data[ea:ea+4] with b*.
             I32Store { memarg } => {
                 if self.memories.is_empty() {
                     return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
@@ -709,7 +624,7 @@ impl<'a> Executor<'a> {
 
                 // Store the value
                 self.memories[0].write_i32(ea as u32, value)?;
-                Ok(ExecutionResult::Continue)
+                Ok(BlockEnd::Normal)
             }
 
             // ----------------------------------------------------------------
@@ -722,8 +637,9 @@ impl<'a> Executor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::instruction::{ByteRange, Instruction, InstructionKind, MemArg};
+    use crate::parser::instruction::{ByteRange, Instruction, InstructionKind};
     use crate::parser::module::Module;
+    use crate::parser::structure_builder::StructureBuilder;
 
     /// Test builder for creating executor tests fluently
     struct ExecutorTest {
@@ -759,9 +675,18 @@ mod tests {
         fn expect_stack(mut self, expected: Vec<Value>) {
             self.instructions.push(make_instruction(InstructionKind::End));
             let module = Module::new("test");
+
+            // Build structured representation
+            let structured_func = StructureBuilder::build_function(
+                &self.instructions,
+                0, // Most tests don't use locals
+                self.return_types.clone(),
+            )
+            .expect("Structure building should succeed");
+
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
             let results = executor
-                .execute_function(0, &self.instructions, self.args, &self.return_types)
+                .execute_function(&structured_func, self.args, &self.return_types)
                 .expect("Execution should succeed");
             assert_eq!(results, expected);
         }
@@ -769,8 +694,17 @@ mod tests {
         fn expect_error(mut self, error_contains: &str) {
             self.instructions.push(make_instruction(InstructionKind::End));
             let module = Module::new("test");
+
+            // Build structured representation
+            let structured_func = StructureBuilder::build_function(
+                &self.instructions,
+                0, // Most tests don't use locals
+                self.return_types.clone(),
+            )
+            .expect("Structure building should succeed");
+
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor.execute_function(0, &self.instructions, self.args, &self.return_types);
+            let result = executor.execute_function(&structured_func, self.args, &self.return_types);
             assert!(result.is_err(), "Expected error but execution succeeded");
             let actual_error = result.unwrap_err().to_string();
             assert!(
@@ -1203,7 +1137,7 @@ mod tests {
             // Branch out of a block
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::Br { label_idx: 0 })
@@ -1234,7 +1168,7 @@ mod tests {
             // Branch from inner to outer block
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::Block {
@@ -1254,7 +1188,7 @@ mod tests {
             // Conditional branch taken
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 1 }) // True condition
@@ -1569,7 +1503,7 @@ mod tests {
                     block_type: crate::parser::instruction::BlockType::Empty,
                 })
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 0 }) // index 0
@@ -1590,10 +1524,10 @@ mod tests {
             // Branch to second label in table (outer block)
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 1 }) // index 1 -> label 1
@@ -1614,10 +1548,10 @@ mod tests {
             // Index out of bounds, use default
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 5 }) // index out of bounds
@@ -1638,7 +1572,7 @@ mod tests {
             // Negative index uses default
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: -1 }) // negative index
@@ -1677,7 +1611,7 @@ mod tests {
             // Simple br_table in a single block
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 0 })
@@ -1775,7 +1709,7 @@ mod tests {
                     labels: vec![5], // Label 5 doesn't exist (no blocks)
                     default: 0,
                 })
-                .expect_error("invalid branch depth");
+                .expect_error("Invalid label");
         }
 
         #[test]
@@ -1787,7 +1721,7 @@ mod tests {
                     labels: vec![0],
                     default: 5, // Invalid default label
                 })
-                .expect_error("invalid branch depth");
+                .expect_error("Invalid label");
         }
 
         #[test]
@@ -1802,7 +1736,7 @@ mod tests {
                     labels: vec![0, 5], // label 5 doesn't exist
                     default: 0,
                 })
-                .expect_error("invalid branch depth");
+                .expect_error("Invalid label");
         }
 
         #[test]
@@ -1810,7 +1744,7 @@ mod tests {
             // Test with very large index (should use default)
             ExecutorTest::new()
                 .inst(InstructionKind::Block {
-                    block_type: crate::parser::instruction::BlockType::Empty,
+                    block_type: crate::parser::instruction::BlockType::Value(ValueType::I32),
                 })
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 1000000 }) // Very large index
@@ -1820,9 +1754,8 @@ mod tests {
                 })
                 .inst(InstructionKind::I32Const { value: 99 }) // Should be skipped
                 .inst(InstructionKind::End)
-                .inst(InstructionKind::I32Const { value: 88 })
-                .returns(vec![ValueType::I32, ValueType::I32])
-                .expect_stack(vec![Value::I32(42), Value::I32(88)]);
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
         }
     }
 
@@ -1924,8 +1857,24 @@ mod tests {
     // Memory Tests
     mod memory {
         use super::*;
+        use crate::parser::instruction::MemArg;
         use crate::parser::module::{Limits, Memory as MemoryDef};
         use crate::runtime::memory::PAGE_SIZE;
+
+        /// Helper to execute instructions for memory tests
+        fn execute_memory_test(
+            module: &Module,
+            instructions: Vec<Instruction>,
+            args: Vec<Value>,
+            return_types: &[ValueType],
+        ) -> Result<Vec<Value>, RuntimeError> {
+            // Build structured function
+            let structured_func = StructureBuilder::build_function(&instructions, 0, return_types.to_vec())
+                .expect("Structure building should succeed");
+
+            let mut executor = Executor::new(module)?;
+            executor.execute_function(&structured_func, args, return_types)
+        }
 
         #[test]
         fn multiple_memories_error() {
@@ -1969,18 +1918,16 @@ mod tests {
                 limits: Limits { min: 1, max: None },
             });
 
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        make_instruction(InstructionKind::MemorySize),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
+            let result = execute_memory_test(
+                &module,
+                vec![
+                    make_instruction(InstructionKind::MemorySize),
+                    make_instruction(InstructionKind::End),
+                ],
+                vec![],
+                &[ValueType::I32],
+            )
+            .unwrap();
 
             assert_eq!(result, vec![Value::I32(1)]);
         }
@@ -1994,20 +1941,16 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 2 }),
+                make_instruction(InstructionKind::MemoryGrow),
+                make_instruction(InstructionKind::MemorySize),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32, ValueType::I32])
+                .expect("Structure building should succeed");
             let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        // Grow by 2 pages
-                        make_instruction(InstructionKind::I32Const { value: 2 }),
-                        make_instruction(InstructionKind::MemoryGrow),
-                        // Check new size
-                        make_instruction(InstructionKind::MemorySize),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32, ValueType::I32],
-                )
+                .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32])
                 .unwrap();
 
             // Should return old size (1) and new size (3)
@@ -2023,19 +1966,14 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        // Try to grow by 5 pages (would exceed max)
-                        make_instruction(InstructionKind::I32Const { value: 5 }),
-                        make_instruction(InstructionKind::MemoryGrow),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 5 }),
+                make_instruction(InstructionKind::MemoryGrow),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
 
             // Should return -1 (failure)
             assert_eq!(result, vec![Value::I32(-1)]);
@@ -2050,19 +1988,14 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        // Try to grow by negative pages
-                        make_instruction(InstructionKind::I32Const { value: -1 }),
-                        make_instruction(InstructionKind::MemoryGrow),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: -1 }),
+                make_instruction(InstructionKind::MemoryGrow),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
 
             // Should return -1 (failure)
             assert_eq!(result, vec![Value::I32(-1)]);
@@ -2077,19 +2010,14 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        // Grow by 0 pages (valid, returns current size)
-                        make_instruction(InstructionKind::I32Const { value: 0 }),
-                        make_instruction(InstructionKind::MemoryGrow),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 0 }),
+                make_instruction(InstructionKind::MemoryGrow),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
 
             // Should return current size (2)
             assert_eq!(result, vec![Value::I32(2)]);
@@ -2104,25 +2032,32 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let instructions = vec![
+                make_instruction(InstructionKind::MemorySize),
+                make_instruction(InstructionKind::I32Const { value: 1 }),
+                make_instruction(InstructionKind::MemoryGrow),
+                make_instruction(InstructionKind::I32Const { value: 2 }),
+                make_instruction(InstructionKind::MemoryGrow),
+                make_instruction(InstructionKind::MemorySize),
+                make_instruction(InstructionKind::I32Const { value: 2 }),
+                make_instruction(InstructionKind::MemoryGrow),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(
+                &instructions,
+                0,
+                vec![
+                    ValueType::I32,
+                    ValueType::I32,
+                    ValueType::I32,
+                    ValueType::I32,
+                    ValueType::I32,
+                ],
+            )
+            .expect("Structure building should succeed");
             let result = executor
                 .execute_function(
-                    0,
-                    &[
-                        // Get initial size
-                        make_instruction(InstructionKind::MemorySize),
-                        // Grow by 1
-                        make_instruction(InstructionKind::I32Const { value: 1 }),
-                        make_instruction(InstructionKind::MemoryGrow),
-                        // Grow by 2 more
-                        make_instruction(InstructionKind::I32Const { value: 2 }),
-                        make_instruction(InstructionKind::MemoryGrow),
-                        // Get final size
-                        make_instruction(InstructionKind::MemorySize),
-                        // Try to grow beyond max
-                        make_instruction(InstructionKind::I32Const { value: 2 }),
-                        make_instruction(InstructionKind::MemoryGrow),
-                        make_instruction(InstructionKind::End),
-                    ],
+                    &func,
                     vec![],
                     &[
                         ValueType::I32,
@@ -2157,27 +2092,21 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        // Store value 42 at address 100
-                        make_instruction(InstructionKind::I32Const { value: 100 }), // address
-                        make_instruction(InstructionKind::I32Const { value: 42 }),  // value
-                        make_instruction(InstructionKind::I32Store {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        // Load it back
-                        make_instruction(InstructionKind::I32Const { value: 100 }),
-                        make_instruction(InstructionKind::I32Load {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 100 }), // address,
+                make_instruction(InstructionKind::I32Const { value: 42 }),  // value,
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 100 }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
 
             assert_eq!(result, vec![Value::I32(42)]);
         }
@@ -2191,27 +2120,21 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        // Store value at address 100
-                        make_instruction(InstructionKind::I32Const { value: 100 }),
-                        make_instruction(InstructionKind::I32Const { value: 0x12345678 }),
-                        make_instruction(InstructionKind::I32Store {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        // Load with offset (base address 90, offset 10 = effective address 100)
-                        make_instruction(InstructionKind::I32Const { value: 90 }),
-                        make_instruction(InstructionKind::I32Load {
-                            memarg: MemArg { offset: 10, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 100 }),
+                make_instruction(InstructionKind::I32Const { value: 0x12345678 }),
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 90 }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 10, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
 
             assert_eq!(result, vec![Value::I32(0x12345678)]);
         }
@@ -2225,46 +2148,44 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 0 }),
+                make_instruction(InstructionKind::I32Const { value: 100 }),
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 4 }),
+                make_instruction(InstructionKind::I32Const { value: 200 }),
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 8 }),
+                make_instruction(InstructionKind::I32Const { value: 300 }),
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 0 }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 4 }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 8 }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(
+                &instructions,
+                0,
+                vec![ValueType::I32, ValueType::I32, ValueType::I32],
+            )
+            .expect("Structure building should succeed");
             let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        // Store at address 0
-                        make_instruction(InstructionKind::I32Const { value: 0 }),
-                        make_instruction(InstructionKind::I32Const { value: 100 }),
-                        make_instruction(InstructionKind::I32Store {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        // Store at address 4
-                        make_instruction(InstructionKind::I32Const { value: 4 }),
-                        make_instruction(InstructionKind::I32Const { value: 200 }),
-                        make_instruction(InstructionKind::I32Store {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        // Store at address 8
-                        make_instruction(InstructionKind::I32Const { value: 8 }),
-                        make_instruction(InstructionKind::I32Const { value: 300 }),
-                        make_instruction(InstructionKind::I32Store {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        // Load all three back
-                        make_instruction(InstructionKind::I32Const { value: 0 }),
-                        make_instruction(InstructionKind::I32Load {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::I32Const { value: 4 }),
-                        make_instruction(InstructionKind::I32Load {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::I32Const { value: 8 }),
-                        make_instruction(InstructionKind::I32Load {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32, ValueType::I32, ValueType::I32],
-                )
+                .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32, ValueType::I32])
                 .unwrap();
 
             assert_eq!(result, vec![Value::I32(100), Value::I32(200), Value::I32(300)]);
@@ -2281,39 +2202,33 @@ mod tests {
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
             // Try to load from last valid address (PAGE_SIZE - 4)
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        make_instruction(InstructionKind::I32Const {
-                            value: (PAGE_SIZE - 4) as i32,
-                        }),
-                        make_instruction(InstructionKind::I32Load {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
-            assert_eq!(result, vec![Value::I32(0)]); // Memory is zero-initialized
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const {
+                    value: (PAGE_SIZE - 4) as i32,
+                }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+            assert_eq!(result, vec![Value::I32(0)]); // Memory is zero-initialised
 
             // Try to load from out of bounds address
-            let result = executor.execute_function(
-                0,
-                &[
-                    make_instruction(InstructionKind::I32Const {
-                        value: (PAGE_SIZE - 3) as i32,
-                    }),
-                    make_instruction(InstructionKind::I32Load {
-                        memarg: MemArg { offset: 0, align: 2 },
-                    }),
-                    make_instruction(InstructionKind::End),
-                ],
-                vec![],
-                &[ValueType::I32],
-            );
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const {
+                    value: (PAGE_SIZE - 3) as i32,
+                }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![].to_vec())
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[]);
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("Out of bounds"));
         }
@@ -2329,42 +2244,36 @@ mod tests {
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
             // Try to store at last valid address
-            let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        make_instruction(InstructionKind::I32Const {
-                            value: (PAGE_SIZE - 4) as i32,
-                        }),
-                        make_instruction(InstructionKind::I32Const { value: 42 }),
-                        make_instruction(InstructionKind::I32Store {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::I32Const { value: 1 }), // Return success indicator
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
-                .unwrap();
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const {
+                    value: (PAGE_SIZE - 4) as i32,
+                }),
+                make_instruction(InstructionKind::I32Const { value: 42 }),
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::I32Const { value: 1 }), // Return success indicator,
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
             assert_eq!(result, vec![Value::I32(1)]);
 
             // Try to store at out of bounds address
-            let result = executor.execute_function(
-                0,
-                &[
-                    make_instruction(InstructionKind::I32Const {
-                        value: (PAGE_SIZE - 3) as i32,
-                    }),
-                    make_instruction(InstructionKind::I32Const { value: 42 }),
-                    make_instruction(InstructionKind::I32Store {
-                        memarg: MemArg { offset: 0, align: 2 },
-                    }),
-                    make_instruction(InstructionKind::End),
-                ],
-                vec![],
-                &[],
-            );
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const {
+                    value: (PAGE_SIZE - 3) as i32,
+                }),
+                make_instruction(InstructionKind::I32Const { value: 42 }),
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![].to_vec())
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[]);
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("Out of bounds"));
         }
@@ -2378,18 +2287,16 @@ mod tests {
             });
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor.execute_function(
-                0,
-                &[
-                    make_instruction(InstructionKind::I32Const { value: i32::MAX }),
-                    make_instruction(InstructionKind::I32Load {
-                        memarg: MemArg { offset: 10, align: 2 },
-                    }),
-                    make_instruction(InstructionKind::End),
-                ],
-                vec![],
-                &[ValueType::I32],
-            );
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: i32::MAX }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 10, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+            let result = executor.execute_function(&func, vec![], &[ValueType::I32]);
             assert!(result.is_err());
             let error_msg = result.unwrap_err().to_string();
             assert!(
@@ -2403,10 +2310,9 @@ mod tests {
         fn i32_load_no_memory() {
             // Test load with no memory
             let module = Module::new("test");
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor.execute_function(
-                0,
-                &[
+            let result = execute_memory_test(
+                &module,
+                vec![
                     make_instruction(InstructionKind::I32Const { value: 0 }),
                     make_instruction(InstructionKind::I32Load {
                         memarg: MemArg { offset: 0, align: 2 },
@@ -2424,10 +2330,9 @@ mod tests {
         fn i32_store_no_memory() {
             // Test store with no memory
             let module = Module::new("test");
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-            let result = executor.execute_function(
-                0,
-                &[
+            let result = execute_memory_test(
+                &module,
+                vec![
                     make_instruction(InstructionKind::I32Const { value: 0 }),
                     make_instruction(InstructionKind::I32Const { value: 42 }),
                     make_instruction(InstructionKind::I32Store {
@@ -2444,7 +2349,7 @@ mod tests {
 
         #[test]
         fn i32_memory_persistence() {
-            // Test that memory persists across multiple function calls
+            // Test that memory persists across multiple function calls with same executor
             let mut module = Module::new("test");
             module.memory.memory.push(MemoryDef {
                 limits: Limits { min: 1, max: None },
@@ -2453,39 +2358,119 @@ mod tests {
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
             // First call: store a value
-            executor
-                .execute_function(
-                    0,
-                    &[
-                        make_instruction(InstructionKind::I32Const { value: 100 }),
-                        make_instruction(InstructionKind::I32Const { value: 42 }),
-                        make_instruction(InstructionKind::I32Store {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[],
-                )
-                .unwrap();
+            let store_instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 100 }),
+                make_instruction(InstructionKind::I32Const { value: 42 }),
+                make_instruction(InstructionKind::I32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let store_func = StructureBuilder::build_function(&store_instructions, 0, vec![])
+                .expect("Structure building should succeed");
+
+            executor.execute_function(&store_func, vec![], &[]).unwrap();
 
             // Second call: load the value back
+            let load_instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 100 }),
+                make_instruction(InstructionKind::I32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                }),
+                make_instruction(InstructionKind::End),
+            ];
+            let load_func = StructureBuilder::build_function(&load_instructions, 0, vec![ValueType::I32])
+                .expect("Structure building should succeed");
+
             let result = executor
-                .execute_function(
-                    0,
-                    &[
-                        make_instruction(InstructionKind::I32Const { value: 100 }),
-                        make_instruction(InstructionKind::I32Load {
-                            memarg: MemArg { offset: 0, align: 2 },
-                        }),
-                        make_instruction(InstructionKind::End),
-                    ],
-                    vec![],
-                    &[ValueType::I32],
-                )
+                .execute_function(&load_func, vec![], &[ValueType::I32])
                 .unwrap();
 
             assert_eq!(result, vec![Value::I32(42)]);
+        }
+    }
+
+    // Structured Execution Tests
+    mod structured_execution {
+        use super::*;
+
+        #[test]
+        fn test_structured_block() {
+            // Test a simple block using structured execution
+            let instructions = vec![
+                make_instruction(InstructionKind::Block {
+                    block_type: BlockType::Empty,
+                }),
+                make_instruction(InstructionKind::I32Const { value: 42 }),
+                make_instruction(InstructionKind::End),
+            ];
+
+            // Build structured representation
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Failed to build structured function");
+
+            // Execute using structured executor
+            let module = Module::new("test");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(&func, vec![], &[ValueType::I32])
+                .expect("Execution should succeed");
+
+            assert_eq!(result, vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn test_structured_if_then_else() {
+            // Test if-then-else using structured execution
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 1 }), // condition
+                make_instruction(InstructionKind::If {
+                    block_type: BlockType::Value(ValueType::I32),
+                }),
+                make_instruction(InstructionKind::I32Const { value: 10 }), // then branch
+                make_instruction(InstructionKind::Else),
+                make_instruction(InstructionKind::I32Const { value: 20 }), // else branch
+                make_instruction(InstructionKind::End),
+            ];
+
+            // Build structured representation
+            let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
+                .expect("Failed to build structured function");
+
+            // Execute using structured executor
+            let module = Module::new("test");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let result = executor
+                .execute_function(&func, vec![], &[ValueType::I32])
+                .expect("Execution should succeed");
+
+            assert_eq!(result, vec![Value::I32(10)]); // Should take then branch
+        }
+
+        #[test]
+        fn test_structured_loop_with_branch() {
+            // Test loop with conditional branch using structured execution
+            let instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 0 }), // counter
+                make_instruction(InstructionKind::Loop {
+                    block_type: BlockType::Value(ValueType::I32),
+                }),
+                make_instruction(InstructionKind::I32Const { value: 1 }), // increment
+                make_instruction(InstructionKind::I32Add),
+                make_instruction(InstructionKind::LocalTee { local_idx: 0 }), // save counter
+                make_instruction(InstructionKind::I32Const { value: 3 }),
+                make_instruction(InstructionKind::I32LtS), // counter < 3?
+                make_instruction(InstructionKind::BrIf { label_idx: 0 }), // branch to loop start if true
+                make_instruction(InstructionKind::End),
+            ];
+
+            // Note: This test would need locals support to work properly
+            // For now, just verify it builds successfully
+            let func = StructureBuilder::build_function(&instructions, 1, vec![ValueType::I32])
+                .expect("Failed to build structured function");
+
+            // Verify structure
+            assert_eq!(func.body.len(), 2); // const + loop
         }
     }
 

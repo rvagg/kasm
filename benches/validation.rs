@@ -101,7 +101,7 @@ fn benchmark_validation(c: &mut Criterion) {
         ("mixed", "float_exprs"),            // Mix of operations
     ];
 
-    // First, analyze what we're testing
+    // First, analyse what we're testing
     println!("\nModule analysis:");
     for (name, test_name) in &test_cases {
         let wasm_bytes = load_test_module(test_name);

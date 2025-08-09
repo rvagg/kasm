@@ -5,8 +5,10 @@
 
 pub mod decode;
 pub mod encode;
+pub mod streaming_decode;
 
 pub use decode::{DecodeError, InstructionIterator, ParseType};
+pub use streaming_decode::{decode_with_processor, VecCollector};
 
 use super::module::ValueType;
 use fhex::ToHex;
@@ -19,7 +21,9 @@ pub fn decode_constant_expression(
     return_type: ValueType,
 ) -> Result<Vec<Instruction>, DecodeError> {
     let mut validator = super::validate::ConstantExpressionValidator::new(imports, return_type);
-    decode_validate(&mut validator, ParseType::ReadTillEnd, reader)
+    let mut collector = VecCollector::new();
+    decode_with_processor(&mut validator, &mut collector, ParseType::ReadTillEnd, reader)?;
+    Ok(collector.into_instructions())
 }
 
 /// Decode a constant expression that may contain ref.func instructions
@@ -31,7 +35,9 @@ pub fn decode_constant_expression_with_ref_func(
 ) -> Result<Vec<Instruction>, DecodeError> {
     let mut validator =
         super::validate::ConstantExpressionValidator::new(imports, return_type).with_function_count(total_functions);
-    decode_validate(&mut validator, ParseType::ReadTillEnd, reader)
+    let mut collector = VecCollector::new();
+    decode_with_processor(&mut validator, &mut collector, ParseType::ReadTillEnd, reader)?;
+    Ok(collector.into_instructions())
 }
 
 /// Decode a function body
@@ -46,33 +52,9 @@ pub fn decode_function(
         .ok_or(super::validate::ValidationError::UnknownFunctionType)?;
     let ctx = module.validation_context();
     let mut validator = super::validate::CodeValidator::new(module, &ctx, locals, ftype, function_index);
-    decode_validate(&mut validator, ParseType::ReadAll, reader)
-}
-
-/// Internal helper to decode and validate instructions
-fn decode_validate<T: super::validate::Validator>(
-    validator: &mut T,
-    parse_type: ParseType,
-    reader: &mut super::reader::Reader,
-) -> Result<Vec<Instruction>, DecodeError> {
-    let instruction_iter = InstructionIterator::new(reader, parse_type);
-    let mut instructions: Vec<Instruction> = vec![];
-
-    for result in instruction_iter {
-        let instruction = result?;
-
-        validator.validate(&instruction)?;
-
-        instructions.push(instruction);
-
-        if validator.ended() {
-            validator.finalize()?;
-            return Ok(instructions);
-        }
-    }
-
-    validator.finalize()?;
-    Ok(instructions)
+    let mut collector = VecCollector::new();
+    decode_with_processor(&mut validator, &mut collector, ParseType::ReadAll, reader)?;
+    Ok(collector.into_instructions())
 }
 
 /// Memory argument for memory access instructions
@@ -85,7 +67,7 @@ pub struct MemArg {
 }
 
 /// Block type for structured control instructions
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BlockType {
     /// Empty block type (no parameters or results)
     Empty,

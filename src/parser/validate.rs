@@ -84,7 +84,7 @@ pub enum ValidationError {
 pub trait Validator {
     fn validate(&mut self, inst: &Instruction) -> Result<(), ValidationError>;
     fn ended(&mut self) -> bool;
-    fn finalize(&mut self) -> Result<(), ValidationError> {
+    fn finalise(&mut self) -> Result<(), ValidationError> {
         Ok(())
     }
 }
@@ -1274,7 +1274,7 @@ impl Validator for CodeValidator<'_> {
         self.need_end && self.ctrls.is_empty()
     }
 
-    fn finalize(&mut self) -> Result<(), ValidationError> {
+    fn finalise(&mut self) -> Result<(), ValidationError> {
         // After all instructions are processed, check that the stack state
         // matches the expected function return types
         if !self.ctrls.is_empty() {

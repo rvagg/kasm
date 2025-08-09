@@ -1,6 +1,8 @@
 pub mod instruction;
 pub mod module;
 pub mod reader;
+pub mod structure_builder;
+pub mod structured;
 mod validate;
 
 #[cfg(test)]
