@@ -1390,6 +1390,233 @@ impl<'a> Executor<'a> {
             }
 
             // ----------------------------------------------------------------
+            // 4.4.1.3 Numeric Instructions - Binary Operations
+
+            // f32.add
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fadd(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            // Note: NaN propagation is non-deterministic per spec
+            F32Add => {
+                let c2 = self.stack.pop_f32()?;
+                let c1 = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(c1 + c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.sub
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fsub(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            F32Sub => {
+                let c2 = self.stack.pop_f32()?;
+                let c1 = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(c1 - c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.mul
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fmul(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            F32Mul => {
+                let c2 = self.stack.pop_f32()?;
+                let c1 = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(c1 * c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.div
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fdiv(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            // Note: Division by zero returns ±∞ per IEEE 754
+            F32Div => {
+                let c2 = self.stack.pop_f32()?;
+                let c1 = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(c1 / c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.min
+            // From the spec (4.4.1.3 - t.binop):
+            // Returns the minimum of two values
+            // Special cases: -0.0 < +0.0, NaN propagation
+            F32Min => {
+                let c2 = self.stack.pop_f32()?;
+                let c1 = self.stack.pop_f32()?;
+                // WebAssembly spec requires special NaN and -0.0 handling
+                let result = if c1.is_nan() || c2.is_nan() {
+                    f32::NAN
+                } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
+                    // -0.0 is less than +0.0
+                    if c1.is_sign_negative() {
+                        c1
+                    } else {
+                        c2
+                    }
+                } else {
+                    c1.min(c2)
+                };
+                self.stack.push(Value::F32(result));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.max
+            // From the spec (4.4.1.3 - t.binop):
+            // Returns the maximum of two values
+            // Special cases: +0.0 > -0.0, NaN propagation
+            F32Max => {
+                let c2 = self.stack.pop_f32()?;
+                let c1 = self.stack.pop_f32()?;
+                // WebAssembly spec requires special NaN and -0.0 handling
+                let result = if c1.is_nan() || c2.is_nan() {
+                    f32::NAN
+                } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
+                    // +0.0 is greater than -0.0
+                    if c1.is_sign_negative() {
+                        c2
+                    } else {
+                        c1
+                    }
+                } else {
+                    c1.max(c2)
+                };
+                self.stack.push(Value::F32(result));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.copysign
+            // From the spec (4.4.1.3 - t.binop):
+            // Returns c1 with the sign of c2
+            F32Copysign => {
+                let c2 = self.stack.pop_f32()?;
+                let c1 = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(c1.copysign(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.add
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fadd(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            // Note: NaN propagation is non-deterministic per spec
+            F64Add => {
+                let c2 = self.stack.pop_f64()?;
+                let c1 = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(c1 + c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.sub
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fsub(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            F64Sub => {
+                let c2 = self.stack.pop_f64()?;
+                let c1 = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(c1 - c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.mul
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fmul(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            F64Mul => {
+                let c2 = self.stack.pop_f64()?;
+                let c1 = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(c1 * c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.div
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. Compute fdiv(c1, c2) per IEEE 754-2019
+            // 4. Push result to stack
+            // Note: Division by zero returns ±∞ per IEEE 754
+            F64Div => {
+                let c2 = self.stack.pop_f64()?;
+                let c1 = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(c1 / c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.min
+            // From the spec (4.4.1.3 - t.binop):
+            // Returns the minimum of two values
+            // Special cases: -0.0 < +0.0, NaN propagation
+            F64Min => {
+                let c2 = self.stack.pop_f64()?;
+                let c1 = self.stack.pop_f64()?;
+                // WebAssembly spec requires special NaN and -0.0 handling
+                let result = if c1.is_nan() || c2.is_nan() {
+                    f64::NAN
+                } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
+                    // -0.0 is less than +0.0
+                    if c1.is_sign_negative() {
+                        c1
+                    } else {
+                        c2
+                    }
+                } else {
+                    c1.min(c2)
+                };
+                self.stack.push(Value::F64(result));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.max
+            // From the spec (4.4.1.3 - t.binop):
+            // Returns the maximum of two values
+            // Special cases: +0.0 > -0.0, NaN propagation
+            F64Max => {
+                let c2 = self.stack.pop_f64()?;
+                let c1 = self.stack.pop_f64()?;
+                // WebAssembly spec requires special NaN and -0.0 handling
+                let result = if c1.is_nan() || c2.is_nan() {
+                    f64::NAN
+                } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
+                    // +0.0 is greater than -0.0
+                    if c1.is_sign_negative() {
+                        c2
+                    } else {
+                        c1
+                    }
+                } else {
+                    c1.max(c2)
+                };
+                self.stack.push(Value::F64(result));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.copysign
+            // From the spec (4.4.1.3 - t.binop):
+            // Returns c1 with the sign of c2
+            F64Copysign => {
+                let c2 = self.stack.pop_f64()?;
+                let c1 = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(c1.copysign(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
         }
@@ -1473,6 +1700,38 @@ mod tests {
                 .execute_function(&structured_func, self.args, &self.return_types)
                 .expect("Execution should succeed");
             assert_eq!(results, expected);
+        }
+
+        fn run(mut self) -> Result<Executor<'static>, RuntimeError> {
+            self.instructions.push(make_instruction(InstructionKind::End));
+            let module = Box::leak(Box::new(Module::new("test")));
+
+            // Add memory if requested
+            if self.with_memory {
+                use crate::parser::module::{Limits, Memory, MemorySection, SectionPosition};
+                let mem = Memory {
+                    limits: Limits {
+                        min: 1, // 1 page (64KB)
+                        max: None,
+                    },
+                };
+                module.memory = MemorySection {
+                    memory: vec![mem],
+                    position: SectionPosition { start: 0, end: 0 },
+                };
+            }
+
+            // Build structured representation
+            let structured_func = StructureBuilder::build_function(
+                &self.instructions,
+                0, // Most tests don't use locals
+                self.return_types.clone(),
+            )
+            .expect("Structure building should succeed");
+
+            let mut executor = Executor::new(module)?;
+            executor.execute_function(&structured_func, self.args, &self.return_types)?;
+            Ok(executor)
         }
 
         fn expect_error(mut self, error_contains: &str) {
@@ -3782,5 +4041,399 @@ mod tests {
     // Control Flow Tests
     mod control_flow {
         // Tests for block, loop, br, br_if, etc. will go here
+    }
+
+    // Binary Operation Tests
+    mod binary_ops {
+        use super::*;
+        use crate::parser::structured::StructuredInstruction;
+
+        // Helper to create a structured instruction from a regular one
+        fn make_structured(kind: InstructionKind) -> StructuredInstruction {
+            StructuredInstruction::Plain(make_instruction(kind))
+        }
+
+        // f32 addition tests
+        #[test]
+        fn f32_add_normal() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 1.5 })
+                .inst(InstructionKind::F32Const { value: 2.5 })
+                .inst(InstructionKind::F32Add)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(4.0)]);
+        }
+
+        #[test]
+        fn f32_add_inf_inf() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: f32::INFINITY })
+                .inst(InstructionKind::F32Const { value: f32::INFINITY })
+                .inst(InstructionKind::F32Add)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(f32::INFINITY)]);
+        }
+
+        #[test]
+        fn f32_add_inf_neg_inf() {
+            // Create executor directly to have access to stack
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const {
+                value: f32::NEG_INFINITY,
+            }))
+            .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Add))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "inf + -inf should be NaN");
+        }
+
+        #[test]
+        fn f32_add_zero_neg_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 0.0 })
+                .inst(InstructionKind::F32Const { value: -0.0 })
+                .inst(InstructionKind::F32Add)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(0.0)]);
+        }
+
+        #[test]
+        fn f32_add_max_overflow() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: f32::MAX })
+                .inst(InstructionKind::F32Const { value: f32::MAX })
+                .inst(InstructionKind::F32Add)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(f32::INFINITY)]);
+        }
+
+        // f32 subtraction tests
+        #[test]
+        fn f32_sub_normal() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 5.0 })
+                .inst(InstructionKind::F32Const { value: 2.0 })
+                .inst(InstructionKind::F32Sub)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.0)]);
+        }
+
+        #[test]
+        fn f32_sub_inf_inf() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Sub))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "inf - inf should be NaN");
+        }
+
+        #[test]
+        fn f32_sub_zero_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 0.0 })
+                .inst(InstructionKind::F32Const { value: 0.0 })
+                .inst(InstructionKind::F32Sub)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(0.0)]);
+        }
+
+        // f32 multiplication tests
+        #[test]
+        fn f32_mul_normal() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.0 })
+                .inst(InstructionKind::F32Const { value: 4.0 })
+                .inst(InstructionKind::F32Mul)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(12.0)]);
+        }
+
+        #[test]
+        fn f32_mul_inf_zero() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Mul))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "inf * 0 should be NaN");
+        }
+
+        #[test]
+        fn f32_mul_neg_zero() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: -1.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Mul))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert_eq!(result, -0.0);
+            assert!(result.is_sign_negative(), "Result should be -0.0");
+        }
+
+        // f32 division tests
+        #[test]
+        fn f32_div_normal() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 12.0 })
+                .inst(InstructionKind::F32Const { value: 3.0 })
+                .inst(InstructionKind::F32Div)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(4.0)]);
+        }
+
+        #[test]
+        fn f32_div_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 1.0 })
+                .inst(InstructionKind::F32Const { value: 0.0 })
+                .inst(InstructionKind::F32Div)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(f32::INFINITY)]);
+        }
+
+        #[test]
+        fn f32_div_zero_by_zero() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Div))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "0 / 0 should be NaN");
+        }
+
+        #[test]
+        fn f32_div_inf_by_inf() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Div))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "inf / inf should be NaN");
+        }
+
+        // f32 min tests
+        #[test]
+        fn f32_min_normal() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.0 })
+                .inst(InstructionKind::F32Const { value: 5.0 })
+                .inst(InstructionKind::F32Min)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.0)]);
+        }
+
+        #[test]
+        fn f32_min_with_nan() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 3.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::NAN }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Min))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "min with NaN should propagate NaN");
+        }
+
+        #[test]
+        fn f32_min_zeros() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: -0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Min))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert_eq!(result, -0.0);
+            assert!(result.is_sign_negative(), "min(0.0, -0.0) should be -0.0");
+        }
+
+        // f32 max tests
+        #[test]
+        fn f32_max_normal() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.0 })
+                .inst(InstructionKind::F32Const { value: 5.0 })
+                .inst(InstructionKind::F32Max)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(5.0)]);
+        }
+
+        #[test]
+        fn f32_max_with_nan() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 3.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::NAN }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Max))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "max with NaN should propagate NaN");
+        }
+
+        #[test]
+        fn f32_max_zeros() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: -0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Max))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert_eq!(result, 0.0);
+            assert!(!result.is_sign_negative(), "max(0.0, -0.0) should be 0.0");
+        }
+
+        // f32 copysign tests
+        #[test]
+        fn f32_copysign_positive() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: -5.0 })
+                .inst(InstructionKind::F32Const { value: 1.0 })
+                .inst(InstructionKind::F32Copysign)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(5.0)]);
+        }
+
+        #[test]
+        fn f32_copysign_negative() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 5.0 })
+                .inst(InstructionKind::F32Const { value: -1.0 })
+                .inst(InstructionKind::F32Copysign)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(-5.0)]);
+        }
+
+        #[test]
+        fn f32_copysign_nan() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: f32::NAN }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Const { value: -1.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F32Copysign))
+                .unwrap();
+            let result = exec.stack.pop_f32().unwrap();
+            assert!(result.is_nan(), "Result should be NaN");
+            assert!(result.is_sign_negative(), "NaN should have negative sign");
+        }
+
+        // f64 tests (selected edge cases)
+        #[test]
+        fn f64_add_inf_neg_inf() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: f64::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const {
+                value: f64::NEG_INFINITY,
+            }))
+            .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Add))
+                .unwrap();
+            let result = exec.stack.pop_f64().unwrap();
+            assert!(result.is_nan(), "inf + -inf should be NaN");
+        }
+
+        #[test]
+        fn f64_mul_inf_zero() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: f64::INFINITY }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Mul))
+                .unwrap();
+            let result = exec.stack.pop_f64().unwrap();
+            assert!(result.is_nan(), "inf * 0 should be NaN");
+        }
+
+        #[test]
+        fn f64_div_zero_by_zero() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Div))
+                .unwrap();
+            let result = exec.stack.pop_f64().unwrap();
+            assert!(result.is_nan(), "0 / 0 should be NaN");
+        }
+
+        #[test]
+        fn f64_min_zeros() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: -0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Min))
+                .unwrap();
+            let result = exec.stack.pop_f64().unwrap();
+            assert_eq!(result, -0.0);
+            assert!(result.is_sign_negative(), "min(0.0, -0.0) should be -0.0");
+        }
+
+        #[test]
+        fn f64_max_zeros() {
+            let module = Module::new("test");
+            let mut exec = Executor::new(&module).unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: 0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Const { value: -0.0 }))
+                .unwrap();
+            exec.execute_instruction(&make_structured(InstructionKind::F64Max))
+                .unwrap();
+            let result = exec.stack.pop_f64().unwrap();
+            assert_eq!(result, 0.0);
+            assert!(!result.is_sign_negative(), "max(0.0, -0.0) should be 0.0");
+        }
+
+        #[test]
+        fn f64_copysign_inf() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: f64::INFINITY })
+                .inst(InstructionKind::F64Const { value: -1.0 })
+                .inst(InstructionKind::F64Copysign)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(f64::NEG_INFINITY)]);
+        }
     }
 }
