@@ -1151,6 +1151,245 @@ impl<'a> Executor<'a> {
             }
 
             // ----------------------------------------------------------------
+            // 4.4.1 Numeric Instructions - Unary Operations
+
+            // i32.clz - Count leading zeros
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute clz(c1) = count of leading zero bits
+            // 3. Push result to stack
+            I32Clz => {
+                let value = self.stack.pop_i32()?;
+                self.stack.push(Value::I32(value.leading_zeros() as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.ctz - Count trailing zeros
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute ctz(c1) = count of trailing zero bits
+            // 3. Push result to stack
+            I32Ctz => {
+                let value = self.stack.pop_i32()?;
+                self.stack.push(Value::I32(value.trailing_zeros() as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.popcnt - Population count
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute popcnt(c1) = count of non-zero bits
+            // 3. Push result to stack
+            I32Popcnt => {
+                let value = self.stack.pop_i32()?;
+                self.stack.push(Value::I32(value.count_ones() as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.clz - Count leading zeros
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute clz(c1) = count of leading zero bits
+            // 3. Push result to stack
+            I64Clz => {
+                let value = self.stack.pop_i64()?;
+                self.stack.push(Value::I64(value.leading_zeros() as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.ctz - Count trailing zeros
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute ctz(c1) = count of trailing zero bits
+            // 3. Push result to stack
+            I64Ctz => {
+                let value = self.stack.pop_i64()?;
+                self.stack.push(Value::I64(value.trailing_zeros() as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.popcnt - Population count
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute popcnt(c1) = count of non-zero bits
+            // 3. Push result to stack
+            I64Popcnt => {
+                let value = self.stack.pop_i64()?;
+                self.stack.push(Value::I64(value.count_ones() as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.abs - Absolute value
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute abs(c1) = absolute value of c1
+            // 3. Push result to stack
+            // Note: Preserves NaN payload and sign handling per IEEE 754
+            F32Abs => {
+                let value = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(value.abs()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.neg - Negation
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute neg(c1) = negation of c1
+            // 3. Push result to stack
+            // Note: Flips sign bit, including for NaN and infinity
+            F32Neg => {
+                let value = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(-value));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.sqrt - Square root
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute sqrt(c1) per IEEE 754-2019
+            // 3. Push result to stack
+            // Note: Returns NaN for negative inputs
+            F32Sqrt => {
+                let value = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(value.sqrt()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.ceil - Ceiling
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute ceil(c1) = smallest integer >= c1
+            // 3. Push result to stack
+            // Note: Preserves NaN, ±∞, and ±0
+            F32Ceil => {
+                let value = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(value.ceil()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.floor - Floor
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute floor(c1) = largest integer <= c1
+            // 3. Push result to stack
+            // Note: Preserves NaN, ±∞, and ±0
+            F32Floor => {
+                let value = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(value.floor()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.trunc - Truncate
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute trunc(c1) = round toward zero
+            // 3. Push result to stack
+            // Note: Discards fractional part, preserves sign
+            F32Trunc => {
+                let value = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(value.trunc()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.nearest - Round to nearest even
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute nearest(c1) = round to nearest integer
+            // 3. If tie, round to even (banker's rounding)
+            // 4. Push result to stack
+            // Note: Rust's round_ties_even() implements IEEE 754 roundTiesToEven
+            F32Nearest => {
+                let value = self.stack.pop_f32()?;
+                self.stack.push(Value::F32(value.round_ties_even()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.abs - Absolute value
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute abs(c1) = absolute value of c1
+            // 3. Push result to stack
+            // Note: Preserves NaN payload and sign handling per IEEE 754
+            F64Abs => {
+                let value = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(value.abs()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.neg - Negation
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute neg(c1) = negation of c1
+            // 3. Push result to stack
+            // Note: Flips sign bit, including for NaN and infinity
+            F64Neg => {
+                let value = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(-value));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.sqrt - Square root
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute sqrt(c1) per IEEE 754-2019
+            // 3. Push result to stack
+            // Note: Returns NaN for negative inputs
+            F64Sqrt => {
+                let value = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(value.sqrt()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.ceil - Ceiling
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute ceil(c1) = smallest integer >= c1
+            // 3. Push result to stack
+            // Note: Preserves NaN, ±∞, and ±0
+            F64Ceil => {
+                let value = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(value.ceil()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.floor - Floor
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute floor(c1) = largest integer <= c1
+            // 3. Push result to stack
+            // Note: Preserves NaN, ±∞, and ±0
+            F64Floor => {
+                let value = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(value.floor()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.trunc - Truncate
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute trunc(c1) = round toward zero
+            // 3. Push result to stack
+            // Note: Discards fractional part, preserves sign
+            F64Trunc => {
+                let value = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(value.trunc()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.nearest - Round to nearest even
+            // From the spec (4.4.1.2 - t.unop):
+            // 1. Pop value c1 from stack
+            // 2. Compute nearest(c1) = round to nearest integer
+            // 3. If tie, round to even (banker's rounding)
+            // 4. Push result to stack
+            // Note: Rust's round_ties_even() implements IEEE 754 roundTiesToEven
+            F64Nearest => {
+                let value = self.stack.pop_f64()?;
+                self.stack.push(Value::F64(value.round_ties_even()));
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
         }
@@ -1357,6 +1596,279 @@ mod tests {
 
     // ============================================================================
     // Parametric Instruction Tests
+    // ============================================================================
+    mod unary_operations {
+        use super::*;
+
+        // i32 unary operations
+        #[test]
+        fn i32_clz() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0x0F000000 })
+                .inst(InstructionKind::I32Clz)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(4)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32Clz)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(32)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -1 })
+                .inst(InstructionKind::I32Clz)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(0)]);
+        }
+
+        #[test]
+        fn i32_ctz() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0x00008000 })
+                .inst(InstructionKind::I32Ctz)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(15)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32Ctz)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(32)]);
+        }
+
+        #[test]
+        fn i32_popcnt() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0x55555555 })
+                .inst(InstructionKind::I32Popcnt)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(16)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32Popcnt)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(0)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -1 })
+                .inst(InstructionKind::I32Popcnt)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(32)]);
+        }
+
+        // i64 unary operations
+        #[test]
+        fn i64_clz() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const {
+                    value: 0x0F00000000000000,
+                })
+                .inst(InstructionKind::I64Clz)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(4)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: 0 })
+                .inst(InstructionKind::I64Clz)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(64)]);
+        }
+
+        #[test]
+        fn i64_ctz() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const {
+                    value: 0x8000000000000000u64 as i64,
+                })
+                .inst(InstructionKind::I64Ctz)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(63)]);
+        }
+
+        #[test]
+        fn i64_popcnt() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const {
+                    value: 0x5555555555555555,
+                })
+                .inst(InstructionKind::I64Popcnt)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(32)]);
+        }
+
+        // f32 unary operations
+        #[test]
+        fn f32_abs() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: -3.14 })
+                .inst(InstructionKind::F32Abs)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.14)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.14 })
+                .inst(InstructionKind::F32Abs)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.14)]);
+        }
+
+        #[test]
+        fn f32_neg() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.14 })
+                .inst(InstructionKind::F32Neg)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(-3.14)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: -3.14 })
+                .inst(InstructionKind::F32Neg)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.14)]);
+        }
+
+        #[test]
+        fn f32_sqrt() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 4.0 })
+                .inst(InstructionKind::F32Sqrt)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(2.0)]);
+        }
+
+        #[test]
+        fn f32_ceil() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.3 })
+                .inst(InstructionKind::F32Ceil)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(4.0)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: -3.3 })
+                .inst(InstructionKind::F32Ceil)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(-3.0)]);
+        }
+
+        #[test]
+        fn f32_floor() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.7 })
+                .inst(InstructionKind::F32Floor)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.0)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: -3.7 })
+                .inst(InstructionKind::F32Floor)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(-4.0)]);
+        }
+
+        #[test]
+        fn f32_trunc() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.7 })
+                .inst(InstructionKind::F32Trunc)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.0)]);
+
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: -3.7 })
+                .inst(InstructionKind::F32Trunc)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(-3.0)]);
+        }
+
+        #[test]
+        fn f32_nearest() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.5 })
+                .inst(InstructionKind::F32Nearest)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(4.0)]); // Round to even
+
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 2.5 })
+                .inst(InstructionKind::F32Nearest)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(2.0)]); // Round to even
+
+            ExecutorTest::new()
+                .inst(InstructionKind::F32Const { value: 3.3 })
+                .inst(InstructionKind::F32Nearest)
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.0)]);
+        }
+
+        // f64 unary operations
+        #[test]
+        fn f64_abs() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: -3.14159 })
+                .inst(InstructionKind::F64Abs)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(3.14159)]);
+        }
+
+        #[test]
+        fn f64_neg() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: 3.14159 })
+                .inst(InstructionKind::F64Neg)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(-3.14159)]);
+        }
+
+        #[test]
+        fn f64_sqrt() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: 9.0 })
+                .inst(InstructionKind::F64Sqrt)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(3.0)]);
+        }
+
+        #[test]
+        fn f64_ceil() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: 3.3 })
+                .inst(InstructionKind::F64Ceil)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(4.0)]);
+        }
+
+        #[test]
+        fn f64_floor() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: 3.7 })
+                .inst(InstructionKind::F64Floor)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(3.0)]);
+        }
+
+        #[test]
+        fn f64_trunc() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: -3.7 })
+                .inst(InstructionKind::F64Trunc)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(-3.0)]);
+        }
+
+        #[test]
+        fn f64_nearest() {
+            ExecutorTest::new()
+                .inst(InstructionKind::F64Const { value: 4.5 })
+                .inst(InstructionKind::F64Nearest)
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(4.0)]); // Round to even
+        }
+    }
+
     // ============================================================================
     mod parametric {
         use super::*;

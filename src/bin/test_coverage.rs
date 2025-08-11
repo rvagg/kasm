@@ -201,6 +201,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("i64.store8".to_string());
     implemented.insert("i64.store16".to_string());
     implemented.insert("i64.store32".to_string());
+    // Unary operations
+    implemented.insert("i32.clz".to_string());
+    implemented.insert("i32.ctz".to_string());
+    implemented.insert("i32.popcnt".to_string());
+    implemented.insert("i64.clz".to_string());
+    implemented.insert("i64.ctz".to_string());
+    implemented.insert("i64.popcnt".to_string());
+    implemented.insert("f32.abs".to_string());
+    implemented.insert("f32.neg".to_string());
+    implemented.insert("f32.sqrt".to_string());
+    implemented.insert("f32.ceil".to_string());
+    implemented.insert("f32.floor".to_string());
+    implemented.insert("f32.trunc".to_string());
+    implemented.insert("f32.nearest".to_string());
+    implemented.insert("f64.abs".to_string());
+    implemented.insert("f64.neg".to_string());
+    implemented.insert("f64.sqrt".to_string());
+    implemented.insert("f64.ceil".to_string());
+    implemented.insert("f64.floor".to_string());
+    implemented.insert("f64.trunc".to_string());
+    implemented.insert("f64.nearest".to_string());
 
     let args: Vec<String> = std::env::args().collect();
 
