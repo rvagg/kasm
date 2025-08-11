@@ -627,6 +627,529 @@ impl<'a> Executor<'a> {
                 Ok(BlockEnd::Normal)
             }
 
+            // i64.load
+            // From the spec (4.4.7.1):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of type i32 is on the top of the stack.
+            // 7. Pop the value i32.const i from the stack.
+            // 8. Let ea be the integer i + offset.
+            // 9. If ea + 8 is larger than the length of mem.data, then trap.
+            // 10. Let b* be the byte sequence mem.data[ea:ea+8].
+            // 11. Let c be the integer for which bytes_i64(c) = b*.
+            // 12. Push the value i64.const c to the stack.
+            I64Load { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_i64(ea as u32)?;
+                self.stack.push(Value::I64(value));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.store
+            // From the spec (4.4.7.1):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of type i64 is on the top of the stack.
+            // 7. Pop the value i64.const c from the stack.
+            // 8. Assert: due to validation, a value of type i32 is on the top of the stack.
+            // 9. Pop the value i32.const i from the stack.
+            // 10. Let ea be the integer i + offset.
+            // 11. If ea + 8 is larger than the length of mem.data, then trap.
+            // 12. Let b* be the byte sequence bytes_i64(c).
+            // 13. Replace the bytes mem.data[ea:ea+8] with b*.
+            I64Store { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_i64()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_i64(ea as u32, value)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.load
+            // From the spec (4.4.7.1):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of type i32 is on the top of the stack.
+            // 7. Pop the value i32.const i from the stack.
+            // 8. Let ea be the integer i + offset.
+            // 9. If ea + 4 is larger than the length of mem.data, then trap.
+            // 10. Let b* be the byte sequence mem.data[ea:ea+4].
+            // 11. Let c be the float for which bytes_f32(c) = b*.
+            // 12. Push the value f32.const c to the stack.
+            F32Load { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_f32(ea as u32)?;
+                self.stack.push(Value::F32(value));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32.store
+            // From the spec (4.4.7.1):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of type f32 is on the top of the stack.
+            // 7. Pop the value f32.const c from the stack.
+            // 8. Assert: due to validation, a value of type i32 is on the top of the stack.
+            // 9. Pop the value i32.const i from the stack.
+            // 10. Let ea be the integer i + offset.
+            // 11. If ea + 4 is larger than the length of mem.data, then trap.
+            // 12. Let b* be the byte sequence bytes_f32(c).
+            // 13. Replace the bytes mem.data[ea:ea+4] with b*.
+            F32Store { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_f32()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_f32(ea as u32, value)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.load
+            // From the spec (4.4.7.1):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of type i32 is on the top of the stack.
+            // 7. Pop the value i32.const i from the stack.
+            // 8. Let ea be the integer i + offset.
+            // 9. If ea + 8 is larger than the length of mem.data, then trap.
+            // 10. Let b* be the byte sequence mem.data[ea:ea+8].
+            // 11. Let c be the float for which bytes_f64(c) = b*.
+            // 12. Push the value f64.const c to the stack.
+            F64Load { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_f64(ea as u32)?;
+                self.stack.push(Value::F64(value));
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64.store
+            // From the spec (4.4.7.1):
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.memaddrs[0] exists.
+            // 3. Let a be the memory address F.module.memaddrs[0].
+            // 4. Assert: due to validation, S.mems[a] exists.
+            // 5. Let mem be the memory instance S.mems[a].
+            // 6. Assert: due to validation, a value of type f64 is on the top of the stack.
+            // 7. Pop the value f64.const c from the stack.
+            // 8. Assert: due to validation, a value of type i32 is on the top of the stack.
+            // 9. Pop the value i32.const i from the stack.
+            // 10. Let ea be the integer i + offset.
+            // 11. If ea + 8 is larger than the length of mem.data, then trap.
+            // 12. Let b* be the byte sequence bytes_f64(c).
+            // 13. Replace the bytes mem.data[ea:ea+8] with b*.
+            F64Store { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_f64()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_f64(ea as u32, value)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
+            // 4.4.7 Memory Instructions - Sized Loads
+
+            // i32.load8_u
+            // From the spec (4.4.7.1):
+            // Load 1 byte and zero-extend to i32
+            I32Load8U { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_u8(ea as u32)?;
+                self.stack.push(Value::I32(value as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.load8_s
+            // Load 1 byte and sign-extend to i32
+            I32Load8S { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_i8(ea as u32)?;
+                self.stack.push(Value::I32(value as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.load16_u
+            // Load 2 bytes and zero-extend to i32
+            I32Load16U { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_u16(ea as u32)?;
+                self.stack.push(Value::I32(value as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.load16_s
+            // Load 2 bytes and sign-extend to i32
+            I32Load16S { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_i16(ea as u32)?;
+                self.stack.push(Value::I32(value as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.load8_u
+            // Load 1 byte and zero-extend to i64
+            I64Load8U { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_u8(ea as u32)?;
+                self.stack.push(Value::I64(value as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.load8_s
+            // Load 1 byte and sign-extend to i64
+            I64Load8S { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_i8(ea as u32)?;
+                self.stack.push(Value::I64(value as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.load16_u
+            // Load 2 bytes and zero-extend to i64
+            I64Load16U { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_u16(ea as u32)?;
+                self.stack.push(Value::I64(value as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.load16_s
+            // Load 2 bytes and sign-extend to i64
+            I64Load16S { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_i16(ea as u32)?;
+                self.stack.push(Value::I64(value as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.load32_u
+            // Load 4 bytes and zero-extend to i64
+            I64Load32U { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_u32(ea as u32)?;
+                self.stack.push(Value::I64(value as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.load32_s
+            // Load 4 bytes and sign-extend to i64
+            I64Load32S { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                let value = self.memories[0].read_i32(ea as u32)?;
+                self.stack.push(Value::I64(value as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
+            // 4.4.7 Memory Instructions - Sized Stores
+
+            // i32.store8
+            // Store lowest 8 bits of i32
+            I32Store8 { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_i32()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_u8(ea as u32, value as u8)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.store16
+            // Store lowest 16 bits of i32
+            I32Store16 { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_i32()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_u16(ea as u32, value as u16)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.store8
+            // Store lowest 8 bits of i64
+            I64Store8 { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_i64()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_u8(ea as u32, value as u8)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.store16
+            // Store lowest 16 bits of i64
+            I64Store16 { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_i64()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_u16(ea as u32, value as u16)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.store32
+            // Store lowest 32 bits of i64
+            I64Store32 { memarg } => {
+                if self.memories.is_empty() {
+                    return Err(RuntimeError::MemoryError("No memory instance available".to_string()));
+                }
+
+                let value = self.stack.pop_i64()?;
+                let addr = self.stack.pop_i32()?;
+                let ea = (addr as u64)
+                    .checked_add(memarg.offset as u64)
+                    .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+
+                if ea > u32::MAX as u64 {
+                    return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+                }
+
+                self.memories[0].write_u32(ea as u32, value as u32)?;
+                Ok(BlockEnd::Normal)
+            }
+
             // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
@@ -646,6 +1169,7 @@ mod tests {
         instructions: Vec<Instruction>,
         args: Vec<Value>,
         return_types: Vec<ValueType>,
+        with_memory: bool,
     }
 
     impl ExecutorTest {
@@ -654,7 +1178,13 @@ mod tests {
                 instructions: Vec::new(),
                 args: Vec::new(),
                 return_types: Vec::new(),
+                with_memory: false,
             }
+        }
+
+        fn with_memory(mut self) -> Self {
+            self.with_memory = true;
+            self
         }
 
         fn inst(mut self, kind: InstructionKind) -> Self {
@@ -674,7 +1204,22 @@ mod tests {
 
         fn expect_stack(mut self, expected: Vec<Value>) {
             self.instructions.push(make_instruction(InstructionKind::End));
-            let module = Module::new("test");
+            let mut module = Module::new("test");
+
+            // Add memory if requested
+            if self.with_memory {
+                use crate::parser::module::{Limits, Memory, MemorySection, SectionPosition};
+                let mem = Memory {
+                    limits: Limits {
+                        min: 1, // 1 page (64KB)
+                        max: None,
+                    },
+                };
+                module.memory = MemorySection {
+                    memory: vec![mem],
+                    position: SectionPosition { start: 0, end: 0 },
+                };
+            }
 
             // Build structured representation
             let structured_func = StructureBuilder::build_function(
@@ -693,7 +1238,22 @@ mod tests {
 
         fn expect_error(mut self, error_contains: &str) {
             self.instructions.push(make_instruction(InstructionKind::End));
-            let module = Module::new("test");
+            let mut module = Module::new("test");
+
+            // Add memory if requested
+            if self.with_memory {
+                use crate::parser::module::{Limits, Memory, MemorySection, SectionPosition};
+                let mem = Memory {
+                    limits: Limits {
+                        min: 1, // 1 page (64KB)
+                        max: None,
+                    },
+                };
+                module.memory = MemorySection {
+                    memory: vec![mem],
+                    position: SectionPosition { start: 0, end: 0 },
+                };
+            }
 
             // Build structured representation
             let structured_func = StructureBuilder::build_function(
@@ -1857,7 +2417,7 @@ mod tests {
     // Memory Tests
     mod memory {
         use super::*;
-        use crate::parser::instruction::MemArg;
+        use crate::parser::instruction::{InstructionKind::*, MemArg};
         use crate::parser::module::{Limits, Memory as MemoryDef};
         use crate::runtime::memory::PAGE_SIZE;
 
@@ -2387,6 +2947,239 @@ mod tests {
                 .unwrap();
 
             assert_eq!(result, vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn i64_load_store() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 8 }) // address
+                .inst(I64Const {
+                    value: 0x123456789ABCDEF0,
+                }) // value
+                .inst(I64Store {
+                    memarg: MemArg { offset: 0, align: 3 },
+                })
+                .inst(I32Const { value: 8 }) // address
+                .inst(I64Load {
+                    memarg: MemArg { offset: 0, align: 3 },
+                })
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(0x123456789ABCDEF0)]);
+        }
+
+        #[test]
+        fn f32_load_store() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 16 }) // address
+                .inst(F32Const { value: 3.14159 }) // value
+                .inst(F32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .inst(I32Const { value: 16 }) // address
+                .inst(F32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .returns(vec![ValueType::F32])
+                .expect_stack(vec![Value::F32(3.14159)]);
+        }
+
+        #[test]
+        fn f64_load_store() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 24 }) // address
+                .inst(F64Const {
+                    value: 2.718281828459045,
+                }) // value
+                .inst(F64Store {
+                    memarg: MemArg { offset: 0, align: 3 },
+                })
+                .inst(I32Const { value: 24 }) // address
+                .inst(F64Load {
+                    memarg: MemArg { offset: 0, align: 3 },
+                })
+                .returns(vec![ValueType::F64])
+                .expect_stack(vec![Value::F64(2.718281828459045)]);
+        }
+
+        #[test]
+        fn i64_load_with_offset() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 0 }) // address
+                .inst(I64Const { value: i64::MAX }) // value
+                .inst(I64Store {
+                    memarg: MemArg { offset: 100, align: 3 },
+                })
+                .inst(I32Const { value: 0 }) // address
+                .inst(I64Load {
+                    memarg: MemArg { offset: 100, align: 3 },
+                })
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(i64::MAX)]);
+        }
+
+        #[test]
+        fn f32_store_multiple() {
+            ExecutorTest::new()
+                .with_memory()
+                // Store multiple f32 values
+                .inst(I32Const { value: 0 })
+                .inst(F32Const { value: 1.0 })
+                .inst(F32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .inst(I32Const { value: 4 })
+                .inst(F32Const { value: 2.0 })
+                .inst(F32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .inst(I32Const { value: 8 })
+                .inst(F32Const { value: 3.0 })
+                .inst(F32Store {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                // Load them back
+                .inst(I32Const { value: 0 })
+                .inst(F32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .inst(I32Const { value: 4 })
+                .inst(F32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .inst(I32Const { value: 8 })
+                .inst(F32Load {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .returns(vec![ValueType::F32, ValueType::F32, ValueType::F32])
+                .expect_stack(vec![Value::F32(1.0), Value::F32(2.0), Value::F32(3.0)]);
+        }
+
+        #[test]
+        fn f64_bounds_check() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 65536 - 4 }) // Near end of single page
+                .inst(F64Const { value: 1.0 })
+                .inst(F64Store {
+                    memarg: MemArg { offset: 0, align: 3 },
+                })
+                .expect_error("Out of bounds");
+        }
+
+        #[test]
+        fn i64_no_memory() {
+            ExecutorTest::new()
+                .inst(I32Const { value: 0 })
+                .inst(I64Load {
+                    memarg: MemArg { offset: 0, align: 3 },
+                })
+                .expect_error("No memory instance");
+        }
+
+        #[test]
+        fn i32_load8_u() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 0 })
+                .inst(I32Const { value: 0xFF }) // 255
+                .inst(I32Store8 {
+                    memarg: MemArg { offset: 0, align: 0 },
+                })
+                .inst(I32Const { value: 0 })
+                .inst(I32Load8U {
+                    memarg: MemArg { offset: 0, align: 0 },
+                })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(255)]);
+        }
+
+        #[test]
+        fn i32_load8_s() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 0 })
+                .inst(I32Const { value: 0xFF }) // -1 when sign-extended
+                .inst(I32Store8 {
+                    memarg: MemArg { offset: 0, align: 0 },
+                })
+                .inst(I32Const { value: 0 })
+                .inst(I32Load8S {
+                    memarg: MemArg { offset: 0, align: 0 },
+                })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(-1)]);
+        }
+
+        #[test]
+        fn i32_load16_u() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 0 })
+                .inst(I32Const { value: 0xFFFF }) // 65535
+                .inst(I32Store16 {
+                    memarg: MemArg { offset: 0, align: 1 },
+                })
+                .inst(I32Const { value: 0 })
+                .inst(I32Load16U {
+                    memarg: MemArg { offset: 0, align: 1 },
+                })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(65535)]);
+        }
+
+        #[test]
+        fn i32_load16_s() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 0 })
+                .inst(I32Const { value: 0xFFFF }) // -1 when sign-extended
+                .inst(I32Store16 {
+                    memarg: MemArg { offset: 0, align: 1 },
+                })
+                .inst(I32Const { value: 0 })
+                .inst(I32Load16S {
+                    memarg: MemArg { offset: 0, align: 1 },
+                })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(-1)]);
+        }
+
+        #[test]
+        fn i64_load8_u() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 0 })
+                .inst(I64Const { value: 0xFF }) // 255
+                .inst(I64Store8 {
+                    memarg: MemArg { offset: 0, align: 0 },
+                })
+                .inst(I32Const { value: 0 })
+                .inst(I64Load8U {
+                    memarg: MemArg { offset: 0, align: 0 },
+                })
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(255)]);
+        }
+
+        #[test]
+        fn i64_load32_s() {
+            ExecutorTest::new()
+                .with_memory()
+                .inst(I32Const { value: 0 })
+                .inst(I64Const { value: 0xFFFFFFFF }) // -1 when sign-extended from 32-bit
+                .inst(I64Store32 {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .inst(I32Const { value: 0 })
+                .inst(I64Load32S {
+                    memarg: MemArg { offset: 0, align: 2 },
+                })
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(-1)]);
         }
     }
 

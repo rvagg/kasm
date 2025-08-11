@@ -177,8 +177,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("br_table".to_string());
     implemented.insert("memory.size".to_string());
     implemented.insert("memory.grow".to_string());
+    // Memory load/store operations
     implemented.insert("i32.load".to_string());
+    implemented.insert("i64.load".to_string());
+    implemented.insert("f32.load".to_string());
+    implemented.insert("f64.load".to_string());
+    implemented.insert("i32.load8_s".to_string());
+    implemented.insert("i32.load8_u".to_string());
+    implemented.insert("i32.load16_s".to_string());
+    implemented.insert("i32.load16_u".to_string());
+    implemented.insert("i64.load8_s".to_string());
+    implemented.insert("i64.load8_u".to_string());
+    implemented.insert("i64.load16_s".to_string());
+    implemented.insert("i64.load16_u".to_string());
+    implemented.insert("i64.load32_s".to_string());
+    implemented.insert("i64.load32_u".to_string());
     implemented.insert("i32.store".to_string());
+    implemented.insert("i64.store".to_string());
+    implemented.insert("f32.store".to_string());
+    implemented.insert("f64.store".to_string());
+    implemented.insert("i32.store8".to_string());
+    implemented.insert("i32.store16".to_string());
+    implemented.insert("i64.store8".to_string());
+    implemented.insert("i64.store16".to_string());
+    implemented.insert("i64.store32".to_string());
 
     let args: Vec<String> = std::env::args().collect();
 
