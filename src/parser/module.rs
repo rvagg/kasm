@@ -1254,7 +1254,8 @@ impl CodeSection {
             });
 
             let mut indent: usize = 0;
-            function_body.instructions.iter().for_each(|instruction| {
+            let instructions = function_body.body.flatten();
+            instructions.iter().for_each(|instruction| {
                 // Get the InstructionKind directly
                 let inst_kind = &instruction.kind;
 
@@ -1661,10 +1662,8 @@ impl Locals {
 #[derive(Debug)]
 pub struct FunctionBody {
     pub locals: Locals,
-		// TODO: this should use a StructuredFunction rather than a list of
-		// instructions to avoid having to re-process them into a
-		// StructuredFunction later on when we need it.
-    pub instructions: Vec<instruction::Instruction>,
+    // Structured representation - avoids re-processing during execution
+    pub body: crate::parser::structured::StructuredFunction,
     pub position: SectionPosition, // sub-section position
 }
 
@@ -2144,7 +2143,8 @@ impl fmt::Display for FunctionBody {
         write!(f, "0x{}", hex_string).unwrap();
          */
         write!(f, " instructions = ").unwrap();
-        for instruction in &self.instructions {
+        let instructions = self.body.flatten();
+        for instruction in &instructions {
             write!(f, "{instruction} ")?;
         }
         Ok(())

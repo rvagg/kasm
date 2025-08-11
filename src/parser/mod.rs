@@ -493,26 +493,27 @@ fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) ->
             return Err(io::Error::new(io::ErrorKind::InvalidData, "too many locals").into());
         }
 
-        let instructions =
-            instruction::decode_function(bytes, module, &locals, module.code.len() as u32).map_err(|err| {
-                if bytes.pos() > end_pos {
-                    io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
-                } else if ii == count - 1 && bytes.pos() == end_pos {
-                    match err {
-                        instruction::DecodeError::Validation(_) => err,
-                        _ => io::Error::new(io::ErrorKind::InvalidData, "unexpected end of section or function").into(),
-                    }
-                } else {
-                    err
+        // Directly decode to structured representation without buffering
+        let body = instruction::decode_function(bytes, module, &locals, module.code.len() as u32).map_err(|err| {
+            if bytes.pos() > end_pos {
+                io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
+            } else if ii == count - 1 && bytes.pos() == end_pos {
+                match err {
+                    instruction::DecodeError::Validation(_) => err,
+                    _ => io::Error::new(io::ErrorKind::InvalidData, "unexpected end of section or function").into(),
                 }
-            })?;
+            } else {
+                err
+            }
+        })?;
+
         if bytes.pos() < end_pos {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected end of section or function").into());
         }
+
         let function_body = module::FunctionBody {
             locals,
-            // body: body,
-            instructions,
+            body,
             position: module::SectionPosition {
                 start: start_pos as u32,
                 end: (start_pos + size) as u32,

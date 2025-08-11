@@ -280,7 +280,8 @@ mod tests {
                     if let Some(body) = module.code.code.get(func_idx as usize) {
                         let mut skip_reason = None;
 
-                        for instruction in &body.instructions {
+                        let instructions = body.body.flatten();
+                        for instruction in &instructions {
                             match &instruction.kind {
                                 // Implemented instructions
                                 InstructionKind::I32Const { .. }
@@ -923,7 +924,12 @@ mod tests {
         // Add corresponding empty code section for the function
         module.code.code.push(kasm::parser::module::FunctionBody {
             locals: kasm::parser::module::Locals::new(vec![]),
-            instructions: vec![],
+            body: kasm::parser::structured::StructuredFunction {
+                body: vec![],
+                local_count: 0,
+                return_types: vec![],
+                end_instruction: None,
+            },
             position: kasm::parser::module::SectionPosition { start: 0, end: 0 },
         });
         let funcidx = (module.functions.functions.len() - 1) as u32;

@@ -8,7 +8,7 @@ pub mod encode;
 pub mod streaming_decode;
 
 pub use decode::{DecodeError, InstructionIterator, ParseType};
-pub use streaming_decode::{decode_with_processor, VecCollector};
+pub use streaming_decode::{decode_function, decode_with_processor, VecCollector};
 
 use super::module::ValueType;
 use fhex::ToHex;
@@ -37,23 +37,6 @@ pub fn decode_constant_expression_with_ref_func(
         super::validate::ConstantExpressionValidator::new(imports, return_type).with_function_count(total_functions);
     let mut collector = VecCollector::new();
     decode_with_processor(&mut validator, &mut collector, ParseType::ReadTillEnd, reader)?;
-    Ok(collector.into_instructions())
-}
-
-/// Decode a function body
-pub fn decode_function(
-    reader: &mut super::reader::Reader,
-    module: &super::module::Module,
-    locals: &super::module::Locals,
-    function_index: u32,
-) -> Result<Vec<Instruction>, DecodeError> {
-    let ftype = module
-        .get_function_type(function_index)
-        .ok_or(super::validate::ValidationError::UnknownFunctionType)?;
-    let ctx = module.validation_context();
-    let mut validator = super::validate::CodeValidator::new(module, &ctx, locals, ftype, function_index);
-    let mut collector = VecCollector::new();
-    decode_with_processor(&mut validator, &mut collector, ParseType::ReadAll, reader)?;
     Ok(collector.into_instructions())
 }
 

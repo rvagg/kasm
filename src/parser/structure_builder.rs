@@ -69,6 +69,8 @@ pub struct StructureBuilder {
     local_count: usize,
     /// Return types for the function
     return_types: Vec<ValueType>,
+    /// The final end instruction (if encountered)
+    end_instruction: Option<Instruction>,
 }
 
 impl StructureBuilder {
@@ -80,6 +82,7 @@ impl StructureBuilder {
             }],
             local_count,
             return_types,
+            end_instruction: None,
         }
     }
 
@@ -228,7 +231,8 @@ impl StructureBuilder {
                     },
 
                     Some(BlockContext::Function { instructions }) => {
-                        // End of function - push back and return
+                        // End of function - store the end instruction and push back
+                        self.end_instruction = Some(instruction.clone());
                         self.block_stack.push(BlockContext::Function { instructions });
                         return Ok(());
                     }
@@ -286,6 +290,7 @@ impl StructureBuilder {
                 body: instructions,
                 local_count: self.local_count,
                 return_types: self.return_types,
+                end_instruction: self.end_instruction,
             }),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,

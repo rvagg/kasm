@@ -122,7 +122,8 @@ fn get_function_instructions(module: &Module, func_name: &str) -> Vec<String> {
         if export.name == func_name {
             if let parser::module::ExportIndex::Function(idx) = export.index {
                 if let Some(body) = module.code.code.get(idx as usize) {
-                    for inst in &body.instructions {
+                    let flat_instructions = body.body.flatten();
+                    for inst in &flat_instructions {
                         instructions.push(inst.kind.mnemonic().to_string());
                     }
                 }

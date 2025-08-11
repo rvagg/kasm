@@ -104,9 +104,8 @@ pub fn decode_with_processor<T: Validator, P: InstructionProcessor>(
     Ok(())
 }
 
-/// Decode a function directly to structured representation (no intermediate Vec)
-#[allow(dead_code)]
-pub fn decode_function_structured(
+/// Decode a function body into structured representation
+pub fn decode_function(
     reader: &mut super::super::reader::Reader,
     module: &Module,
     locals: &Locals,
@@ -148,7 +147,12 @@ mod tests {
         // Add empty code for the function
         module.code.code.push(crate::parser::module::FunctionBody {
             locals: crate::parser::module::Locals::new(vec![]),
-            instructions: vec![],
+            body: crate::parser::structured::StructuredFunction {
+                body: vec![],
+                local_count: 0,
+                return_types: vec![],
+                end_instruction: None,
+            },
             position: crate::parser::module::SectionPosition { start: 0, end: 0 },
         });
         module
@@ -165,7 +169,7 @@ mod tests {
         let locals = crate::parser::module::Locals::new(vec![]);
 
         // Decode to structured function directly
-        let result = decode_function_structured(&mut reader, &module, &locals, 0);
+        let result = decode_function(&mut reader, &module, &locals, 0);
 
         if let Err(e) = &result {
             eprintln!("Decode error: {:?}", e);
