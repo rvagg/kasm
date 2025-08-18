@@ -37,4 +37,8 @@ pub enum RuntimeError {
     InvalidLabel(u32),
     #[error("Memory error: {0}")]
     MemoryError(String),
+    #[error("Division by zero")]
+    DivisionByZero,
+    #[error("Integer overflow")]
+    IntegerOverflow,
 }

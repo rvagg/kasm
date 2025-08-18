@@ -222,7 +222,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("f64.floor".to_string());
     implemented.insert("f64.trunc".to_string());
     implemented.insert("f64.nearest".to_string());
-    // Binary operations
+    // Binary operations - floating point
     implemented.insert("f32.add".to_string());
     implemented.insert("f32.sub".to_string());
     implemented.insert("f32.mul".to_string());
@@ -237,6 +237,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("f64.min".to_string());
     implemented.insert("f64.max".to_string());
     implemented.insert("f64.copysign".to_string());
+    // Binary operations - integers
+    implemented.insert("i32.add".to_string());
+    implemented.insert("i32.sub".to_string());
+    implemented.insert("i32.mul".to_string());
+    implemented.insert("i32.div_s".to_string());
+    implemented.insert("i32.div_u".to_string());
+    implemented.insert("i32.rem_s".to_string());
+    implemented.insert("i32.rem_u".to_string());
+    implemented.insert("i64.add".to_string());
+    implemented.insert("i64.sub".to_string());
+    implemented.insert("i64.mul".to_string());
+    implemented.insert("i64.div_s".to_string());
+    implemented.insert("i64.div_u".to_string());
+    implemented.insert("i64.rem_s".to_string());
+    implemented.insert("i64.rem_u".to_string());
 
     let args: Vec<String> = std::env::args().collect();
 

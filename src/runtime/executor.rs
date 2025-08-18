@@ -1616,6 +1616,280 @@ impl<'a> Executor<'a> {
                 Ok(BlockEnd::Normal)
             }
 
+            // i32.add
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i32, trap
+            // 4. Compute c1 + c2 modulo 2^32
+            // 5. Push result to stack
+            I32Add => {
+                let c2 = self.stack.pop_i32()?;
+                let c1 = self.stack.pop_i32()?;
+                self.stack.push(Value::I32(c1.wrapping_add(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.sub
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i32, trap
+            // 4. Compute c1 - c2 modulo 2^32
+            // 5. Push result to stack
+            I32Sub => {
+                let c2 = self.stack.pop_i32()?;
+                let c1 = self.stack.pop_i32()?;
+                self.stack.push(Value::I32(c1.wrapping_sub(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.mul
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i32, trap
+            // 4. Compute c1 * c2 modulo 2^32
+            // 5. Push result to stack
+            I32Mul => {
+                let c2 = self.stack.pop_i32()?;
+                let c1 = self.stack.pop_i32()?;
+                self.stack.push(Value::I32(c1.wrapping_mul(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.div_s
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i32, trap
+            // 4. If c2 is 0, trap
+            // 5. If c1 is INT32_MIN and c2 is -1, trap (result 2^31 doesn't fit in i32)
+            // 6. Compute signed division, truncating toward zero
+            // 7. Push result to stack
+            I32DivS => {
+                let c2 = self.stack.pop_i32()?;
+                let c1 = self.stack.pop_i32()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Check for overflow: i32::MIN / -1
+                if c1 == i32::MIN && c2 == -1 {
+                    return Err(RuntimeError::IntegerOverflow);
+                }
+                self.stack.push(Value::I32(c1 / c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.div_u
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i32, trap
+            // 4. If c2 is 0, trap
+            // 5. Compute unsigned division
+            // 6. Push result to stack
+            I32DivU => {
+                let c2 = self.stack.pop_i32()?;
+                let c1 = self.stack.pop_i32()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Interpret as unsigned for division
+                let u1 = c1 as u32;
+                let u2 = c2 as u32;
+                self.stack.push(Value::I32((u1 / u2) as i32));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.rem_s
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i32, trap
+            // 4. If c2 is 0, trap
+            // 5. Compute signed remainder
+            // 6. Push result to stack
+            // Note: any integer % ±1 = 0 mathematically
+            I32RemS => {
+                let c2 = self.stack.pop_i32()?;
+                let c1 = self.stack.pop_i32()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Mathematical fact: any integer % ±1 = 0
+                // Special handling for i32::MIN % -1 to avoid overflow
+                if c2 == 1 || c2 == -1 {
+                    self.stack.push(Value::I32(0));
+                } else {
+                    self.stack.push(Value::I32(c1 % c2));
+                }
+                Ok(BlockEnd::Normal)
+            }
+
+            // i32.rem_u
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i32, trap
+            // 4. If c2 is 0, trap
+            // 5. Compute unsigned remainder
+            // 6. Push result to stack
+            I32RemU => {
+                let c2 = self.stack.pop_i32()?;
+                let c1 = self.stack.pop_i32()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Optimize: any unsigned % 1 = 0
+                if c2 == 1 {
+                    self.stack.push(Value::I32(0));
+                } else {
+                    // Interpret as unsigned for remainder
+                    let u1 = c1 as u32;
+                    let u2 = c2 as u32;
+                    self.stack.push(Value::I32((u1 % u2) as i32));
+                }
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.add
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i64, trap
+            // 4. Compute c1 + c2 modulo 2^64
+            // 5. Push result to stack
+            I64Add => {
+                let c2 = self.stack.pop_i64()?;
+                let c1 = self.stack.pop_i64()?;
+                self.stack.push(Value::I64(c1.wrapping_add(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.sub
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i64, trap
+            // 4. Compute c1 - c2 modulo 2^64
+            // 5. Push result to stack
+            I64Sub => {
+                let c2 = self.stack.pop_i64()?;
+                let c1 = self.stack.pop_i64()?;
+                self.stack.push(Value::I64(c1.wrapping_sub(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.mul
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i64, trap
+            // 4. Compute c1 * c2 modulo 2^64
+            // 5. Push result to stack
+            I64Mul => {
+                let c2 = self.stack.pop_i64()?;
+                let c1 = self.stack.pop_i64()?;
+                self.stack.push(Value::I64(c1.wrapping_mul(c2)));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.div_s
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i64, trap
+            // 4. If c2 is 0, trap
+            // 5. If c1 is INT64_MIN and c2 is -1, trap (result 2^63 doesn't fit in i64)
+            // 6. Compute signed division, truncating toward zero
+            // 7. Push result to stack
+            I64DivS => {
+                let c2 = self.stack.pop_i64()?;
+                let c1 = self.stack.pop_i64()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Check for overflow: i64::MIN / -1
+                if c1 == i64::MIN && c2 == -1 {
+                    return Err(RuntimeError::IntegerOverflow);
+                }
+                self.stack.push(Value::I64(c1 / c2));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.div_u
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i64, trap
+            // 4. If c2 is 0, trap
+            // 5. Compute unsigned division
+            // 6. Push result to stack
+            I64DivU => {
+                let c2 = self.stack.pop_i64()?;
+                let c1 = self.stack.pop_i64()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Interpret as unsigned for division
+                let u1 = c1 as u64;
+                let u2 = c2 as u64;
+                self.stack.push(Value::I64((u1 / u2) as i64));
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.rem_s
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i64, trap
+            // 4. If c2 is 0, trap
+            // 5. Compute signed remainder
+            // 6. Push result to stack
+            // Note: any integer % ±1 = 0 mathematically
+            I64RemS => {
+                let c2 = self.stack.pop_i64()?;
+                let c1 = self.stack.pop_i64()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Mathematical fact: any integer % ±1 = 0
+                // Special handling for i64::MIN % -1 to avoid overflow
+                if c2 == 1 || c2 == -1 {
+                    self.stack.push(Value::I64(0));
+                } else {
+                    self.stack.push(Value::I64(c1 % c2));
+                }
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64.rem_u
+            // From the spec (4.4.1.3 - t.binop):
+            // 1. Pop value c2 from stack
+            // 2. Pop value c1 from stack
+            // 3. If either value is not i64, trap
+            // 4. If c2 is 0, trap
+            // 5. Compute unsigned remainder
+            // 6. Push result to stack
+            I64RemU => {
+                let c2 = self.stack.pop_i64()?;
+                let c1 = self.stack.pop_i64()?;
+                if c2 == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                // Optimize: any unsigned % 1 = 0
+                if c2 == 1 {
+                    self.stack.push(Value::I64(0));
+                } else {
+                    // Interpret as unsigned for remainder
+                    let u1 = c1 as u64;
+                    let u2 = c2 as u64;
+                    self.stack.push(Value::I64((u1 % u2) as i64));
+                }
+                Ok(BlockEnd::Normal)
+            }
+
             // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
@@ -1700,38 +1974,6 @@ mod tests {
                 .execute_function(&structured_func, self.args, &self.return_types)
                 .expect("Execution should succeed");
             assert_eq!(results, expected);
-        }
-
-        fn run(mut self) -> Result<Executor<'static>, RuntimeError> {
-            self.instructions.push(make_instruction(InstructionKind::End));
-            let module = Box::leak(Box::new(Module::new("test")));
-
-            // Add memory if requested
-            if self.with_memory {
-                use crate::parser::module::{Limits, Memory, MemorySection, SectionPosition};
-                let mem = Memory {
-                    limits: Limits {
-                        min: 1, // 1 page (64KB)
-                        max: None,
-                    },
-                };
-                module.memory = MemorySection {
-                    memory: vec![mem],
-                    position: SectionPosition { start: 0, end: 0 },
-                };
-            }
-
-            // Build structured representation
-            let structured_func = StructureBuilder::build_function(
-                &self.instructions,
-                0, // Most tests don't use locals
-                self.return_types.clone(),
-            )
-            .expect("Structure building should succeed");
-
-            let mut executor = Executor::new(module)?;
-            executor.execute_function(&structured_func, self.args, &self.return_types)?;
-            Ok(executor)
         }
 
         fn expect_error(mut self, error_contains: &str) {
@@ -3138,7 +3380,7 @@ mod tests {
         #[test]
         fn unimplemented_instruction() {
             ExecutorTest::new()
-                .inst(InstructionKind::I32Add)
+                .inst(InstructionKind::I32And) // Bitwise operations not yet implemented
                 .expect_error("Unimplemented instruction");
         }
 
@@ -4043,7 +4285,479 @@ mod tests {
         // Tests for block, loop, br, br_if, etc. will go here
     }
 
-    // Binary Operation Tests
+    // Integer Binary Operation Tests
+    mod integer_binary_ops {
+        use super::*;
+
+        // i32 addition tests
+        #[test]
+        fn i32_add_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 5 })
+                .inst(InstructionKind::I32Const { value: 3 })
+                .inst(InstructionKind::I32Add)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(8)]);
+        }
+
+        #[test]
+        fn i32_add_overflow() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: i32::MAX })
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::I32Add)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(i32::MIN)]); // Wraps around
+        }
+
+        #[test]
+        fn i32_add_negative() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -10 })
+                .inst(InstructionKind::I32Const { value: 5 })
+                .inst(InstructionKind::I32Add)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(-5)]);
+        }
+
+        // i32 subtraction tests
+        #[test]
+        fn i32_sub_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 10 })
+                .inst(InstructionKind::I32Const { value: 3 })
+                .inst(InstructionKind::I32Sub)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(7)]);
+        }
+
+        #[test]
+        fn i32_sub_underflow() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: i32::MIN })
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::I32Sub)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(i32::MAX)]); // Wraps around
+        }
+
+        // i32 multiplication tests
+        #[test]
+        fn i32_mul_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 6 })
+                .inst(InstructionKind::I32Const { value: 7 })
+                .inst(InstructionKind::I32Mul)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn i32_mul_overflow() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const {
+                    value: i32::MAX / 2 + 1,
+                })
+                .inst(InstructionKind::I32Const { value: 2 })
+                .inst(InstructionKind::I32Mul)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(i32::MIN)]); // Wraps
+        }
+
+        // i32 signed division tests
+        #[test]
+        fn i32_div_s_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 6 })
+                .inst(InstructionKind::I32DivS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(7)]);
+        }
+
+        #[test]
+        fn i32_div_s_negative() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -42 })
+                .inst(InstructionKind::I32Const { value: 6 })
+                .inst(InstructionKind::I32DivS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(-7)]);
+        }
+
+        #[test]
+        fn i32_div_s_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32DivS)
+                .expect_error("Division by zero");
+        }
+
+        #[test]
+        fn i32_div_s_overflow() {
+            // i32::MIN / -1 causes overflow
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: i32::MIN })
+                .inst(InstructionKind::I32Const { value: -1 })
+                .inst(InstructionKind::I32DivS)
+                .expect_error("Integer overflow");
+        }
+
+        // i32 unsigned division tests
+        #[test]
+        fn i32_div_u_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 6 })
+                .inst(InstructionKind::I32DivU)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(7)]);
+        }
+
+        #[test]
+        fn i32_div_u_large() {
+            // -1 as u32 is u32::MAX
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -1 })
+                .inst(InstructionKind::I32Const { value: 2 })
+                .inst(InstructionKind::I32DivU)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32((u32::MAX / 2) as i32)]);
+        }
+
+        // i32 signed remainder tests
+        #[test]
+        fn i32_rem_s_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 43 })
+                .inst(InstructionKind::I32Const { value: 6 })
+                .inst(InstructionKind::I32RemS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(1)]);
+        }
+
+        #[test]
+        fn i32_rem_s_negative() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -43 })
+                .inst(InstructionKind::I32Const { value: 6 })
+                .inst(InstructionKind::I32RemS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(-1)]);
+        }
+
+        #[test]
+        fn i32_rem_s_special_case() {
+            // i32::MIN % -1 = 0 (avoids overflow)
+            // This is because ANY integer % ±1 = 0 mathematically
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: i32::MIN })
+                .inst(InstructionKind::I32Const { value: -1 })
+                .inst(InstructionKind::I32RemS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(0)]);
+        }
+
+        #[test]
+        fn i32_rem_s_by_negative_one() {
+            // Test that ANY value % -1 = 0
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -100 })
+                .inst(InstructionKind::I32Const { value: -1 })
+                .inst(InstructionKind::I32RemS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(0)]);
+        }
+
+        #[test]
+        fn i32_rem_s_by_one() {
+            // Test that ANY value % 1 = 0
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 1 })
+                .inst(InstructionKind::I32RemS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(0)]);
+        }
+
+        // i32 unsigned remainder tests
+        #[test]
+        fn i32_rem_u_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 43 })
+                .inst(InstructionKind::I32Const { value: 6 })
+                .inst(InstructionKind::I32RemU)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(1)]);
+        }
+
+        #[test]
+        fn i32_rem_u_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32RemU)
+                .expect_error("Division by zero");
+        }
+
+        #[test]
+        fn i32_div_u_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32DivU)
+                .expect_error("Division by zero");
+        }
+
+        // Additional edge cases for i32 operations
+        #[test]
+        fn i32_mul_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: i32::MAX })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32Mul)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(0)]);
+        }
+
+        #[test]
+        fn i32_mul_by_negative_one() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: -1 })
+                .inst(InstructionKind::I32Mul)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(-42)]);
+        }
+
+        #[test]
+        fn i32_div_s_truncation() {
+            // Test truncation toward zero for negative results
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -7 })
+                .inst(InstructionKind::I32Const { value: 3 })
+                .inst(InstructionKind::I32DivS)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(-2)]); // -7/3 = -2.33.. truncates to -2
+        }
+
+        #[test]
+        fn i32_rem_s_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32RemS)
+                .expect_error("Division by zero");
+        }
+
+        #[test]
+        fn i32_rem_u_large() {
+            // Test with large unsigned values
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: -1 }) // u32::MAX
+                .inst(InstructionKind::I32Const { value: 10 })
+                .inst(InstructionKind::I32RemU)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32((u32::MAX % 10) as i32)]);
+        }
+
+        #[test]
+        fn i32_add_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 0 })
+                .inst(InstructionKind::I32Add)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn i32_sub_same() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::I32Sub)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(0)]);
+        }
+
+        // i64 tests (selected edge cases)
+        #[test]
+        fn i64_add_overflow() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: i64::MAX })
+                .inst(InstructionKind::I64Const { value: 1 })
+                .inst(InstructionKind::I64Add)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(i64::MIN)]);
+        }
+
+        #[test]
+        fn i64_sub_underflow() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: i64::MIN })
+                .inst(InstructionKind::I64Const { value: 1 })
+                .inst(InstructionKind::I64Sub)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(i64::MAX)]);
+        }
+
+        #[test]
+        fn i64_mul_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: 1000000 })
+                .inst(InstructionKind::I64Const { value: 1000000 })
+                .inst(InstructionKind::I64Mul)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(1000000000000)]);
+        }
+
+        #[test]
+        fn i64_div_s_overflow() {
+            // i64::MIN / -1 causes overflow
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: i64::MIN })
+                .inst(InstructionKind::I64Const { value: -1 })
+                .inst(InstructionKind::I64DivS)
+                .expect_error("Integer overflow");
+        }
+
+        #[test]
+        fn i64_div_u_large() {
+            // -1 as u64 is u64::MAX
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: -1 })
+                .inst(InstructionKind::I64Const { value: 2 })
+                .inst(InstructionKind::I64DivU)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64((u64::MAX / 2) as i64)]);
+        }
+
+        #[test]
+        fn i64_rem_s_special_case() {
+            // i64::MIN % -1 = 0 per spec
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: i64::MIN })
+                .inst(InstructionKind::I64Const { value: -1 })
+                .inst(InstructionKind::I64RemS)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(0)]);
+        }
+
+        #[test]
+        fn i64_rem_u_basic() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: 100 })
+                .inst(InstructionKind::I64Const { value: 7 })
+                .inst(InstructionKind::I64RemU)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(2)]);
+        }
+
+        // Additional i64 edge case tests
+        #[test]
+        fn i64_div_s_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: 42 })
+                .inst(InstructionKind::I64Const { value: 0 })
+                .inst(InstructionKind::I64DivS)
+                .expect_error("Division by zero");
+        }
+
+        #[test]
+        fn i64_div_u_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: 42 })
+                .inst(InstructionKind::I64Const { value: 0 })
+                .inst(InstructionKind::I64DivU)
+                .expect_error("Division by zero");
+        }
+
+        #[test]
+        fn i64_rem_s_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: 42 })
+                .inst(InstructionKind::I64Const { value: 0 })
+                .inst(InstructionKind::I64RemS)
+                .expect_error("Division by zero");
+        }
+
+        #[test]
+        fn i64_rem_u_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: 42 })
+                .inst(InstructionKind::I64Const { value: 0 })
+                .inst(InstructionKind::I64RemU)
+                .expect_error("Division by zero");
+        }
+
+        #[test]
+        fn i64_div_s_truncation() {
+            // Test truncation toward zero for negative results
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: -7 })
+                .inst(InstructionKind::I64Const { value: 3 })
+                .inst(InstructionKind::I64DivS)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(-2)]);
+        }
+
+        #[test]
+        fn i64_mul_overflow() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const {
+                    value: i64::MAX / 2 + 1,
+                })
+                .inst(InstructionKind::I64Const { value: 2 })
+                .inst(InstructionKind::I64Mul)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(i64::MIN)]);
+        }
+
+        #[test]
+        fn i64_mul_by_zero() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: i64::MAX })
+                .inst(InstructionKind::I64Const { value: 0 })
+                .inst(InstructionKind::I64Mul)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(0)]);
+        }
+
+        #[test]
+        fn i64_rem_u_large() {
+            // Test with large unsigned values
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: -1 }) // u64::MAX
+                .inst(InstructionKind::I64Const { value: 10 })
+                .inst(InstructionKind::I64RemU)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64((u64::MAX % 10) as i64)]);
+        }
+
+        #[test]
+        fn i64_div_s_negative() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: -42 })
+                .inst(InstructionKind::I64Const { value: 6 })
+                .inst(InstructionKind::I64DivS)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(-7)]);
+        }
+
+        #[test]
+        fn i64_rem_s_negative() {
+            ExecutorTest::new()
+                .inst(InstructionKind::I64Const { value: -43 })
+                .inst(InstructionKind::I64Const { value: 6 })
+                .inst(InstructionKind::I64RemS)
+                .returns(vec![ValueType::I64])
+                .expect_stack(vec![Value::I64(-1)]);
+        }
+    }
+
+    // Floating-point Binary Operation Tests
     mod binary_ops {
         use super::*;
         use crate::parser::structured::StructuredInstruction;
