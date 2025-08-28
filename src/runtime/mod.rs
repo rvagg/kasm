@@ -8,7 +8,9 @@ pub mod executor;
 pub mod frame;
 pub mod instance;
 pub mod memory;
+pub mod ops;
 pub mod stack;
+pub mod test_utils;
 pub mod value;
 
 pub use instance::Instance;
