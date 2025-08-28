@@ -253,6 +253,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("i64.rem_s".to_string());
     implemented.insert("i64.rem_u".to_string());
 
+    // Comparison instructions
+    implemented.insert("i32.eqz".to_string());
+    implemented.insert("i32.eq".to_string());
+    implemented.insert("i32.ne".to_string());
+    implemented.insert("i32.lt_s".to_string());
+    implemented.insert("i32.lt_u".to_string());
+    implemented.insert("i32.gt_s".to_string());
+    implemented.insert("i32.gt_u".to_string());
+    implemented.insert("i32.le_s".to_string());
+    implemented.insert("i32.le_u".to_string());
+    implemented.insert("i32.ge_s".to_string());
+    implemented.insert("i32.ge_u".to_string());
+
+    implemented.insert("i64.eqz".to_string());
+    implemented.insert("i64.eq".to_string());
+    implemented.insert("i64.ne".to_string());
+    implemented.insert("i64.lt_s".to_string());
+    implemented.insert("i64.lt_u".to_string());
+    implemented.insert("i64.gt_s".to_string());
+    implemented.insert("i64.gt_u".to_string());
+    implemented.insert("i64.le_s".to_string());
+    implemented.insert("i64.le_u".to_string());
+    implemented.insert("i64.ge_s".to_string());
+    implemented.insert("i64.ge_u".to_string());
+
+    implemented.insert("f32.eq".to_string());
+    implemented.insert("f32.ne".to_string());
+    implemented.insert("f32.lt".to_string());
+    implemented.insert("f32.gt".to_string());
+    implemented.insert("f32.le".to_string());
+    implemented.insert("f32.ge".to_string());
+
+    implemented.insert("f64.eq".to_string());
+    implemented.insert("f64.ne".to_string());
+    implemented.insert("f64.lt".to_string());
+    implemented.insert("f64.gt".to_string());
+    implemented.insert("f64.le".to_string());
+    implemented.insert("f64.ge".to_string());
+
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && args[1] == "--add" {

@@ -671,6 +671,153 @@ impl<'a> Executor<'a> {
             }
 
             // ----------------------------------------------------------------
+            // 4.4.1.4 Test Instructions & 4.4.1.5 Comparison Instructions
+
+            // i32 test and comparison
+            I32Eqz => {
+                ops::comparison::i32_eqz(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Eq => {
+                ops::comparison::i32_eq(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Ne => {
+                ops::comparison::i32_ne(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32LtS => {
+                ops::comparison::i32_lt_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32LtU => {
+                ops::comparison::i32_lt_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32GtS => {
+                ops::comparison::i32_gt_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32GtU => {
+                ops::comparison::i32_gt_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32LeS => {
+                ops::comparison::i32_le_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32LeU => {
+                ops::comparison::i32_le_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32GeS => {
+                ops::comparison::i32_ge_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32GeU => {
+                ops::comparison::i32_ge_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64 test and comparison
+            I64Eqz => {
+                ops::comparison::i64_eqz(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Eq => {
+                ops::comparison::i64_eq(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Ne => {
+                ops::comparison::i64_ne(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64LtS => {
+                ops::comparison::i64_lt_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64LtU => {
+                ops::comparison::i64_lt_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64GtS => {
+                ops::comparison::i64_gt_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64GtU => {
+                ops::comparison::i64_gt_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64LeS => {
+                ops::comparison::i64_le_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64LeU => {
+                ops::comparison::i64_le_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64GeS => {
+                ops::comparison::i64_ge_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64GeU => {
+                ops::comparison::i64_ge_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // f32 comparison
+            F32Eq => {
+                ops::comparison::f32_eq(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32Ne => {
+                ops::comparison::f32_ne(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32Lt => {
+                ops::comparison::f32_lt(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32Gt => {
+                ops::comparison::f32_gt(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32Le => {
+                ops::comparison::f32_le(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32Ge => {
+                ops::comparison::f32_ge(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // f64 comparison
+            F64Eq => {
+                ops::comparison::f64_eq(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64Ne => {
+                ops::comparison::f64_ne(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64Lt => {
+                ops::comparison::f64_lt(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64Gt => {
+                ops::comparison::f64_gt(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64Le => {
+                ops::comparison::f64_le(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64Ge => {
+                ops::comparison::f64_ge(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
         }
