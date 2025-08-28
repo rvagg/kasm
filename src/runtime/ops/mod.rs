@@ -3,6 +3,7 @@
 //! This module contains the implementation of all WebAssembly instructions,
 //! organized by category according to the WebAssembly specification.
 
+pub mod bitwise;
 pub mod comparison;
 pub mod control;
 pub mod memory;

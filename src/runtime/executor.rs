@@ -671,6 +671,77 @@ impl<'a> Executor<'a> {
             }
 
             // ----------------------------------------------------------------
+            // 4.4.1.3 Bitwise Operations
+
+            // i32 bitwise operations
+            I32And => {
+                ops::bitwise::i32_and(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Or => {
+                ops::bitwise::i32_or(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Xor => {
+                ops::bitwise::i32_xor(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Shl => {
+                ops::bitwise::i32_shl(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32ShrS => {
+                ops::bitwise::i32_shr_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32ShrU => {
+                ops::bitwise::i32_shr_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Rotl => {
+                ops::bitwise::i32_rotl(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Rotr => {
+                ops::bitwise::i32_rotr(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // i64 bitwise operations
+            I64And => {
+                ops::bitwise::i64_and(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Or => {
+                ops::bitwise::i64_or(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Xor => {
+                ops::bitwise::i64_xor(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Shl => {
+                ops::bitwise::i64_shl(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64ShrS => {
+                ops::bitwise::i64_shr_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64ShrU => {
+                ops::bitwise::i64_shr_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Rotl => {
+                ops::bitwise::i64_rotl(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Rotr => {
+                ops::bitwise::i64_rotr(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
             // 4.4.1.4 Test Instructions & 4.4.1.5 Comparison Instructions
 
             // i32 test and comparison
@@ -928,7 +999,7 @@ mod tests {
         #[test]
         fn unimplemented_instruction() {
             ExecutorTest::new()
-                .inst(InstructionKind::I32And) // Bitwise operations not yet implemented
+                .inst(InstructionKind::I32WrapI64) // Conversion operations not yet implemented
                 .expect_error("Unimplemented instruction");
         }
 

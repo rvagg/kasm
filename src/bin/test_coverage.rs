@@ -292,6 +292,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("f64.le".to_string());
     implemented.insert("f64.ge".to_string());
 
+    // Bitwise operations - i32
+    implemented.insert("i32.and".to_string());
+    implemented.insert("i32.or".to_string());
+    implemented.insert("i32.xor".to_string());
+    implemented.insert("i32.shl".to_string());
+    implemented.insert("i32.shr_s".to_string());
+    implemented.insert("i32.shr_u".to_string());
+    implemented.insert("i32.rotl".to_string());
+    implemented.insert("i32.rotr".to_string());
+
+    // Bitwise operations - i64
+    implemented.insert("i64.and".to_string());
+    implemented.insert("i64.or".to_string());
+    implemented.insert("i64.xor".to_string());
+    implemented.insert("i64.shl".to_string());
+    implemented.insert("i64.shr_s".to_string());
+    implemented.insert("i64.shr_u".to_string());
+    implemented.insert("i64.rotl".to_string());
+    implemented.insert("i64.rotr".to_string());
+
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && args[1] == "--add" {
