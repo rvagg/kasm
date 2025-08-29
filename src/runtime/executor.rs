@@ -889,6 +889,153 @@ impl<'a> Executor<'a> {
             }
 
             // ----------------------------------------------------------------
+            // 4.4.1.6 Conversion Instructions
+
+            // Integer width conversions
+            I32WrapI64 => {
+                ops::conversion::i32_wrap_i64(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64ExtendI32S => {
+                ops::conversion::i64_extend_i32_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64ExtendI32U => {
+                ops::conversion::i64_extend_i32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // Float width conversions
+            F32DemoteF64 => {
+                ops::conversion::f32_demote_f64(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64PromoteF32 => {
+                ops::conversion::f64_promote_f32(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // Reinterpret/bit casting
+            I32ReinterpretF32 => {
+                ops::conversion::i32_reinterpret_f32(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64ReinterpretF64 => {
+                ops::conversion::i64_reinterpret_f64(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32ReinterpretI32 => {
+                ops::conversion::f32_reinterpret_i32(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64ReinterpretI64 => {
+                ops::conversion::f64_reinterpret_i64(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // Integer to float conversions
+            F32ConvertI32S => {
+                ops::conversion::f32_convert_i32_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32ConvertI32U => {
+                ops::conversion::f32_convert_i32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32ConvertI64S => {
+                ops::conversion::f32_convert_i64_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F32ConvertI64U => {
+                ops::conversion::f32_convert_i64_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64ConvertI32S => {
+                ops::conversion::f64_convert_i32_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64ConvertI32U => {
+                ops::conversion::f64_convert_i32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64ConvertI64S => {
+                ops::conversion::f64_convert_i64_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            F64ConvertI64U => {
+                ops::conversion::f64_convert_i64_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // Float to integer truncation (trapping)
+            I32TruncF32S => {
+                ops::conversion::i32_trunc_f32_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32TruncF32U => {
+                ops::conversion::i32_trunc_f32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32TruncF64S => {
+                ops::conversion::i32_trunc_f64_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32TruncF64U => {
+                ops::conversion::i32_trunc_f64_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncF32S => {
+                ops::conversion::i64_trunc_f32_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncF32U => {
+                ops::conversion::i64_trunc_f32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncF64S => {
+                ops::conversion::i64_trunc_f64_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncF64U => {
+                ops::conversion::i64_trunc_f64_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // Saturating truncation (non-trapping)
+            I32TruncSatF32S => {
+                ops::conversion::i32_trunc_sat_f32_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32TruncSatF32U => {
+                ops::conversion::i32_trunc_sat_f32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32TruncSatF64S => {
+                ops::conversion::i32_trunc_sat_f64_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32TruncSatF64U => {
+                ops::conversion::i32_trunc_sat_f64_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncSatF32S => {
+                ops::conversion::i64_trunc_sat_f32_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncSatF32U => {
+                ops::conversion::i64_trunc_sat_f32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncSatF64S => {
+                ops::conversion::i64_trunc_sat_f64_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64TruncSatF64U => {
+                ops::conversion::i64_trunc_sat_f64_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
             // Unimplemented instructions
             kind => Err(RuntimeError::UnimplementedInstruction(kind.mnemonic().to_string())),
         }
@@ -999,7 +1146,7 @@ mod tests {
         #[test]
         fn unimplemented_instruction() {
             ExecutorTest::new()
-                .inst(InstructionKind::I32WrapI64) // Conversion operations not yet implemented
+                .inst(InstructionKind::Call { func_idx: 0 }) // Function calls not yet implemented
                 .expect_error("Unimplemented instruction");
         }
 

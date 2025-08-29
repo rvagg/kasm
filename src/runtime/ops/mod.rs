@@ -6,6 +6,7 @@
 pub mod bitwise;
 pub mod comparison;
 pub mod control;
+pub mod conversion;
 pub mod memory;
 pub mod numeric;
 pub mod parametric;

@@ -1,0 +1,905 @@
+//! Type conversion operations for WebAssembly
+//!
+//! This module provides implementations of type conversion operations
+//! as specified in the WebAssembly specification section 4.4.1.6.
+//!
+//! Conversions include:
+//! - Integer width conversions (wrap, extend)
+//! - Float width conversions (promote, demote)
+//! - Integer to float conversions
+//! - Float to integer conversions (truncation)
+//! - Saturating truncations (non-trapping)
+//! - Reinterpretation (bit casting)
+
+use super::*;
+
+// ============================================================================
+// Integer Width Conversions
+// ============================================================================
+
+/// i32.wrap_i64 - Truncate i64 to i32 (keep low 32 bits)
+/// spec: 4.4.1.6
+pub fn i32_wrap_i64(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    stack.push(Value::I32(value as i32));
+    Ok(())
+}
+
+/// i64.extend_i32_s - Sign-extend i32 to i64
+/// spec: 4.4.1.6
+pub fn i64_extend_i32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    stack.push(Value::I64(value as i64)); // Rust's `as` does sign extension
+    Ok(())
+}
+
+/// i64.extend_i32_u - Zero-extend i32 to i64
+/// spec: 4.4.1.6
+pub fn i64_extend_i32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    stack.push(Value::I64((value as u32) as i64)); // Cast to u32 first for zero-extension
+    Ok(())
+}
+
+// ============================================================================
+// Reinterpretation / Bit Casting
+// ============================================================================
+
+/// i32.reinterpret_f32 - Reinterpret f32 bits as i32
+/// spec: 4.4.1.6
+pub fn i32_reinterpret_f32(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+    stack.push(Value::I32(value.to_bits() as i32));
+    Ok(())
+}
+
+/// i64.reinterpret_f64 - Reinterpret f64 bits as i64
+/// spec: 4.4.1.6
+pub fn i64_reinterpret_f64(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+    stack.push(Value::I64(value.to_bits() as i64));
+    Ok(())
+}
+
+/// f32.reinterpret_i32 - Reinterpret i32 bits as f32
+/// spec: 4.4.1.6
+pub fn f32_reinterpret_i32(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    stack.push(Value::F32(f32::from_bits(value as u32)));
+    Ok(())
+}
+
+/// f64.reinterpret_i64 - Reinterpret i64 bits as f64
+/// spec: 4.4.1.6
+pub fn f64_reinterpret_i64(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    stack.push(Value::F64(f64::from_bits(value as u64)));
+    Ok(())
+}
+
+// ============================================================================
+// Float Width Conversions
+// ============================================================================
+
+/// f32.demote_f64 - Convert f64 to f32 (may lose precision)
+/// spec: 4.4.1.6
+pub fn f32_demote_f64(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+    stack.push(Value::F32(value as f32));
+    Ok(())
+}
+
+/// f64.promote_f32 - Convert f32 to f64 (exact conversion)
+/// spec: 4.4.1.6
+pub fn f64_promote_f32(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+    stack.push(Value::F64(value as f64));
+    Ok(())
+}
+
+// ============================================================================
+// Integer to Float Conversions
+// ============================================================================
+
+/// f32.convert_i32_s - Convert signed i32 to f32
+/// spec: 4.4.1.6
+pub fn f32_convert_i32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    stack.push(Value::F32(value as f32));
+    Ok(())
+}
+
+/// f32.convert_i32_u - Convert unsigned i32 to f32
+/// spec: 4.4.1.6
+pub fn f32_convert_i32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    stack.push(Value::F32((value as u32) as f32));
+    Ok(())
+}
+
+/// f32.convert_i64_s - Convert signed i64 to f32
+/// spec: 4.4.1.6
+pub fn f32_convert_i64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    stack.push(Value::F32(value as f32));
+    Ok(())
+}
+
+/// f32.convert_i64_u - Convert unsigned i64 to f32
+/// spec: 4.4.1.6
+pub fn f32_convert_i64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    stack.push(Value::F32((value as u64) as f32));
+    Ok(())
+}
+
+/// f64.convert_i32_s - Convert signed i32 to f64
+/// spec: 4.4.1.6
+pub fn f64_convert_i32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    stack.push(Value::F64(value as f64));
+    Ok(())
+}
+
+/// f64.convert_i32_u - Convert unsigned i32 to f64
+/// spec: 4.4.1.6
+pub fn f64_convert_i32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    stack.push(Value::F64((value as u32) as f64));
+    Ok(())
+}
+
+/// f64.convert_i64_s - Convert signed i64 to f64
+/// spec: 4.4.1.6
+pub fn f64_convert_i64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    stack.push(Value::F64(value as f64));
+    Ok(())
+}
+
+/// f64.convert_i64_u - Convert unsigned i64 to f64
+/// spec: 4.4.1.6
+pub fn f64_convert_i64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    stack.push(Value::F64((value as u64) as f64));
+    Ok(())
+}
+
+// ============================================================================
+// Float to Integer Conversions (Trapping)
+// ============================================================================
+
+/// i32.trunc_f32_s - Truncate f32 to signed i32
+/// spec: 4.4.1.6
+/// Traps on: NaN, infinity, or out-of-range values
+pub fn i32_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    // Check for NaN
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    // Check for infinity
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    // Check range: i32::MIN to i32::MAX
+    // Note: We need to be careful with the bounds
+    // The upper bound must be exclusive because 2^31 doesn't fit in i32
+    const MIN: f32 = -2147483648.0; // i32::MIN as f32 (exact)
+    const MAX: f32 = 2147483648.0; // 2^31 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I32(value.trunc() as i32));
+    Ok(())
+}
+
+/// i32.trunc_f32_u - Truncate f32 to unsigned i32
+/// spec: 4.4.1.6
+pub fn i32_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    const MIN: f32 = 0.0;
+    const MAX: f32 = 4294967296.0; // 2^32 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I32(value.trunc() as u32 as i32));
+    Ok(())
+}
+
+/// i32.trunc_f64_s - Truncate f64 to signed i32
+/// spec: 4.4.1.6
+pub fn i32_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    const MIN: f64 = -2147483648.0; // i32::MIN as f64 (exact)
+    const MAX: f64 = 2147483648.0; // 2^31 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I32(value.trunc() as i32));
+    Ok(())
+}
+
+/// i32.trunc_f64_u - Truncate f64 to unsigned i32
+/// spec: 4.4.1.6
+pub fn i32_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    const MIN: f64 = 0.0;
+    const MAX: f64 = 4294967296.0; // 2^32 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I32(value.trunc() as u32 as i32));
+    Ok(())
+}
+
+/// i64.trunc_f32_s - Truncate f32 to signed i64
+/// spec: 4.4.1.6
+pub fn i64_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    // f32 can't represent the full i64 range precisely
+    const MIN: f32 = -9223372036854775808.0; // i64::MIN as f32
+    const MAX: f32 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I64(value.trunc() as i64));
+    Ok(())
+}
+
+/// i64.trunc_f32_u - Truncate f32 to unsigned i64
+/// spec: 4.4.1.6
+pub fn i64_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    const MIN: f32 = 0.0;
+    const MAX: f32 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I64(value.trunc() as u64 as i64));
+    Ok(())
+}
+
+/// i64.trunc_f64_s - Truncate f64 to signed i64
+/// spec: 4.4.1.6
+pub fn i64_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    // f64 can't represent the full i64 range precisely at the extremes
+    const MIN: f64 = -9223372036854775808.0; // i64::MIN as f64
+    const MAX: f64 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I64(value.trunc() as i64));
+    Ok(())
+}
+
+/// i64.trunc_f64_u - Truncate f64 to unsigned i64
+/// spec: 4.4.1.6
+pub fn i64_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    if value.is_nan() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: NaN to integer".to_string(),
+        ));
+    }
+
+    if value.is_infinite() {
+        return Err(RuntimeError::InvalidConversion(
+            "invalid conversion: infinity to integer".to_string(),
+        ));
+    }
+
+    const MIN: f64 = 0.0;
+    const MAX: f64 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
+
+    if !(MIN..MAX).contains(&value) {
+        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+    }
+
+    stack.push(Value::I64(value.trunc() as u64 as i64));
+    Ok(())
+}
+
+// ============================================================================
+// Saturating Truncation (Non-trapping)
+// ============================================================================
+
+/// i32.trunc_sat_f32_s - Saturating truncation of f32 to signed i32
+/// spec: Saturating truncation proposal
+pub fn i32_trunc_sat_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= i32::MAX as f32 {
+        i32::MAX
+    } else if value <= i32::MIN as f32 {
+        i32::MIN
+    } else {
+        value.trunc() as i32
+    };
+
+    stack.push(Value::I32(result));
+    Ok(())
+}
+
+/// i32.trunc_sat_f32_u - Saturating truncation of f32 to unsigned i32
+/// spec: Saturating truncation proposal
+pub fn i32_trunc_sat_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= u32::MAX as f32 {
+        u32::MAX as i32
+    } else if value <= 0.0 {
+        0
+    } else {
+        value.trunc() as u32 as i32
+    };
+
+    stack.push(Value::I32(result));
+    Ok(())
+}
+
+/// i32.trunc_sat_f64_s - Saturating truncation of f64 to signed i32
+/// spec: Saturating truncation proposal
+pub fn i32_trunc_sat_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= i32::MAX as f64 {
+        i32::MAX
+    } else if value <= i32::MIN as f64 {
+        i32::MIN
+    } else {
+        value.trunc() as i32
+    };
+
+    stack.push(Value::I32(result));
+    Ok(())
+}
+
+/// i32.trunc_sat_f64_u - Saturating truncation of f64 to unsigned i32
+/// spec: Saturating truncation proposal
+pub fn i32_trunc_sat_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= u32::MAX as f64 {
+        u32::MAX as i32
+    } else if value <= 0.0 {
+        0
+    } else {
+        value.trunc() as u32 as i32
+    };
+
+    stack.push(Value::I32(result));
+    Ok(())
+}
+
+/// i64.trunc_sat_f32_s - Saturating truncation of f32 to signed i64
+/// spec: Saturating truncation proposal
+pub fn i64_trunc_sat_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= i64::MAX as f32 {
+        i64::MAX
+    } else if value <= i64::MIN as f32 {
+        i64::MIN
+    } else {
+        value.trunc() as i64
+    };
+
+    stack.push(Value::I64(result));
+    Ok(())
+}
+
+/// i64.trunc_sat_f32_u - Saturating truncation of f32 to unsigned i64
+/// spec: Saturating truncation proposal
+pub fn i64_trunc_sat_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f32()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= u64::MAX as f32 {
+        u64::MAX as i64
+    } else if value <= 0.0 {
+        0
+    } else {
+        value.trunc() as u64 as i64
+    };
+
+    stack.push(Value::I64(result));
+    Ok(())
+}
+
+/// i64.trunc_sat_f64_s - Saturating truncation of f64 to signed i64
+/// spec: Saturating truncation proposal
+pub fn i64_trunc_sat_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= i64::MAX as f64 {
+        i64::MAX
+    } else if value <= i64::MIN as f64 {
+        i64::MIN
+    } else {
+        value.trunc() as i64
+    };
+
+    stack.push(Value::I64(result));
+    Ok(())
+}
+
+/// i64.trunc_sat_f64_u - Saturating truncation of f64 to unsigned i64
+/// spec: Saturating truncation proposal
+pub fn i64_trunc_sat_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_f64()?;
+
+    let result = if value.is_nan() {
+        0
+    } else if value >= u64::MAX as f64 {
+        u64::MAX as i64
+    } else if value <= 0.0 {
+        0
+    } else {
+        value.trunc() as u64 as i64
+    };
+
+    stack.push(Value::I64(result));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parser::instruction::InstructionKind;
+    use crate::parser::module::ValueType;
+    use crate::runtime::test_utils::test::ExecutorTest;
+    use crate::runtime::Value;
+
+    // ============================================================================
+    // Integer Width Conversion Tests
+    // ============================================================================
+
+    #[test]
+    fn test_i32_wrap_i64() {
+        // Basic wrapping
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I32WrapI64)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x9ABCDEF0u32 as i32)]);
+
+        // Wrap negative
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I32WrapI64)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
+
+        // Wrap zero
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0 })
+            .inst(InstructionKind::I32WrapI64)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
+    }
+
+    #[test]
+    fn test_i64_extend_i32_s() {
+        // Positive extension
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I64ExtendI32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(42)]);
+
+        // Negative extension (sign bit propagated)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I64ExtendI32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
+
+        // High bit set
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I64ExtendI32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0xFFFFFFFF80000000u64 as i64)]);
+    }
+
+    #[test]
+    fn test_i64_extend_i32_u() {
+        // Positive extension
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I64ExtendI32U)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(42)]);
+
+        // High bit set (zero extended)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I64ExtendI32U)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x80000000)]);
+
+        // -1 becomes large positive
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I64ExtendI32U)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0xFFFFFFFF)]);
+    }
+
+    // ============================================================================
+    // Reinterpret Tests
+    // ============================================================================
+
+    #[test]
+    fn test_reinterpret_f32_i32() {
+        // Round trip test: i32 -> f32 -> i32
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x3F800000 }) // 1.0 in f32
+            .inst(InstructionKind::F32ReinterpretI32)
+            .inst(InstructionKind::I32ReinterpretF32)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x3F800000)]);
+
+        // Test f32 -> i32
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 1.0 })
+            .inst(InstructionKind::I32ReinterpretF32)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x3F800000)]);
+    }
+
+    #[test]
+    fn test_reinterpret_f64_i64() {
+        // Specific bit pattern
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: 1.0 })
+            .inst(InstructionKind::I64ReinterpretF64)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x3FF0000000000000u64 as i64)]);
+
+        // Round trip
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x3FF0000000000000u64 as i64,
+            })
+            .inst(InstructionKind::F64ReinterpretI64)
+            .inst(InstructionKind::I64ReinterpretF64)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x3FF0000000000000u64 as i64)]);
+    }
+
+    // ============================================================================
+    // Float Width Tests
+    // ============================================================================
+
+    #[test]
+    fn test_f32_demote_f64() {
+        // Normal value - can't test exact value due to precision loss
+        // so we test special values instead
+
+        // Infinity preserved
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: f64::INFINITY })
+            .inst(InstructionKind::F32DemoteF64)
+            .returns(vec![ValueType::F32])
+            .expect_stack(vec![Value::F32(f32::INFINITY)]);
+
+        // Negative infinity
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const {
+                value: f64::NEG_INFINITY,
+            })
+            .inst(InstructionKind::F32DemoteF64)
+            .returns(vec![ValueType::F32])
+            .expect_stack(vec![Value::F32(f32::NEG_INFINITY)]);
+
+        // Zero
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: 0.0 })
+            .inst(InstructionKind::F32DemoteF64)
+            .returns(vec![ValueType::F32])
+            .expect_stack(vec![Value::F32(0.0)]);
+    }
+
+    #[test]
+    fn test_f64_promote_f32() {
+        // Special values
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::INFINITY })
+            .inst(InstructionKind::F64PromoteF32)
+            .returns(vec![ValueType::F64])
+            .expect_stack(vec![Value::F64(f64::INFINITY)]);
+
+        // Negative infinity
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const {
+                value: f32::NEG_INFINITY,
+            })
+            .inst(InstructionKind::F64PromoteF32)
+            .returns(vec![ValueType::F64])
+            .expect_stack(vec![Value::F64(f64::NEG_INFINITY)]);
+
+        // Zero
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 0.0 })
+            .inst(InstructionKind::F64PromoteF32)
+            .returns(vec![ValueType::F64])
+            .expect_stack(vec![Value::F64(0.0)]);
+
+        // Negative zero
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: -0.0 })
+            .inst(InstructionKind::F64PromoteF32)
+            .returns(vec![ValueType::F64])
+            .expect_stack(vec![Value::F64(-0.0)]);
+    }
+
+    // ============================================================================
+    // Boundary Tests for Float-to-Int Conversions
+    // ============================================================================
+
+    #[test]
+    fn test_i32_trunc_f32_s_boundaries() {
+        // Test the exact boundary value (2^31) - should trap
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 2147483648.0 })
+            .inst(InstructionKind::I32TruncF32S)
+            .expect_error("overflow");
+
+        // Test i32::MAX when converted to f32 (rounds to 2^31) - should trap
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: i32::MAX as f32 })
+            .inst(InstructionKind::I32TruncF32S)
+            .expect_error("overflow");
+
+        // Test a safe value just below
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 2147483520.0 })
+            .inst(InstructionKind::I32TruncF32S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(2147483520)]);
+
+        // Test negative boundary
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: -2147483648.0 })
+            .inst(InstructionKind::I32TruncF32S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(i32::MIN)]);
+
+        // Test value below negative boundary - should trap
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: -2147483904.0 }) // Next f32 below -2^31
+            .inst(InstructionKind::I32TruncF32S)
+            .expect_error("overflow");
+    }
+
+    #[test]
+    fn test_i32_trunc_f32_u_boundaries() {
+        // Test u32::MAX boundary - should trap
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 4294967296.0 }) // 2^32
+            .inst(InstructionKind::I32TruncF32U)
+            .expect_error("overflow");
+
+        // Test a safe value near the max
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 4294967040.0 })
+            .inst(InstructionKind::I32TruncF32U)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(4294967040u32 as i32)]);
+
+        // Test negative value - should trap
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: -1.0 })
+            .inst(InstructionKind::I32TruncF32U)
+            .expect_error("overflow");
+
+        // Test zero
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 0.0 })
+            .inst(InstructionKind::I32TruncF32U)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
+    }
+
+    // ============================================================================
+    // Float-to-Int Conversion Tests
+    // ============================================================================
+
+    #[test]
+    fn test_f32_convert_i32() {
+        // Signed conversion
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::F32ConvertI32S)
+            .returns(vec![ValueType::F32])
+            .expect_stack(vec![Value::F32(42.0)]);
+
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -42 })
+            .inst(InstructionKind::F32ConvertI32S)
+            .returns(vec![ValueType::F32])
+            .expect_stack(vec![Value::F32(-42.0)]);
+
+        // Unsigned conversion
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::F32ConvertI32U)
+            .returns(vec![ValueType::F32])
+            .expect_stack(vec![Value::F32(2147483648.0)]);
+    }
+
+    #[test]
+    fn test_f64_convert_i64() {
+        // Signed conversion
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 42 })
+            .inst(InstructionKind::F64ConvertI64S)
+            .returns(vec![ValueType::F64])
+            .expect_stack(vec![Value::F64(42.0)]);
+
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -42 })
+            .inst(InstructionKind::F64ConvertI64S)
+            .returns(vec![ValueType::F64])
+            .expect_stack(vec![Value::F64(-42.0)]);
+
+        // Unsigned conversion
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000000u64 as i64,
+            })
+            .inst(InstructionKind::F64ConvertI64U)
+            .returns(vec![ValueType::F64])
+            .expect_stack(vec![Value::F64(9223372036854775808.0)]);
+    }
+
+    #[test]
+    fn test_special_float_conversions() {
+        // NaN handling in truncation - should trap
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::NAN })
+            .inst(InstructionKind::I32TruncF32S)
+            .expect_error("NaN to integer");
+
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: f64::NAN })
+            .inst(InstructionKind::I64TruncF64S)
+            .expect_error("NaN to integer");
+
+        // Infinity handling - should trap
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::INFINITY })
+            .inst(InstructionKind::I32TruncF32S)
+            .expect_error("infinity to integer");
+
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const {
+                value: f64::NEG_INFINITY,
+            })
+            .inst(InstructionKind::I64TruncF64S)
+            .expect_error("infinity to integer");
+    }
+}

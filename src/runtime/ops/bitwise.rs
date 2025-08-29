@@ -195,17 +195,10 @@ pub fn i64_rotr(stack: &mut Stack) -> Result<(), RuntimeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::parser::instruction::InstructionKind;
+    use crate::parser::module::ValueType;
+    use crate::runtime::test_utils::test::ExecutorTest;
     use crate::runtime::Value;
-
-    // Helper to create a stack with values
-    fn stack_with(values: Vec<Value>) -> Stack {
-        let mut stack = Stack::new();
-        for value in values {
-            stack.push(value);
-        }
-        stack
-    }
 
     // ============================================================================
     // i32 Bitwise Tests
@@ -213,288 +206,457 @@ mod tests {
 
     #[test]
     fn test_i32_and() {
-        let mut stack = stack_with(vec![Value::I32(0xFF00FF00u32 as i32), Value::I32(0x0F0F0F0F)]);
-        i32_and(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x0F000F00));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0xFF00FF00u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 0x0F0F0F0F })
+            .inst(InstructionKind::I32And)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x0F000F00)]);
 
         // Test with negative numbers
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(0x12345678)]);
-        i32_and(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x12345678));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32And)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x12345678)]);
     }
 
     #[test]
     fn test_i32_bitwise_masks() {
-        // Test masking operations
         // Clear high byte: x & 0x00FFFFFF
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(0x00FFFFFF)]);
-        i32_and(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x00345678));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 0x00FFFFFF })
+            .inst(InstructionKind::I32And)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x00345678)]);
 
         // Extract nibble with AND
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(0x0000F000)]);
-        i32_and(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x00005000));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 0x0000F000 })
+            .inst(InstructionKind::I32And)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x00005000)]);
 
         // Set bits with OR
-        let mut stack = stack_with(vec![Value::I32(0x12340000), Value::I32(0x00005678)]);
-        i32_or(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x12345678));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12340000 })
+            .inst(InstructionKind::I32Const { value: 0x00005678 })
+            .inst(InstructionKind::I32Or)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x12345678)]);
 
         // Toggle bits with XOR
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(0xFF00FF00u32 as i32)]);
-        i32_xor(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xED34A978u32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const {
+                value: 0xFF00FF00u32 as i32,
+            })
+            .inst(InstructionKind::I32Xor)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xED34A978u32 as i32)]);
 
-        // Clear bit pattern: x & ~pattern
-        let mut stack = stack_with(vec![Value::I32(0xFFFFFFFFu32 as i32), Value::I32(0x80808080u32 as i32)]);
-        i32_and(&mut stack).unwrap();
-        let _result = stack.pop().unwrap();
-        // Now XOR to clear those bits from another value
-        let mut stack = stack_with(vec![Value::I32(0xFFFFFFFFu32 as i32), Value::I32(0x80808080u32 as i32)]);
-        i32_xor(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x7F7F7F7F));
+        // XOR to toggle bits
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0xFFFFFFFFu32 as i32,
+            })
+            .inst(InstructionKind::I32Const {
+                value: 0x80808080u32 as i32,
+            })
+            .inst(InstructionKind::I32Xor)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x7F7F7F7F)]);
     }
 
     #[test]
     fn test_i32_or() {
-        let mut stack = stack_with(vec![Value::I32(0xFF00FF00u32 as i32), Value::I32(0x0F0F0F0F)]);
-        i32_or(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xFF0FFF0Fu32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0xFF00FF00u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 0x0F0F0F0F })
+            .inst(InstructionKind::I32Or)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xFF0FFF0Fu32 as i32)]);
 
         // Test with zero
-        let mut stack = stack_with(vec![Value::I32(0), Value::I32(0x12345678)]);
-        i32_or(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x12345678));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0 })
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Or)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x12345678)]);
     }
 
     #[test]
     fn test_i32_xor() {
-        let mut stack = stack_with(vec![Value::I32(0xFF00FF00u32 as i32), Value::I32(0x0F0F0F0F)]);
-        i32_xor(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xF00FF00Fu32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0xFF00FF00u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 0x0F0F0F0F })
+            .inst(InstructionKind::I32Xor)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xF00FF00Fu32 as i32)]);
 
         // XOR with self should be zero
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(0x12345678)]);
-        i32_xor(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Xor)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
     }
 
     #[test]
     fn test_i32_shl() {
         // Basic shift
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(4)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(16));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 4 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(16)]);
 
         // Shift by 0
-        let mut stack = stack_with(vec![Value::I32(42), Value::I32(0)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(42));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Const { value: 0 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(42)]);
 
         // Shift by 32 (should wrap to 0)
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(32)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 32 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // Shift by 33 (should wrap to 1)
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(33)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(2));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 33 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(2)]);
     }
 
     #[test]
     fn test_i32_shl_overflow() {
         // Test that bits are lost when shifted out
         // 0x80000000 << 1 should be 0 (MSB lost)
-        let mut stack = stack_with(vec![Value::I32(0x80000000u32 as i32), Value::I32(1)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
 
         // 0xFFFFFFFF << 1 should be 0xFFFFFFFE (LSB becomes 0)
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(1)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(-2));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-2)]);
 
         // 0x40000000 << 1 should be 0x80000000 (becomes negative)
-        let mut stack = stack_with(vec![Value::I32(0x40000000), Value::I32(1)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x80000000u32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x40000000 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x80000000u32 as i32)]);
 
         // Test large shift counts with modulo
         // 0xFF << 100 = 0xFF << (100 % 32) = 0xFF << 4 = 0xFF0
-        let mut stack = stack_with(vec![Value::I32(0xFF), Value::I32(100)]);
-        i32_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xFF0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0xFF })
+            .inst(InstructionKind::I32Const { value: 100 })
+            .inst(InstructionKind::I32Shl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xFF0)]);
     }
 
     #[test]
     fn test_i32_shr_s() {
         // Positive number
-        let mut stack = stack_with(vec![Value::I32(16), Value::I32(4)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 16 })
+            .inst(InstructionKind::I32Const { value: 4 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // Negative number (sign extension)
-        let mut stack = stack_with(vec![Value::I32(-16), Value::I32(4)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(-1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -16 })
+            .inst(InstructionKind::I32Const { value: 4 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
 
         // Shift by 32 (should wrap to 0)
-        let mut stack = stack_with(vec![Value::I32(0x80000000u32 as i32), Value::I32(32)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x80000000u32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 32 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x80000000u32 as i32)]);
     }
 
     #[test]
     fn test_i32_shr_s_sign_extension() {
         // Test that all high bits are set when shifting negative numbers
         // -1 >> 1 should be -1 (all bits set)
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(1)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(-1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
 
         // -1 >> 31 should be -1 (sign bit propagated)
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(31)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(-1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 31 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
 
         // 0x80000000 >> 1 should be 0xC0000000 (sign extended)
-        let mut stack = stack_with(vec![Value::I32(0x80000000u32 as i32), Value::I32(1)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xC0000000u32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xC0000000u32 as i32)]);
 
-        // 0x80000000 >> 31 should be -1 (all bits from sign)
-        let mut stack = stack_with(vec![Value::I32(0x80000000u32 as i32), Value::I32(31)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(-1));
+        // 0x80000000 >> 31 should be -1 (all bits set from sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 31 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
 
-        // Test boundary: largest negative >> 1
-        let mut stack = stack_with(vec![Value::I32(i32::MIN), Value::I32(1)]);
-        i32_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(-1073741824)); // 0xC0000000
+        // i32::MIN >> 1 should maintain sign
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: i32::MIN })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32ShrS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xC0000000u32 as i32)]);
     }
 
     #[test]
     fn test_i32_shr_u() {
-        // Basic shift
-        let mut stack = stack_with(vec![Value::I32(16), Value::I32(4)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // Positive number
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 16 })
+            .inst(InstructionKind::I32Const { value: 4 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // Negative number (no sign extension)
-        let mut stack = stack_with(vec![Value::I32(-16), Value::I32(4)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x0FFFFFFFu32 as i32));
+        // Negative number becomes positive (zero extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -16 })
+            .inst(InstructionKind::I32Const { value: 4 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x0FFFFFFFu32 as i32)]);
 
-        // High bit set
-        let mut stack = stack_with(vec![Value::I32(0x80000000u32 as i32), Value::I32(1)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x40000000));
+        // 0x80000000 >> 1 should be 0x40000000 (zero fill)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x40000000)]);
     }
 
     #[test]
     fn test_i32_shr_u_zero_extension() {
-        // Test that high bits are always zero-filled
-        // -1 >>> 1 should be 0x7FFFFFFF (zero extended)
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(1)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x7FFFFFFF));
+        // Test that high bits are filled with zeros
+        // -1 >>> 1 should be 0x7FFFFFFF (zero fill)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x7FFFFFFF)]);
 
         // -1 >>> 31 should be 1 (only LSB remains)
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(31)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 31 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // 0x80000000 >>> 31 should be 1 (only MSB shifts to LSB)
-        let mut stack = stack_with(vec![Value::I32(0x80000000u32 as i32), Value::I32(31)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 0x80000000 >>> 31 should be 1 (only MSB moves to LSB)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000000u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 31 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // Test i32::MIN >>> 1 = 0x40000000
-        let mut stack = stack_with(vec![Value::I32(i32::MIN), Value::I32(1)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x40000000));
+        // i32::MIN >>> 1 should be 0x40000000 (positive result)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: i32::MIN })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x40000000)]);
 
-        // -2 >>> 1 should be 0x7FFFFFFF (not -1)
-        let mut stack = stack_with(vec![Value::I32(-2), Value::I32(1)]);
-        i32_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x7FFFFFFF));
+        // -2 >>> 1 should be 0x7FFFFFFF
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -2 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32ShrU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x7FFFFFFF)]);
     }
 
     #[test]
     fn test_i32_rotl() {
         // Basic rotation
-        let mut stack = stack_with(vec![Value::I32(0x80000001u32 as i32), Value::I32(1)]);
-        i32_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x00000003));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000001u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Rotl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x00000003)]);
 
         // Rotate by 0
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(0)]);
-        i32_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x12345678));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 0 })
+            .inst(InstructionKind::I32Rotl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x12345678)]);
 
         // Rotate by 32 (full rotation)
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(32)]);
-        i32_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x12345678));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 32 })
+            .inst(InstructionKind::I32Rotl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x12345678)]);
 
         // Rotate by 4
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(4)]);
-        i32_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x23456781));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 4 })
+            .inst(InstructionKind::I32Rotl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x23456781)]);
     }
 
     #[test]
     fn test_i32_rotl_large_counts() {
-        // Test rotation with counts > 32 (should wrap)
-        // Rotate by 33 = rotate by 1
-        let mut stack = stack_with(vec![Value::I32(0x80000001u32 as i32), Value::I32(33)]);
-        i32_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x00000003));
+        // Rotate by 33 (wraps to 1)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000001u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 33 })
+            .inst(InstructionKind::I32Rotl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x00000003)]);
 
-        // Rotate by 100 = rotate by 4 (100 % 32)
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(100)]);
-        i32_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x23456781));
+        // Rotate by 100 (wraps to 4)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 100 })
+            .inst(InstructionKind::I32Rotl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x23456781)]);
 
-        // Test with negative rotation count (treated as large unsigned)
-        // -1 as u32 = 0xFFFFFFFF, modulo 32 = 31
-        // Rotating left by 31 is same as rotating right by 1
-        let mut stack = stack_with(vec![Value::I32(0x80000001u32 as i32), Value::I32(-1)]);
-        i32_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xC0000000u32 as i32));
+        // Rotate by -1 (wraps to 31, rotate right by 1)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000001u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Rotl)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xC0000000u32 as i32)]);
     }
 
     #[test]
     fn test_i32_rotr() {
         // Basic rotation
-        let mut stack = stack_with(vec![Value::I32(0x80000001u32 as i32), Value::I32(1)]);
-        i32_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xC0000000u32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000001u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Rotr)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xC0000000u32 as i32)]);
 
         // Rotate by 4
-        let mut stack = stack_with(vec![Value::I32(0x12345678), Value::I32(4)]);
-        i32_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x81234567u32 as i32));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x12345678 })
+            .inst(InstructionKind::I32Const { value: 4 })
+            .inst(InstructionKind::I32Rotr)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x81234567u32 as i32)]);
     }
 
     #[test]
     fn test_i32_rotr_edge_cases() {
-        // Rotate all ones
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(1)]);
-        i32_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(-1)); // All bits stay set
+        // Rotate -1 right by 1
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Rotr)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
 
-        // Rotate by 31 (almost full rotation)
-        let mut stack = stack_with(vec![Value::I32(0x80000001u32 as i32), Value::I32(31)]);
-        i32_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0x00000003));
+        // Rotate 0x80000001 right by 31
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000001u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 31 })
+            .inst(InstructionKind::I32Rotr)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x00000003)]);
 
-        // Large rotation count
-        let mut stack = stack_with(vec![Value::I32(0x80000001u32 as i32), Value::I32(65)]);
-        i32_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0xC0000000u32 as i32)); // Same as rotate by 1
+        // Rotate by 65 (wraps to 1)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const {
+                value: 0x80000001u32 as i32,
+            })
+            .inst(InstructionKind::I32Const { value: 65 })
+            .inst(InstructionKind::I32Rotr)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0xC0000000u32 as i32)]);
     }
 
     // ============================================================================
@@ -503,244 +665,324 @@ mod tests {
 
     #[test]
     fn test_i64_and() {
-        let mut stack = stack_with(vec![
-            Value::I64(0xFF00FF00FF00FF00u64 as i64),
-            Value::I64(0x0F0F0F0F0F0F0F0F),
-        ]);
-        i64_and(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x0F000F000F000F00));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0xFF00FF00FF00FF00u64 as i64,
+            })
+            .inst(InstructionKind::I64Const {
+                value: 0x0F0F0F0F0F0F0F0Fu64 as i64,
+            })
+            .inst(InstructionKind::I64And)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x0F000F000F000F00u64 as i64)]);
     }
 
     #[test]
     fn test_i64_or() {
-        let mut stack = stack_with(vec![Value::I64(0), Value::I64(0x123456789ABCDEF0u64 as i64)]);
-        i64_or(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x123456789ABCDEF0u64 as i64));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0 })
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I64Or)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x123456789ABCDEF0u64 as i64)]);
     }
 
     #[test]
     fn test_i64_xor() {
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(0x123456789ABCDEF0u64 as i64)]);
-        i64_xor(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0xEDCBA9876543210Fu64 as i64));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I64Xor)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0xEDCBA9876543210Fu64 as i64)]);
     }
 
     #[test]
     fn test_i64_bitwise_patterns() {
-        // Test 64-bit specific patterns
-        // Swap halves using rotations and masks
-        let value = 0x123456789ABCDEF0u64 as i64;
+        // Clear specific bits with AND
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0xFFFFFFFFFFFFFFFFu64 as i64,
+            })
+            .inst(InstructionKind::I64Const {
+                value: 0x00FFFFFF00FFFFFFu64 as i64,
+            })
+            .inst(InstructionKind::I64And)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x00FFFFFF00FFFFFFu64 as i64)]);
 
-        // Extract high 32 bits: (x >> 32) & 0xFFFFFFFF
-        let mut stack = stack_with(vec![Value::I64(value), Value::I64(32)]);
-        i64_shr_u(&mut stack).unwrap();
-        let high = stack.pop().unwrap();
-        assert_eq!(high, Value::I64(0x12345678));
+        // Set specific bits with OR
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0 })
+            .inst(InstructionKind::I64Const {
+                value: 0x8080808080808080u64 as i64,
+            })
+            .inst(InstructionKind::I64Or)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x8080808080808080u64 as i64)]);
 
-        // Extract low 32 bits: x & 0xFFFFFFFF
-        let mut stack = stack_with(vec![Value::I64(value), Value::I64(0xFFFFFFFF)]);
-        i64_and(&mut stack).unwrap();
-        let low = stack.pop().unwrap();
-        assert_eq!(low, Value::I64(0x9ABCDEF0u32 as i64));
+        // Toggle pattern with XOR
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0xAAAAAAAAAAAAAAAAu64 as i64,
+            })
+            .inst(InstructionKind::I64Const {
+                value: 0xFFFFFFFFFFFFFFFFu64 as i64,
+            })
+            .inst(InstructionKind::I64Xor)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x5555555555555555u64 as i64)]);
 
-        // Test sign bit manipulation
-        // Clear sign bit: x & 0x7FFFFFFFFFFFFFFF
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(0x7FFFFFFFFFFFFFFF)]);
-        i64_and(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x7FFFFFFFFFFFFFFF));
-
-        // Set sign bit: x | 0x8000000000000000
-        let mut stack = stack_with(vec![Value::I64(1), Value::I64(0x8000000000000000u64 as i64)]);
-        i64_or(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x8000000000000001u64 as i64));
-
-        // Toggle sign bit: x ^ 0x8000000000000000
-        let mut stack = stack_with(vec![
-            Value::I64(0x7FFFFFFFFFFFFFFF),
-            Value::I64(0x8000000000000000u64 as i64),
-        ]);
-        i64_xor(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-1));
+        // Complex mask operation
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I64Const {
+                value: 0x0F0F0F0F0F0F0F0Fu64 as i64,
+            })
+            .inst(InstructionKind::I64And)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x020406080A0C0E00u64 as i64)]);
     }
 
     #[test]
     fn test_i64_shl() {
         // Basic shift
-        let mut stack = stack_with(vec![Value::I64(1), Value::I64(8)]);
-        i64_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(256));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Const { value: 8 })
+            .inst(InstructionKind::I64Shl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(256)]);
 
-        // Shift by 64 (should wrap to 0)
-        let mut stack = stack_with(vec![Value::I64(1), Value::I64(64)]);
-        i64_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(1));
+        // Shift by 64 (wraps to 0)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Const { value: 64 })
+            .inst(InstructionKind::I64Shl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(1)]);
 
-        // Shift by 65 (should wrap to 1)
-        let mut stack = stack_with(vec![Value::I64(1), Value::I64(65)]);
-        i64_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(2));
+        // Shift with overflow
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000000u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Shl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0)]);
     }
 
     #[test]
     fn test_i64_shl_overflow() {
-        // MSB lost when shifted
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000000u64 as i64), Value::I64(1)]);
-        i64_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0));
+        // Large value shift
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 4 })
+            .inst(InstructionKind::I64Shl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x23456789ABCDEF00u64 as i64)]);
 
-        // -1 << 1 = -2
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(1)]);
-        i64_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-2));
-
-        // Test sign change
-        let mut stack = stack_with(vec![Value::I64(0x4000000000000000), Value::I64(1)]);
-        i64_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x8000000000000000u64 as i64));
-
-        // Large shift count with modulo
-        let mut stack = stack_with(vec![Value::I64(0xFF), Value::I64(200)]);
-        i64_shl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0xFF00)); // 200 % 64 = 8
+        // Max negative shift
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: i64::MIN })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Shl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0)]);
     }
 
     #[test]
     fn test_i64_shr_s() {
-        // Positive number
-        let mut stack = stack_with(vec![Value::I64(256), Value::I64(8)]);
-        i64_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(1));
+        // Positive shift
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 256 })
+            .inst(InstructionKind::I64Const { value: 8 })
+            .inst(InstructionKind::I64ShrS)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(1)]);
 
-        // Negative number (sign extension)
-        let mut stack = stack_with(vec![Value::I64(-256), Value::I64(8)]);
-        i64_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-1));
+        // Negative with sign extension
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -256 })
+            .inst(InstructionKind::I64Const { value: 8 })
+            .inst(InstructionKind::I64ShrS)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
     }
 
     #[test]
     fn test_i64_shr_s_sign_extension() {
-        // -1 >> 1 should be -1 (all bits set)
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(1)]);
-        i64_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-1));
-
-        // -1 >> 63 should be -1 (sign bit propagated)
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(63)]);
-        i64_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-1));
-
-        // 0x8000000000000000 >> 1 should be 0xC000000000000000
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000000u64 as i64), Value::I64(1)]);
-        i64_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0xC000000000000000u64 as i64));
-
-        // 0x8000000000000000 >> 63 should be -1
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000000u64 as i64), Value::I64(63)]);
-        i64_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-1));
+        // -1 >> 1 should be -1
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64ShrS)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
 
         // i64::MIN >> 1
-        let mut stack = stack_with(vec![Value::I64(i64::MIN), Value::I64(1)]);
-        i64_shr_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-4611686018427387904i64));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: i64::MIN })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64ShrS)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0xC000000000000000u64 as i64)]);
+
+        // Sign bit propagation
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000000u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 63 })
+            .inst(InstructionKind::I64ShrS)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
     }
 
     #[test]
     fn test_i64_shr_u() {
-        // High bit set
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000000u64 as i64), Value::I64(1)]);
-        i64_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x4000000000000000));
+        // Basic zero-fill shift
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 256 })
+            .inst(InstructionKind::I64Const { value: 8 })
+            .inst(InstructionKind::I64ShrU)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(1)]);
 
-        // Negative number (no sign extension)
-        let mut stack = stack_with(vec![Value::I64(-256), Value::I64(8)]);
-        i64_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x00FFFFFFFFFFFFFFu64 as i64));
+        // Negative becomes positive
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -256 })
+            .inst(InstructionKind::I64Const { value: 8 })
+            .inst(InstructionKind::I64ShrU)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x00FFFFFFFFFFFFFFu64 as i64)]);
     }
 
     #[test]
     fn test_i64_shr_u_zero_extension() {
-        // -1 >>> 1 should be 0x7FFFFFFFFFFFFFFF
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(1)]);
-        i64_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x7FFFFFFFFFFFFFFF));
+        // -1 >>> 1
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64ShrU)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x7FFFFFFFFFFFFFFFu64 as i64)]);
 
-        // -1 >>> 63 should be 1
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(63)]);
-        i64_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(1));
+        // i64::MIN >>> 1 (becomes positive)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: i64::MIN })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64ShrU)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x4000000000000000u64 as i64)]);
 
-        // 0x8000000000000000 >>> 63 should be 1
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000000u64 as i64), Value::I64(63)]);
-        i64_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(1));
-
-        // i64::MIN >>> 1 = 0x4000000000000000
-        let mut stack = stack_with(vec![Value::I64(i64::MIN), Value::I64(1)]);
-        i64_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x4000000000000000));
-
-        // -2 >>> 1 should be 0x7FFFFFFFFFFFFFFF
-        let mut stack = stack_with(vec![Value::I64(-2), Value::I64(1)]);
-        i64_shr_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x7FFFFFFFFFFFFFFF));
+        // High bit shift to low
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000000u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 63 })
+            .inst(InstructionKind::I64ShrU)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(1)]);
     }
 
     #[test]
     fn test_i64_rotl() {
-        // Rotate by 8
-        let mut stack = stack_with(vec![Value::I64(0x123456789ABCDEF0u64 as i64), Value::I64(8)]);
-        i64_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x3456789ABCDEF012u64 as i64));
+        // Basic rotation
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000001u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Rotl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x0000000000000003)]);
+
+        // Rotate by 64 (full rotation)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 64 })
+            .inst(InstructionKind::I64Rotl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x123456789ABCDEF0u64 as i64)]);
     }
 
     #[test]
     fn test_i64_rotl_edge_cases() {
-        // Rotate by 64 (full rotation)
-        let mut stack = stack_with(vec![Value::I64(0x123456789ABCDEF0u64 as i64), Value::I64(64)]);
-        i64_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x123456789ABCDEF0u64 as i64));
+        // Rotate by 65 (wraps to 1)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000001u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 65 })
+            .inst(InstructionKind::I64Rotl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x0000000000000003)]);
 
-        // Rotate by 65 (same as rotate by 1)
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000001u64 as i64), Value::I64(65)]);
-        i64_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x0000000000000003));
-
-        // Test with all ones
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(32)]);
-        i64_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(-1));
-
-        // Large rotation count
-        let mut stack = stack_with(vec![Value::I64(0x123456789ABCDEF0u64 as i64), Value::I64(200)]);
-        i64_rotl(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x3456789ABCDEF012u64 as i64));
-        // 200 % 64 = 8
+        // Rotate by -1 (wraps to 63, rotate right by 1)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000001u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Rotl)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0xC000000000000000u64 as i64)]);
     }
 
     #[test]
     fn test_i64_rotr() {
-        // Rotate by 8
-        let mut stack = stack_with(vec![Value::I64(0x123456789ABCDEF0u64 as i64), Value::I64(8)]);
-        i64_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0xF0123456789ABCDEu64 as i64));
+        // Basic rotation
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000001u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Rotr)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0xC000000000000000u64 as i64)]);
+
+        // Complex rotation
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 4 })
+            .inst(InstructionKind::I64Rotr)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x0123456789ABCDEFu64 as i64)]);
     }
 
     #[test]
     fn test_i64_rotr_edge_cases() {
-        // Rotate by 63 (almost full rotation)
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000001u64 as i64), Value::I64(63)]);
-        i64_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x0000000000000003));
+        // Rotate -1 right by 1
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Rotr)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
 
-        // Test with alternating bits
-        let mut stack = stack_with(vec![Value::I64(0xAAAAAAAAAAAAAAAAu64 as i64), Value::I64(1)]);
-        i64_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x5555555555555555));
-
-        // Negative rotation count (wraps around)
-        let mut stack = stack_with(vec![Value::I64(0x8000000000000001u64 as i64), Value::I64(-1)]);
-        i64_rotr(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I64(0x0000000000000003));
+        // Rotate by 65 (wraps to 1)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x8000000000000001u64 as i64,
+            })
+            .inst(InstructionKind::I64Const { value: 65 })
+            .inst(InstructionKind::I64Rotr)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0xC000000000000000u64 as i64)]);
     }
 }

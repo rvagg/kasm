@@ -43,4 +43,6 @@ pub enum RuntimeError {
     DivisionByZero,
     #[error("Integer overflow")]
     IntegerOverflow,
+    #[error("Invalid conversion: {0}")]
+    InvalidConversion(String),
 }

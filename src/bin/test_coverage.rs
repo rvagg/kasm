@@ -312,6 +312,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("i64.rotl".to_string());
     implemented.insert("i64.rotr".to_string());
 
+    // Conversion operations
+    // Integer width conversions
+    implemented.insert("i32.wrap_i64".to_string());
+    implemented.insert("i64.extend_i32_s".to_string());
+    implemented.insert("i64.extend_i32_u".to_string());
+
+    // Float width conversions
+    implemented.insert("f32.demote_f64".to_string());
+    implemented.insert("f64.promote_f32".to_string());
+
+    // Reinterpret/bit casting
+    implemented.insert("i32.reinterpret_f32".to_string());
+    implemented.insert("i64.reinterpret_f64".to_string());
+    implemented.insert("f32.reinterpret_i32".to_string());
+    implemented.insert("f64.reinterpret_i64".to_string());
+
+    // Integer to float conversions
+    implemented.insert("f32.convert_i32_s".to_string());
+    implemented.insert("f32.convert_i32_u".to_string());
+    implemented.insert("f32.convert_i64_s".to_string());
+    implemented.insert("f32.convert_i64_u".to_string());
+    implemented.insert("f64.convert_i32_s".to_string());
+    implemented.insert("f64.convert_i32_u".to_string());
+    implemented.insert("f64.convert_i64_s".to_string());
+    implemented.insert("f64.convert_i64_u".to_string());
+
+    // Float to integer truncation (trapping)
+    implemented.insert("i32.trunc_f32_s".to_string());
+    implemented.insert("i32.trunc_f32_u".to_string());
+    implemented.insert("i32.trunc_f64_s".to_string());
+    implemented.insert("i32.trunc_f64_u".to_string());
+    implemented.insert("i64.trunc_f32_s".to_string());
+    implemented.insert("i64.trunc_f32_u".to_string());
+    implemented.insert("i64.trunc_f64_s".to_string());
+    implemented.insert("i64.trunc_f64_u".to_string());
+
+    // Saturating truncation (non-trapping)
+    implemented.insert("i32.trunc_sat_f32_s".to_string());
+    implemented.insert("i32.trunc_sat_f32_u".to_string());
+    implemented.insert("i32.trunc_sat_f64_s".to_string());
+    implemented.insert("i32.trunc_sat_f64_u".to_string());
+    implemented.insert("i64.trunc_sat_f32_s".to_string());
+    implemented.insert("i64.trunc_sat_f32_u".to_string());
+    implemented.insert("i64.trunc_sat_f64_s".to_string());
+    implemented.insert("i64.trunc_sat_f64_u".to_string());
+
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && args[1] == "--add" {

@@ -333,17 +333,10 @@ pub fn f64_ge(stack: &mut Stack) -> Result<(), RuntimeError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::parser::instruction::InstructionKind;
+    use crate::parser::module::ValueType;
+    use crate::runtime::test_utils::test::ExecutorTest;
     use crate::runtime::Value;
-
-    // Helper to create a stack with values
-    fn stack_with(values: Vec<Value>) -> Stack {
-        let mut stack = Stack::new();
-        for value in values {
-            stack.push(value);
-        }
-        stack
-    }
 
     // ============================================================================
     // i32 Test Operations
@@ -352,19 +345,25 @@ mod tests {
     #[test]
     fn test_i32_eqz() {
         // Test zero
-        let mut stack = stack_with(vec![Value::I32(0)]);
-        i32_eqz(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0 })
+            .inst(InstructionKind::I32Eqz)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // Test non-zero positive
-        let mut stack = stack_with(vec![Value::I32(42)]);
-        i32_eqz(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Eqz)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
 
         // Test non-zero negative
-        let mut stack = stack_with(vec![Value::I32(-1)]);
-        i32_eqz(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Eqz)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
     }
 
     // ============================================================================
@@ -374,233 +373,469 @@ mod tests {
     #[test]
     fn test_i32_eq() {
         // Equal values
-        let mut stack = stack_with(vec![Value::I32(42), Value::I32(42)]);
-        i32_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // Different values
-        let mut stack = stack_with(vec![Value::I32(42), Value::I32(43)]);
-        i32_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Const { value: 43 })
+            .inst(InstructionKind::I32Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
 
-        // Negative values
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(-1)]);
-        i32_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // Negative values equal
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     #[test]
     fn test_i32_ne() {
         // Different values
-        let mut stack = stack_with(vec![Value::I32(42), Value::I32(43)]);
-        i32_ne(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Const { value: 43 })
+            .inst(InstructionKind::I32Ne)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // Equal values
-        let mut stack = stack_with(vec![Value::I32(42), Value::I32(42)]);
-        i32_ne(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::I32Ne)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
     }
 
     #[test]
     fn test_i32_lt_s() {
-        // a < b
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(2)]);
-        i32_lt_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 1 < 2 (true)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32LtS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // a >= b
-        let mut stack = stack_with(vec![Value::I32(2), Value::I32(1)]);
-        i32_lt_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        // 2 < 1 (false)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32LtS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
 
-        // Negative comparison
-        let mut stack = stack_with(vec![Value::I32(-2), Value::I32(-1)]);
-        i32_lt_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // -2 < -1 (true, signed)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -2 })
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32LtS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     #[test]
     fn test_i32_lt_u() {
-        // Unsigned comparison where sign bit matters
-        let mut stack = stack_with(vec![Value::I32(-1), Value::I32(1)]);
-        i32_lt_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0)); // -1 as u32 is large
+        // -1 as unsigned is greater than 1
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32LtU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
 
-        // Normal unsigned comparison
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(2)]);
-        i32_lt_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 1 < 2 (true)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32LtU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     #[test]
     fn test_i32_gt_s() {
-        // a > b
-        let mut stack = stack_with(vec![Value::I32(2), Value::I32(1)]);
-        i32_gt_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 2 > 1 (true)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32GtS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // a <= b
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(2)]);
-        i32_gt_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        // 1 > 2 (false)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32GtS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
     }
 
     #[test]
     fn test_i32_le_s() {
-        // a <= b (less)
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(2)]);
-        i32_le_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 1 <= 2 (true)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32LeS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // a <= b (equal)
-        let mut stack = stack_with(vec![Value::I32(2), Value::I32(2)]);
-        i32_le_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 2 <= 2 (true)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32LeS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // a > b
-        let mut stack = stack_with(vec![Value::I32(3), Value::I32(2)]);
-        i32_le_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        // 3 <= 2 (false)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 3 })
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32LeS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
     }
 
     #[test]
     fn test_i32_ge_s() {
-        // a >= b (greater)
-        let mut stack = stack_with(vec![Value::I32(2), Value::I32(1)]);
-        i32_ge_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 2 >= 1 (true)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32GeS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // a >= b (equal)
-        let mut stack = stack_with(vec![Value::I32(2), Value::I32(2)]);
-        i32_ge_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // More tests for unsigned comparisons
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: -1 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32GeU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // a < b
-        let mut stack = stack_with(vec![Value::I32(1), Value::I32(2)]);
-        i32_ge_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32GtU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::I32Const { value: 2 })
+            .inst(InstructionKind::I32LeU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     // ============================================================================
-    // i64 Tests
+    // i64 Comparison Operations
     // ============================================================================
 
     #[test]
     fn test_i64_eqz() {
         // Test zero
-        let mut stack = stack_with(vec![Value::I64(0)]);
-        i64_eqz(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0 })
+            .inst(InstructionKind::I64Eqz)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // Test non-zero
-        let mut stack = stack_with(vec![Value::I64(0x1_0000_0000)]);
-        i64_eqz(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEF0u64 as i64,
+            })
+            .inst(InstructionKind::I64Eqz)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
     }
 
     #[test]
     fn test_i64_comparisons() {
         // i64.eq
-        let mut stack = stack_with(vec![Value::I64(42), Value::I64(42)]);
-        i64_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 42 })
+            .inst(InstructionKind::I64Const { value: 42 })
+            .inst(InstructionKind::I64Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // i64.ne
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 42 })
+            .inst(InstructionKind::I64Const { value: 43 })
+            .inst(InstructionKind::I64Ne)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // i64.lt_s
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(0)]);
-        i64_lt_s(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64LtS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // i64.lt_u
-        let mut stack = stack_with(vec![Value::I64(-1), Value::I64(0)]);
-        i64_lt_u(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0)); // -1 as u64 is max value
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64LtU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
+
+        // i64.gt_s
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64GtS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // i64.gt_u
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64GtU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // i64.le_s
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64LeS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // i64.le_u
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Const { value: 2 })
+            .inst(InstructionKind::I64LeU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // i64.ge_s
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64GeS)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // i64.ge_u
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: -1 })
+            .inst(InstructionKind::I64Const { value: 1 })
+            .inst(InstructionKind::I64GeU)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     // ============================================================================
-    // f32 Tests
+    // f32 Comparison Operations
     // ============================================================================
 
     #[test]
     fn test_f32_eq() {
         // Equal values
-        let mut stack = stack_with(vec![Value::F32(1.0), Value::F32(1.0)]);
-        f32_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 42.0 })
+            .inst(InstructionKind::F32Const { value: 42.0 })
+            .inst(InstructionKind::F32Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // NaN != NaN
-        let mut stack = stack_with(vec![Value::F32(f32::NAN), Value::F32(f32::NAN)]);
-        f32_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        // Different values
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 42.0 })
+            .inst(InstructionKind::F32Const { value: 43.0 })
+            .inst(InstructionKind::F32Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
 
-        // -0.0 == +0.0
-        let mut stack = stack_with(vec![Value::F32(-0.0), Value::F32(0.0)]);
-        f32_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // NaN never equals anything, even itself
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::NAN })
+            .inst(InstructionKind::F32Const { value: f32::NAN })
+            .inst(InstructionKind::F32Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
     }
 
     #[test]
     fn test_f32_ne() {
         // Different values
-        let mut stack = stack_with(vec![Value::F32(1.0), Value::F32(2.0)]);
-        f32_ne(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 42.0 })
+            .inst(InstructionKind::F32Const { value: 43.0 })
+            .inst(InstructionKind::F32Ne)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // NaN != NaN is true
-        let mut stack = stack_with(vec![Value::F32(f32::NAN), Value::F32(f32::NAN)]);
-        f32_ne(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // NaN is not equal to itself
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::NAN })
+            .inst(InstructionKind::F32Const { value: f32::NAN })
+            .inst(InstructionKind::F32Ne)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     #[test]
     fn test_f32_lt() {
-        // a < b
-        let mut stack = stack_with(vec![Value::F32(1.0), Value::F32(2.0)]);
-        f32_lt(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // 1.0 < 2.0
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 1.0 })
+            .inst(InstructionKind::F32Const { value: 2.0 })
+            .inst(InstructionKind::F32Lt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // NaN comparison returns false
-        let mut stack = stack_with(vec![Value::F32(f32::NAN), Value::F32(1.0)]);
-        f32_lt(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        // NaN comparisons always false
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::NAN })
+            .inst(InstructionKind::F32Const { value: 1.0 })
+            .inst(InstructionKind::F32Lt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0)]);
 
-        let mut stack = stack_with(vec![Value::F32(1.0), Value::F32(f32::NAN)]);
-        f32_lt(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        // Other comparisons
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 2.0 })
+            .inst(InstructionKind::F32Const { value: 1.0 })
+            .inst(InstructionKind::F32Gt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 1.0 })
+            .inst(InstructionKind::F32Const { value: 2.0 })
+            .inst(InstructionKind::F32Le)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: 2.0 })
+            .inst(InstructionKind::F32Const { value: 1.0 })
+            .inst(InstructionKind::F32Ge)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     #[test]
     fn test_f32_infinity() {
-        // -inf < inf
-        let mut stack = stack_with(vec![Value::F32(f32::NEG_INFINITY), Value::F32(f32::INFINITY)]);
-        f32_lt(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // Infinity is greater than any finite number
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::INFINITY })
+            .inst(InstructionKind::F32Const { value: f32::MAX })
+            .inst(InstructionKind::F32Gt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // inf > any finite
-        let mut stack = stack_with(vec![Value::F32(f32::INFINITY), Value::F32(1e10)]);
-        f32_gt(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        // -Infinity is less than any finite number
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const {
+                value: f32::NEG_INFINITY,
+            })
+            .inst(InstructionKind::F32Const { value: f32::MIN })
+            .inst(InstructionKind::F32Lt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // Infinity equals itself
+        ExecutorTest::new()
+            .inst(InstructionKind::F32Const { value: f32::INFINITY })
+            .inst(InstructionKind::F32Const { value: f32::INFINITY })
+            .inst(InstructionKind::F32Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 
     // ============================================================================
-    // f64 Tests
+    // f64 Comparison Operations
     // ============================================================================
 
     #[test]
     fn test_f64_comparisons() {
         // f64.eq
-        let mut stack = stack_with(vec![Value::F64(42.0), Value::F64(42.0)]);
-        f64_eq(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: 42.0 })
+            .inst(InstructionKind::F64Const { value: 42.0 })
+            .inst(InstructionKind::F64Eq)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
-        // f64.lt with NaN
-        let mut stack = stack_with(vec![Value::F64(f64::NAN), Value::F64(1.0)]);
-        f64_lt(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(0));
+        // f64.ne with NaN
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: f64::NAN })
+            .inst(InstructionKind::F64Const { value: f64::NAN })
+            .inst(InstructionKind::F64Ne)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // f64.lt
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: -1.0 })
+            .inst(InstructionKind::F64Const { value: 1.0 })
+            .inst(InstructionKind::F64Lt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // f64.gt
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: 1.0 })
+            .inst(InstructionKind::F64Const { value: -1.0 })
+            .inst(InstructionKind::F64Gt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // f64.le
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: 1.0 })
+            .inst(InstructionKind::F64Const { value: 1.0 })
+            .inst(InstructionKind::F64Le)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
 
         // f64.ge
-        let mut stack = stack_with(vec![Value::F64(2.0), Value::F64(2.0)]);
-        f64_ge(&mut stack).unwrap();
-        assert_eq!(stack.pop().unwrap(), Value::I32(1));
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: 1.0 })
+            .inst(InstructionKind::F64Const { value: 1.0 })
+            .inst(InstructionKind::F64Ge)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        // Infinity comparisons
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const { value: f64::INFINITY })
+            .inst(InstructionKind::F64Const { value: 1000.0 })
+            .inst(InstructionKind::F64Gt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
+
+        ExecutorTest::new()
+            .inst(InstructionKind::F64Const {
+                value: f64::NEG_INFINITY,
+            })
+            .inst(InstructionKind::F64Const { value: -1000.0 })
+            .inst(InstructionKind::F64Lt)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(1)]);
     }
 }
