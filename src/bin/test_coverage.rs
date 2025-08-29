@@ -164,6 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("nop".to_string());
     implemented.insert("drop".to_string());
     implemented.insert("end".to_string());
+    implemented.insert("unreachable".to_string());
     implemented.insert("local.get".to_string());
     implemented.insert("local.set".to_string());
     implemented.insert("local.tee".to_string());
@@ -322,6 +323,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("i32.wrap_i64".to_string());
     implemented.insert("i64.extend_i32_s".to_string());
     implemented.insert("i64.extend_i32_u".to_string());
+
+    // Sign extension operations
+    implemented.insert("i32.extend8_s".to_string());
+    implemented.insert("i32.extend16_s".to_string());
+    implemented.insert("i64.extend8_s".to_string());
+    implemented.insert("i64.extend16_s".to_string());
+    implemented.insert("i64.extend32_s".to_string());
 
     // Float width conversions
     implemented.insert("f32.demote_f64".to_string());

@@ -47,4 +47,6 @@ pub enum RuntimeError {
     IntegerOverflow,
     #[error("Invalid conversion: {0}")]
     InvalidConversion(String),
+    #[error("Trap: {0}")]
+    Trap(String),
 }

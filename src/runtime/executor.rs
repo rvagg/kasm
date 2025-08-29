@@ -343,6 +343,9 @@ impl<'a> Executor<'a> {
             // ----------------------------------------------------------------
             // 4.4.8 Control Instructions
             //
+            // unreachable - trap immediately
+            Unreachable => ops::control::unreachable(),
+
             // nop
             // 1. Do nothing.
             Nop => Ok(BlockEnd::Normal),
@@ -953,6 +956,28 @@ impl<'a> Executor<'a> {
             }
             I64ExtendI32U => {
                 ops::conversion::i64_extend_i32_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // Sign extension operations
+            I32Extend8S => {
+                ops::conversion::i32_extend8_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I32Extend16S => {
+                ops::conversion::i32_extend16_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Extend8S => {
+                ops::conversion::i64_extend8_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Extend16S => {
+                ops::conversion::i64_extend16_s(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            I64Extend32S => {
+                ops::conversion::i64_extend32_s(&mut self.stack)?;
                 Ok(BlockEnd::Normal)
             }
 

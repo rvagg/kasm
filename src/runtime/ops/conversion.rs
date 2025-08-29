@@ -42,6 +42,70 @@ pub fn i64_extend_i32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
 }
 
 // ============================================================================
+// Sign Extension Operations
+// ============================================================================
+
+/// i32.extend8_s - Sign-extend 8-bit value to i32
+/// spec: 4.4.1.6
+///
+/// Takes the lowest 8 bits of an i32 value and sign-extends them to 32 bits.
+/// If bit 7 is set (negative in 8-bit), all upper bits are set to 1.
+pub fn i32_extend8_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    let byte = value as i8; // Truncate to 8 bits and interpret as signed
+    stack.push(Value::I32(byte as i32)); // Sign-extend back to i32
+    Ok(())
+}
+
+/// i32.extend16_s - Sign-extend 16-bit value to i32
+/// spec: 4.4.1.6
+///
+/// Takes the lowest 16 bits of an i32 value and sign-extends them to 32 bits.
+/// If bit 15 is set (negative in 16-bit), all upper bits are set to 1.
+pub fn i32_extend16_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i32()?;
+    let short = value as i16; // Truncate to 16 bits and interpret as signed
+    stack.push(Value::I32(short as i32)); // Sign-extend back to i32
+    Ok(())
+}
+
+/// i64.extend8_s - Sign-extend 8-bit value to i64
+/// spec: 4.4.1.6
+///
+/// Takes the lowest 8 bits of an i64 value and sign-extends them to 64 bits.
+/// If bit 7 is set (negative in 8-bit), all upper bits are set to 1.
+pub fn i64_extend8_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    let byte = value as i8; // Truncate to 8 bits and interpret as signed
+    stack.push(Value::I64(byte as i64)); // Sign-extend back to i64
+    Ok(())
+}
+
+/// i64.extend16_s - Sign-extend 16-bit value to i64
+/// spec: 4.4.1.6
+///
+/// Takes the lowest 16 bits of an i64 value and sign-extends them to 64 bits.
+/// If bit 15 is set (negative in 16-bit), all upper bits are set to 1.
+pub fn i64_extend16_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    let short = value as i16; // Truncate to 16 bits and interpret as signed
+    stack.push(Value::I64(short as i64)); // Sign-extend back to i64
+    Ok(())
+}
+
+/// i64.extend32_s - Sign-extend 32-bit value to i64
+/// spec: 4.4.1.6
+///
+/// Takes the lowest 32 bits of an i64 value and sign-extends them to 64 bits.
+/// If bit 31 is set (negative in 32-bit), all upper bits are set to 1.
+pub fn i64_extend32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
+    let value = stack.pop_i64()?;
+    let int = value as i32; // Truncate to 32 bits and interpret as signed
+    stack.push(Value::I64(int as i64)); // Sign-extend back to i64
+    Ok(())
+}
+
+// ============================================================================
 // Reinterpretation / Bit Casting
 // ============================================================================
 
@@ -901,5 +965,179 @@ mod tests {
             })
             .inst(InstructionKind::I64TruncF64S)
             .expect_error("infinity to integer");
+    }
+
+    // ============================================================================
+    // Sign Extension Tests
+    // ============================================================================
+
+    #[test]
+    fn test_i32_extend8_s() {
+        // Positive value (no sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x7F }) // 127
+            .inst(InstructionKind::I32Extend8S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x7F)]);
+
+        // Negative value (sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x80 }) // 128 -> -128 in i8
+            .inst(InstructionKind::I32Extend8S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-128)]);
+
+        // -1 in 8-bit
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0xFF }) // 255 -> -1 in i8
+            .inst(InstructionKind::I32Extend8S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
+
+        // Value with upper bits set (should be ignored)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x123456FF })
+            .inst(InstructionKind::I32Extend8S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]); // Only lowest 8 bits matter
+    }
+
+    #[test]
+    fn test_i32_extend16_s() {
+        // Positive value (no sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x7FFF }) // 32767
+            .inst(InstructionKind::I32Extend16S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(0x7FFF)]);
+
+        // Negative value (sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x8000 }) // 32768 -> -32768 in i16
+            .inst(InstructionKind::I32Extend16S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-32768)]);
+
+        // -1 in 16-bit
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0xFFFF }) // 65535 -> -1 in i16
+            .inst(InstructionKind::I32Extend16S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]);
+
+        // Value with upper bits set (should be ignored)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0x1234FFFF })
+            .inst(InstructionKind::I32Extend16S)
+            .returns(vec![ValueType::I32])
+            .expect_stack(vec![Value::I32(-1)]); // Only lowest 16 bits matter
+    }
+
+    #[test]
+    fn test_i64_extend8_s() {
+        // Positive value (no sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0x7F }) // 127
+            .inst(InstructionKind::I64Extend8S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x7F)]);
+
+        // Negative value (sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0x80 }) // 128 -> -128 in i8
+            .inst(InstructionKind::I64Extend8S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-128)]);
+
+        // -1 in 8-bit
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0xFF }) // 255 -> -1 in i8
+            .inst(InstructionKind::I64Extend8S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
+
+        // Value with upper bits set (should be ignored)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCDEFF,
+            })
+            .inst(InstructionKind::I64Extend8S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]); // Only lowest 8 bits matter
+    }
+
+    #[test]
+    fn test_i64_extend16_s() {
+        // Positive value (no sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0x7FFF }) // 32767
+            .inst(InstructionKind::I64Extend16S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x7FFF)]);
+
+        // Negative value (sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0x8000 }) // 32768 -> -32768 in i16
+            .inst(InstructionKind::I64Extend16S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-32768)]);
+
+        // -1 in 16-bit
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0xFFFF }) // 65535 -> -1 in i16
+            .inst(InstructionKind::I64Extend16S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
+
+        // Value with upper bits set (should be ignored)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x123456789ABCFFFF,
+            })
+            .inst(InstructionKind::I64Extend16S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]); // Only lowest 16 bits matter
+    }
+
+    #[test]
+    fn test_i64_extend32_s() {
+        // Positive value (no sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0x7FFFFFFF }) // MAX i32
+            .inst(InstructionKind::I64Extend32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x7FFFFFFF)]);
+
+        // Negative value (sign extension)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0x80000000 }) // MIN i32
+            .inst(InstructionKind::I64Extend32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-2147483648)]);
+
+        // -1 in 32-bit
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const { value: 0xFFFFFFFF }) // -1 in i32
+            .inst(InstructionKind::I64Extend32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]);
+
+        // Value with upper bits set (should be ignored)
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0x12345678FFFFFFFF,
+            })
+            .inst(InstructionKind::I64Extend32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(-1)]); // Only lowest 32 bits matter
+
+        // Another example with upper bits
+        ExecutorTest::new()
+            .inst(InstructionKind::I64Const {
+                value: 0xABCDEF0012345678u64 as i64,
+            })
+            .inst(InstructionKind::I64Extend32S)
+            .returns(vec![ValueType::I64])
+            .expect_stack(vec![Value::I64(0x12345678)]);
     }
 }

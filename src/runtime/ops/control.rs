@@ -163,6 +163,16 @@ pub fn return_op() -> Result<BlockEnd, RuntimeError> {
     Ok(BlockEnd::Return)
 }
 
+/// unreachable - Trap immediately
+/// spec: 4.4.8
+///
+/// From the spec:
+/// The unreachable instruction causes an immediate trap.
+/// It is typically used to indicate unreachable code.
+pub fn unreachable() -> Result<BlockEnd, RuntimeError> {
+    Err(RuntimeError::Trap("unreachable instruction executed".to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::parser::instruction::{BlockType, InstructionKind};
@@ -829,5 +839,71 @@ mod tests {
             .inst(InstructionKind::End)
             .returns(vec![ValueType::I32])
             .expect_stack(vec![Value::I32(42)]);
+    }
+
+    // ============================================================================
+    // Unreachable Tests
+    // ============================================================================
+
+    #[test]
+    fn unreachable_immediate() {
+        // Unreachable should trap immediately
+        ExecutorTest::new()
+            .inst(InstructionKind::Unreachable)
+            .inst(InstructionKind::I32Const { value: 42 }) // Should not be reached
+            .expect_error("Trap");
+    }
+
+    #[test]
+    fn unreachable_after_value() {
+        // Unreachable after pushing a value
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::Unreachable)
+            .inst(InstructionKind::I32Const { value: 99 }) // Should not be reached
+            .expect_error("Trap");
+    }
+
+    #[test]
+    fn unreachable_in_block() {
+        // Unreachable inside a block
+        ExecutorTest::new()
+            .inst(InstructionKind::Block {
+                block_type: BlockType::Empty,
+            })
+            .inst(InstructionKind::Unreachable)
+            .inst(InstructionKind::End)
+            .inst(InstructionKind::I32Const { value: 42 }) // Should not be reached
+            .expect_error("Trap");
+    }
+
+    #[test]
+    fn unreachable_in_if_branch() {
+        // Unreachable in if branch (taken)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 1 })
+            .inst(InstructionKind::If {
+                block_type: BlockType::Empty,
+            })
+            .inst(InstructionKind::Unreachable)
+            .inst(InstructionKind::Else)
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::End)
+            .expect_error("Trap");
+    }
+
+    #[test]
+    fn unreachable_in_else_branch() {
+        // Unreachable in else branch (taken)
+        ExecutorTest::new()
+            .inst(InstructionKind::I32Const { value: 0 })
+            .inst(InstructionKind::If {
+                block_type: BlockType::Empty,
+            })
+            .inst(InstructionKind::I32Const { value: 42 })
+            .inst(InstructionKind::Else)
+            .inst(InstructionKind::Unreachable)
+            .inst(InstructionKind::End)
+            .expect_error("Trap");
     }
 }
