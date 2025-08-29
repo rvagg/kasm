@@ -354,6 +354,14 @@ impl<'a> Executor<'a> {
                 ops::parametric::drop(&mut self.stack)?;
                 Ok(BlockEnd::Normal)
             }
+            Select => {
+                ops::parametric::select(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+            SelectTyped { val_types } => {
+                ops::parametric::select_typed(&mut self.stack, val_types)?;
+                Ok(BlockEnd::Normal)
+            }
 
             // 4.4.5 Variable Instructions
             LocalGet { local_idx } => {

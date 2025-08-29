@@ -167,6 +167,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("local.get".to_string());
     implemented.insert("local.set".to_string());
     implemented.insert("local.tee".to_string());
+    // Global variables
+    implemented.insert("global.get".to_string());
+    implemented.insert("global.set".to_string());
+    // Parametric instructions
+    implemented.insert("select".to_string());
     implemented.insert("block".to_string());
     implemented.insert("loop".to_string());
     implemented.insert("br".to_string());
