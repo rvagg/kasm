@@ -23,6 +23,8 @@ pub struct Executor<'a> {
     label_stack: LabelStack,
     /// Memory instances (WebAssembly 1.0 supports only 1)
     memories: Vec<Memory>,
+    /// Global variable values
+    globals: Vec<Value>,
 }
 
 impl<'a> Executor<'a> {
@@ -52,13 +54,44 @@ impl<'a> Executor<'a> {
             }
         };
 
+        // Initialize globals from module
+        let mut globals = Vec::new();
+        for global in &module.globals.globals {
+            // For now, initialize all globals to zero of their type
+            // TODO: Execute init expressions
+            let initial_value = match global.global_type.value_type {
+                ValueType::I32 => Value::I32(0),
+                ValueType::I64 => Value::I64(0),
+                ValueType::F32 => Value::F32(0.0),
+                ValueType::F64 => Value::F64(0.0),
+                ValueType::V128 | ValueType::FuncRef | ValueType::ExternRef => {
+                    return Err(RuntimeError::UnimplementedInstruction(format!(
+                        "Global type {:?} not yet supported",
+                        global.global_type.value_type
+                    )));
+                }
+            };
+            globals.push(initial_value);
+        }
+
         Ok(Executor {
             module,
             stack: Stack::new(),
             frame: None,
             label_stack: LabelStack::new(),
             memories,
+            globals,
         })
+    }
+
+    /// Set a global value for testing purposes
+    #[cfg(test)]
+    pub fn set_global_for_test(&mut self, global_idx: u32, value: Value) -> Result<(), RuntimeError> {
+        if global_idx as usize >= self.globals.len() {
+            return Err(RuntimeError::GlobalIndexOutOfBounds(global_idx));
+        }
+        self.globals[global_idx as usize] = value;
+        Ok(())
     }
 
     /// Execute a function
@@ -338,6 +371,16 @@ impl<'a> Executor<'a> {
             LocalTee { local_idx } => {
                 let frame = self.frame.as_mut().ok_or(RuntimeError::InvalidFunctionType)?;
                 ops::variable::local_tee(&mut self.stack, frame, *local_idx)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            GlobalGet { global_idx } => {
+                ops::variable::global_get(&mut self.stack, &self.globals, *global_idx)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            GlobalSet { global_idx } => {
+                ops::variable::global_set(&mut self.stack, &mut self.globals, self.module, *global_idx)?;
                 Ok(BlockEnd::Normal)
             }
 

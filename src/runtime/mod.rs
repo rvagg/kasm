@@ -35,6 +35,8 @@ pub enum RuntimeError {
     InvalidFunctionType,
     #[error("Local variable index out of bounds: {0}")]
     LocalIndexOutOfBounds(u32),
+    #[error("Global variable index out of bounds: {0}")]
+    GlobalIndexOutOfBounds(u32),
     #[error("Invalid label: {0}")]
     InvalidLabel(u32),
     #[error("Memory error: {0}")]

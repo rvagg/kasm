@@ -6,7 +6,7 @@
 #[cfg(test)]
 pub mod test {
     use crate::parser::instruction::{ByteRange, Instruction, InstructionKind};
-    use crate::parser::module::{Module, ValueType};
+    use crate::parser::module::{Global, GlobalSection, GlobalType, Module, ValueType};
     use crate::parser::structure_builder::StructureBuilder;
     use crate::runtime::executor::Executor;
     use crate::runtime::Value;
@@ -17,6 +17,7 @@ pub mod test {
         args: Vec<Value>,
         return_types: Vec<ValueType>,
         with_memory: bool,
+        globals: Vec<(ValueType, Value, bool)>, // (type, initial_value, mutable)
     }
 
     impl ExecutorTest {
@@ -26,11 +27,17 @@ pub mod test {
                 args: Vec::new(),
                 return_types: Vec::new(),
                 with_memory: false,
+                globals: Vec::new(),
             }
         }
 
         pub fn with_memory(mut self) -> Self {
             self.with_memory = true;
+            self
+        }
+
+        pub fn global(mut self, value_type: ValueType, initial_value: Value, mutable: bool) -> Self {
+            self.globals.push((value_type, initial_value, mutable));
             self
         }
 
@@ -73,6 +80,25 @@ pub mod test {
                 };
             }
 
+            // Add globals if any
+            if !self.globals.is_empty() {
+                use crate::parser::module::SectionPosition;
+                let mut globals = Vec::new();
+                for (value_type, _initial_value, mutable) in &self.globals {
+                    globals.push(Global {
+                        global_type: GlobalType {
+                            value_type: *value_type,
+                            mutable: *mutable,
+                        },
+                        init: vec![], // Empty init for now - will be handled by executor
+                    });
+                }
+                module.globals = GlobalSection {
+                    globals,
+                    position: SectionPosition { start: 0, end: 0 },
+                };
+            }
+
             // Build structured representation
             let structured_func = StructureBuilder::build_function(
                 &self.instructions,
@@ -82,6 +108,15 @@ pub mod test {
             .expect("Structure building should succeed");
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+
+            // Set initial global values if any were specified
+            if !self.globals.is_empty() {
+                for (i, (_value_type, initial_value, _mutable)) in self.globals.iter().enumerate() {
+                    executor
+                        .set_global_for_test(i as u32, initial_value.clone())
+                        .expect("Setting global should succeed");
+                }
+            }
             let results = executor
                 .execute_function(&structured_func, self.args, &self.return_types)
                 .expect("Execution should succeed");
@@ -107,11 +142,40 @@ pub mod test {
                 };
             }
 
+            // Add globals if any
+            if !self.globals.is_empty() {
+                use crate::parser::module::SectionPosition;
+                let mut globals = Vec::new();
+                for (value_type, _initial_value, mutable) in &self.globals {
+                    globals.push(Global {
+                        global_type: GlobalType {
+                            value_type: *value_type,
+                            mutable: *mutable,
+                        },
+                        init: vec![], // Empty init for now - will be handled by executor
+                    });
+                }
+                module.globals = GlobalSection {
+                    globals,
+                    position: SectionPosition { start: 0, end: 0 },
+                };
+            }
+
             // Build structured representation
             let structured_func = StructureBuilder::build_function(&self.instructions, 0, self.return_types.clone())
                 .expect("Structure building should succeed");
 
             let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+
+            // Set initial global values if any were specified
+            if !self.globals.is_empty() {
+                for (i, (_value_type, initial_value, _mutable)) in self.globals.iter().enumerate() {
+                    executor
+                        .set_global_for_test(i as u32, initial_value.clone())
+                        .expect("Setting global should succeed");
+                }
+            }
+
             let result = executor.execute_function(&structured_func, self.args, &self.return_types);
 
             match result {
