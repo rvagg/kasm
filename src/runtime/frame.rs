@@ -1,19 +1,20 @@
-//! WebAssembly execution frame
+//! WebAssembly call frame
 //!
-//! Represents the activation frame for a function call, containing local variables
+//! Represents the call frame for function execution, containing locals and control flow state
 
-use super::Value;
+use super::{control::Label, Value};
 
-/// Execution frame for a function
+/// Call frame for managing function calls
 #[derive(Debug)]
-pub struct Frame {
-    /// Local variables (includes function parameters)
+pub struct CallFrame {
+    /// Function index in the module
+    pub function_idx: u32,
+    /// Instruction pointer in the function body
+    pub ip: usize,
+    /// Local variables (parameters + declared locals)
     pub locals: Vec<Value>,
-}
-
-impl Frame {
-    /// Create a new frame with the given locals
-    pub fn new(locals: Vec<Value>) -> Self {
-        Frame { locals }
-    }
+    /// Label stack for control flow within this function
+    pub label_stack: Vec<Label>,
+    /// Number of values this function should return
+    pub return_arity: usize,
 }

@@ -1516,8 +1516,7 @@ impl SectionToString for CustomSection {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct FunctionType {
     pub parameters: Vec<ValueType>,
     pub return_types: Vec<ValueType>,

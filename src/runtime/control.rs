@@ -38,7 +38,7 @@ pub enum LabelType {
 ///
 /// Each label represents an active control construct and contains the information
 /// needed for branch instructions to properly exit or continue execution.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Label {
     /// Type of this label construct
     pub label_type: LabelType,
@@ -78,6 +78,11 @@ impl LabelStack {
     /// From the spec: "The label stack is empty when execution starts"
     pub fn new() -> Self {
         LabelStack { labels: Vec::new() }
+    }
+
+    /// Create a label stack from a vector of labels
+    pub fn from_vec(labels: Vec<Label>) -> Self {
+        LabelStack { labels }
     }
 
     /// Push a new label onto the stack

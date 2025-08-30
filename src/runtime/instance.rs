@@ -36,12 +36,31 @@ impl<'a> Instance<'a> {
         // Get the function index
         let func_idx = *export_index;
 
-        // Get the function type
+        // Calculate the number of imported functions
+        let num_imported_functions = self
+            .module
+            .imports
+            .imports
+            .iter()
+            .filter(|import| matches!(import.external_kind, crate::parser::module::ExternalKind::Function(_)))
+            .count();
+
+        // Check if this is an imported function (which we can't execute)
+        if (func_idx as usize) < num_imported_functions {
+            return Err(RuntimeError::UnimplementedInstruction(
+                "Cannot execute imported functions".to_string(),
+            ));
+        }
+
+        // Calculate the code section index (func_idx - num_imported)
+        let code_idx = func_idx as usize - num_imported_functions;
+
+        // Get the function declaration
         let func = self
             .module
             .functions
             .functions
-            .get(func_idx as usize)
+            .get(code_idx)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_type = self
@@ -69,12 +88,12 @@ impl<'a> Instance<'a> {
             }
         }
 
-        // Get the function body
+        // Get the function body from the code section
         let body = self
             .module
             .code
             .code
-            .get(func_idx as usize)
+            .get(code_idx)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         // Use the pre-built structured representation from FunctionBody

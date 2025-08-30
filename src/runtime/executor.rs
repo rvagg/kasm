@@ -2,29 +2,33 @@
 
 use super::{
     control::{Label, LabelStack, LabelType},
-    frame::Frame,
+    frame::CallFrame,
     memory::Memory,
     ops,
     stack::Stack,
     RuntimeError, Value,
 };
 use crate::parser::instruction::{Instruction, InstructionKind};
-use crate::parser::module::{Module, ValueType};
+use crate::parser::module::{FunctionType, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
+
+/// Maximum call stack depth to prevent stack overflow
+const MAX_CALL_DEPTH: usize = 1000;
 
 /// Executes WebAssembly instructions
 pub struct Executor<'a> {
-    #[allow(dead_code)] // Will be used in the future
     module: &'a Module,
     stack: Stack,
-    /// Current execution frame (contains locals)
-    frame: Option<Frame>,
-    /// Label stack for control flow
-    label_stack: LabelStack,
+    /// Call stack for managing function calls (always has at least one frame during execution)
+    call_stack: Vec<CallFrame>,
     /// Memory instances (WebAssembly 1.0 supports only 1)
     memories: Vec<Memory>,
     /// Global variable values
     globals: Vec<Value>,
+    /// Function bodies for quick access
+    functions: Vec<Option<StructuredFunction>>,
+    /// Function types for quick access
+    function_types: Vec<FunctionType>,
 }
 
 impl<'a> Executor<'a> {
@@ -74,14 +78,220 @@ impl<'a> Executor<'a> {
             globals.push(initial_value);
         }
 
+        // Build function registry - collect all function bodies
+        // First, count imported functions (they come first in the index space)
+        let num_imported_functions = module
+            .imports
+            .imports
+            .iter()
+            .filter(|import| matches!(import.external_kind, crate::parser::module::ExternalKind::Function(_)))
+            .count();
+
+        let mut functions = Vec::new();
+
+        // Imported functions have no bodies
+        for _ in 0..num_imported_functions {
+            functions.push(None);
+        }
+
+        // Defined functions have bodies in the code section
+        for body in &module.code.code {
+            functions.push(Some(body.body.clone()));
+        }
+
+        // Collect function types for quick access
+        let function_types = module.types.types.clone();
+
         Ok(Executor {
             module,
             stack: Stack::new(),
-            frame: None,
-            label_stack: LabelStack::new(),
+            call_stack: Vec::new(),
             memories,
             globals,
+            functions,
+            function_types,
         })
+    }
+
+    /// Push a new call frame for a function call
+    fn push_call_frame(&mut self, func_idx: u32, args: Vec<Value>, return_arity: usize) -> Result<(), RuntimeError> {
+        // Check call stack depth
+        if self.call_stack.len() >= MAX_CALL_DEPTH {
+            return Err(RuntimeError::Trap("call stack exhausted".to_string()));
+        }
+
+        // Get the function type
+        let func = self
+            .module
+            .functions
+            .functions
+            .get(func_idx as usize)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+        let func_type = self
+            .function_types
+            .get(func.ftype_index as usize)
+            .ok_or(RuntimeError::InvalidFunctionType)?;
+
+        // Verify argument count and types match
+        if args.len() != func_type.parameters.len() {
+            return Err(RuntimeError::TypeMismatch {
+                expected: format!("{} arguments", func_type.parameters.len()),
+                actual: format!("{} arguments", args.len()),
+            });
+        }
+
+        // Verify each argument type
+        for (i, (arg, expected_type)) in args.iter().zip(&func_type.parameters).enumerate() {
+            if arg.typ() != *expected_type {
+                return Err(RuntimeError::TypeMismatch {
+                    expected: format!("{expected_type:?} for argument {i}"),
+                    actual: format!("{:?}", arg.typ()),
+                });
+            }
+        }
+
+        // Get the function body
+        let body = self
+            .module
+            .code
+            .code
+            .get(func_idx as usize)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+        // Initialize locals: parameters first, then local declarations
+        let mut locals = args;
+        for (count, local_type) in body.locals.iter() {
+            for _ in 0..*count {
+                // Initialize locals to zero
+                let zero_value = match local_type {
+                    ValueType::I32 => Value::I32(0),
+                    ValueType::I64 => Value::I64(0),
+                    ValueType::F32 => Value::F32(0.0),
+                    ValueType::F64 => Value::F64(0.0),
+                    _ => {
+                        return Err(RuntimeError::UnimplementedInstruction(format!(
+                            "Local type {local_type:?} not supported"
+                        )))
+                    }
+                };
+                locals.push(zero_value);
+            }
+        }
+
+        // Create and push the new frame
+        let frame = CallFrame {
+            function_idx: func_idx,
+            ip: 0,
+            locals,
+            label_stack: Vec::new(),
+            return_arity,
+        };
+
+        self.call_stack.push(frame);
+        Ok(())
+    }
+
+    /// Pop the current call frame and return to the caller
+    fn pop_call_frame(&mut self) -> Option<CallFrame> {
+        self.call_stack.pop()
+    }
+
+    /// Get the current frame's locals (mutable)
+    fn current_locals_mut(&mut self) -> Result<&mut Vec<Value>, RuntimeError> {
+        self.call_stack
+            .last_mut()
+            .map(|frame| &mut frame.locals)
+            .ok_or(RuntimeError::InvalidFunctionType)
+    }
+
+    /// Get the current frame's locals (immutable)
+    fn current_locals(&self) -> Result<&Vec<Value>, RuntimeError> {
+        self.call_stack
+            .last()
+            .map(|frame| &frame.locals)
+            .ok_or(RuntimeError::InvalidFunctionType)
+    }
+
+    /// Get the current label stack (mutable)
+    fn current_label_stack_mut(&mut self) -> Result<&mut Vec<Label>, RuntimeError> {
+        self.call_stack
+            .last_mut()
+            .map(|frame| &mut frame.label_stack)
+            .ok_or(RuntimeError::InvalidFunctionType)
+    }
+
+    /// Get the current label stack (immutable)
+    fn current_label_stack(&self) -> Result<&Vec<Label>, RuntimeError> {
+        self.call_stack
+            .last()
+            .map(|frame| &frame.label_stack)
+            .ok_or(RuntimeError::InvalidFunctionType)
+    }
+
+    /// Handle a function call instruction
+    fn handle_call(&mut self, func_idx: u32) -> Result<(), RuntimeError> {
+        // Get function type to know parameter and return counts
+        let func = self
+            .module
+            .functions
+            .functions
+            .get(func_idx as usize)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+        let func_type = self
+            .function_types
+            .get(func.ftype_index as usize)
+            .ok_or(RuntimeError::InvalidFunctionType)?;
+
+        // Pop arguments from the operand stack (in reverse order)
+        let mut args = Vec::new();
+        for param_type in func_type.parameters.iter().rev() {
+            let value = self.stack.pop_typed(*param_type)?;
+            args.push(value);
+        }
+        args.reverse();
+
+        // Push new call frame
+        self.push_call_frame(func_idx, args, func_type.return_types.len())?;
+
+        // Get the function body
+        let function_opt = self
+            .functions
+            .get(func_idx as usize)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+        // Check if this is an imported function (no body)
+        let body = match function_opt {
+            Some(body) => body.clone(),
+            None => {
+                // This is an imported function - we can't execute it
+                return Err(RuntimeError::UnimplementedInstruction(format!(
+                    "Cannot execute imported function at index {func_idx}"
+                )));
+            }
+        };
+
+        // Execute the called function
+        let result = self.execute_instructions(&body.body);
+
+        // Pop the call frame
+        let _frame = self.pop_call_frame().unwrap();
+
+        // Handle the result
+        match result {
+            Ok(BlockEnd::Normal) | Ok(BlockEnd::Return) => {
+                // Function completed normally, return values are on the stack
+                // The caller is responsible for verifying the correct number and types
+                // of return values when popping them from the stack
+                Ok(())
+            }
+            Ok(BlockEnd::Branch(_)) => {
+                // Uncaught branch in function
+                Err(RuntimeError::Trap("uncaught branch in function".to_string()))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Set a global value for testing purposes
@@ -101,15 +311,24 @@ impl<'a> Executor<'a> {
         args: Vec<Value>,
         return_types: &[ValueType],
     ) -> Result<Vec<Value>, RuntimeError> {
-        // Initialise frame with arguments as locals
-        let frame = Frame::new(args);
-        self.frame = Some(frame);
-
-        // Reset label stack for new function
-        self.label_stack = LabelStack::new();
+        // Create initial call frame
+        let initial_frame = CallFrame {
+            function_idx: 0, // Top-level function
+            ip: 0,
+            locals: args,
+            label_stack: Vec::new(),
+            return_arity: return_types.len(),
+        };
+        self.call_stack.push(initial_frame);
 
         // Execute the function body
-        match self.execute_instructions(&func.body) {
+        let result = self.execute_instructions(&func.body);
+
+        // Pop the initial frame
+        self.call_stack.pop();
+
+        // Handle the result
+        match result {
             Ok(BlockEnd::Normal) => {
                 // Normal completion - collect return values
                 let mut results = Vec::new();
@@ -162,13 +381,13 @@ impl<'a> Executor<'a> {
                     stack_height: self.stack.len(),
                     unreachable: false,
                 };
-                self.label_stack.push(label);
+                self.current_label_stack_mut()?.push(label);
 
                 // Execute the block body
                 let result = self.execute_instructions(body);
 
                 // Pop the label
-                self.label_stack.pop();
+                self.current_label_stack_mut()?.pop();
 
                 // Handle the result
                 match result {
@@ -194,7 +413,7 @@ impl<'a> Executor<'a> {
                     stack_height: self.stack.len(),
                     unreachable: false,
                 };
-                self.label_stack.push(label);
+                self.current_label_stack_mut()?.push(label);
 
                 // Execute the loop body
                 loop {
@@ -203,12 +422,12 @@ impl<'a> Executor<'a> {
                     match result {
                         Ok(BlockEnd::Normal) => {
                             // Normal completion - exit the loop
-                            self.label_stack.pop();
+                            self.current_label_stack_mut()?.pop();
                             return Ok(BlockEnd::Normal);
                         }
                         Ok(BlockEnd::Return) => {
                             // Return from function
-                            self.label_stack.pop();
+                            self.current_label_stack_mut()?.pop();
                             return Ok(BlockEnd::Return);
                         }
                         Ok(BlockEnd::Branch(0)) => {
@@ -218,11 +437,11 @@ impl<'a> Executor<'a> {
                         }
                         Ok(BlockEnd::Branch(depth)) => {
                             // Branch to outer block
-                            self.label_stack.pop();
+                            self.current_label_stack_mut()?.pop();
                             return Ok(BlockEnd::Branch(depth - 1));
                         }
                         Err(e) => {
-                            self.label_stack.pop();
+                            self.current_label_stack_mut()?.pop();
                             return Err(e);
                         }
                     }
@@ -245,7 +464,7 @@ impl<'a> Executor<'a> {
                     stack_height: self.stack.len(),
                     unreachable: false,
                 };
-                self.label_stack.push(label);
+                self.current_label_stack_mut()?.push(label);
 
                 // Execute appropriate branch
                 let result = if condition != 0 {
@@ -257,7 +476,7 @@ impl<'a> Executor<'a> {
                 };
 
                 // Pop the label
-                self.label_stack.pop();
+                self.current_label_stack_mut()?.pop();
 
                 // Handle the result
                 match result {
@@ -367,42 +586,138 @@ impl<'a> Executor<'a> {
             }
 
             // 4.4.5 Variable Instructions
+            // ---------------------------------------------------------------
+            // local.get x - Get local variable
+            // spec: 4.4.5
+            //
+            // From the spec:
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.locals[x] exists.
+            // 3. Let val be the value F.locals[x].
+            // 4. Push the value val to the stack.
             LocalGet { local_idx } => {
-                let frame = self.frame.as_ref().ok_or(RuntimeError::InvalidFunctionType)?;
-                ops::variable::local_get(&mut self.stack, frame, *local_idx)?;
+                let locals = self.current_locals()?;
+                let value = locals
+                    .get(*local_idx as usize)
+                    .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))?
+                    .clone();
+                self.stack.push(value);
                 Ok(BlockEnd::Normal)
             }
 
+            // local.set x - Set local variable
+            // spec: 4.4.5
+            //
+            // From the spec:
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.locals[x] exists.
+            // 3. Assert: due to validation, a value is on the top of the stack.
+            // 4. Pop the value val from the stack.
+            // 5. Replace F.locals[x] with the value val.
             LocalSet { local_idx } => {
-                let frame = self.frame.as_mut().ok_or(RuntimeError::InvalidFunctionType)?;
-                ops::variable::local_set(&mut self.stack, frame, *local_idx)?;
+                let value = self.stack.pop()?;
+                let locals = self.current_locals_mut()?;
+                *locals
+                    .get_mut(*local_idx as usize)
+                    .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))? = value;
                 Ok(BlockEnd::Normal)
             }
 
+            // local.tee x - Set local variable but keep value on stack
+            // spec: 4.4.5
+            //
+            // From the spec:
+            // 1. Assert: due to validation, a value is on the top of the stack.
+            // 2. Pop the value val from the stack.
+            // 3. Push the value val to the stack.
+            // 4. Push the value val to the stack.
+            // 5. Execute the instruction local.set x.
+            //
+            // Note: This is equivalent to duplicating the top of stack, then doing local.set
             LocalTee { local_idx } => {
-                let frame = self.frame.as_mut().ok_or(RuntimeError::InvalidFunctionType)?;
-                ops::variable::local_tee(&mut self.stack, frame, *local_idx)?;
+                let value = self.stack.peek().ok_or(RuntimeError::StackUnderflow)?.clone();
+                let locals = self.current_locals_mut()?;
+                *locals
+                    .get_mut(*local_idx as usize)
+                    .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))? = value;
                 Ok(BlockEnd::Normal)
             }
 
+            // global.get x - Get global variable
+            // spec: 4.4.5
+            //
+            // From the spec:
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.globals[x] exists.
+            // 3. Let val be the value F.module.globals[x].val.
+            // 4. Push the value val to the stack.
             GlobalGet { global_idx } => {
-                ops::variable::global_get(&mut self.stack, &self.globals, *global_idx)?;
+                let value = self
+                    .globals
+                    .get(*global_idx as usize)
+                    .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?
+                    .clone();
+                self.stack.push(value);
                 Ok(BlockEnd::Normal)
             }
 
+            // global.set x - Set global variable
+            // spec: 4.4.5
+            //
+            // From the spec:
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.globals[x] exists.
+            // 3. Assert: due to validation, F.module.globals[x] is mutable.
+            // 4. Assert: due to validation, a value is on the top of the stack.
+            // 5. Pop the value val from the stack.
+            // 6. Replace F.module.globals[x].val with the value val.
             GlobalSet { global_idx } => {
-                ops::variable::global_set(&mut self.stack, &mut self.globals, self.module, *global_idx)?;
+                let value = self.stack.pop()?;
+
+                // Bounds check
+                if *global_idx as usize >= self.globals.len() {
+                    return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
+                }
+
+                // Check mutability
+                if let Some(global_def) = self.module.globals.globals.get(*global_idx as usize) {
+                    if !global_def.global_type.mutable {
+                        return Err(RuntimeError::InvalidConversion(
+                            "Cannot set immutable global".to_string(),
+                        ));
+                    }
+                }
+
+                self.globals[*global_idx as usize] = value;
                 Ok(BlockEnd::Normal)
             }
 
             // 4.4.8 Control Instructions
-            Br { label_idx } => ops::control::br(&mut self.stack, &self.label_stack, *label_idx),
+            Br { label_idx } => {
+                let label_stack = self.current_label_stack()?;
+                let label_stack = LabelStack::from_vec(label_stack.clone());
+                ops::control::br(&mut self.stack, &label_stack, *label_idx)
+            }
 
-            BrIf { label_idx } => ops::control::br_if(&mut self.stack, &self.label_stack, *label_idx),
+            BrIf { label_idx } => {
+                let label_stack = self.current_label_stack()?;
+                let label_stack = LabelStack::from_vec(label_stack.clone());
+                ops::control::br_if(&mut self.stack, &label_stack, *label_idx)
+            }
 
-            BrTable { labels, default } => ops::control::br_table(&mut self.stack, &self.label_stack, labels, *default),
+            BrTable { labels, default } => {
+                let label_stack = self.current_label_stack()?;
+                let label_stack = LabelStack::from_vec(label_stack.clone());
+                ops::control::br_table(&mut self.stack, &label_stack, labels, *default)
+            }
 
             Return => ops::control::return_op(),
+
+            Call { func_idx } => {
+                // Handle function call
+                self.handle_call(*func_idx)?;
+                Ok(BlockEnd::Normal)
+            }
 
             // ----------------------------------------------------------------
             // Memory Instructions
@@ -1219,12 +1534,7 @@ mod tests {
     mod error_handling {
         use super::*;
 
-        #[test]
-        fn unimplemented_instruction() {
-            ExecutorTest::new()
-                .inst(InstructionKind::Call { func_idx: 0 }) // Function calls not yet implemented
-                .expect_error("Unimplemented instruction");
-        }
+        // Call instruction tests moved to function_calls module below
 
         #[test]
         fn return_type_mismatch() {
@@ -1333,6 +1643,458 @@ mod tests {
 
             // Verify structure
             assert_eq!(func.body.len(), 2); // const + loop
+        }
+    }
+
+    // ============================================================================
+    // Function Call Tests
+    // ============================================================================
+    mod function_calls {
+        use super::*;
+        use crate::parser::module::{Export, ExportIndex, ExternalKind, FunctionBody, Import, Locals, SectionPosition};
+        use crate::runtime::Instance;
+
+        #[test]
+        fn test_call_with_imports() {
+            // Test that function calls work correctly when there are imported functions
+            // This tests the fix for function index mapping
+
+            // Create a module with:
+            // - Import: function 0 (imported, no body)
+            // - Function 1: helper that returns 42
+            // - Function 2: main that calls function 1
+
+            let mut module = Module::new("test");
+
+            // Type section: define function signatures
+            module.types.types.push(FunctionType {
+                parameters: vec![ValueType::I32],
+                return_types: vec![],
+            }); // Type 0: imported function
+            module.types.types.push(FunctionType {
+                parameters: vec![],
+                return_types: vec![ValueType::I32],
+            }); // Type 1: helper and main functions
+
+            // Import section: import one function
+            module.imports.imports.push(Import {
+                module: "env".to_string(),
+                name: "log".to_string(),
+                external_kind: ExternalKind::Function(0), // Uses type 0
+            });
+
+            // Function section: declare our defined functions
+            module.functions.functions.push(crate::parser::module::Function {
+                ftype_index: 1, // helper uses type 1
+            });
+            module.functions.functions.push(crate::parser::module::Function {
+                ftype_index: 1, // main uses type 1
+            });
+
+            // Code section: bodies for our defined functions
+            // Helper function (function index 1, code index 0)
+            let helper_instructions = vec![make_instruction(InstructionKind::I32Const { value: 42 })];
+            let helper_body = StructureBuilder::build_function(&helper_instructions, 0, vec![ValueType::I32])
+                .expect("Failed to build helper function");
+            module.code.code.push(FunctionBody {
+                locals: Locals::empty(),
+                body: helper_body,
+                position: SectionPosition::new(0, 0),
+            });
+
+            // Main function (function index 2, code index 1)
+            let main_instructions = vec![
+                make_instruction(InstructionKind::Call { func_idx: 1 }), // Call helper
+            ];
+            let main_body = StructureBuilder::build_function(&main_instructions, 0, vec![ValueType::I32])
+                .expect("Failed to build main function");
+            module.code.code.push(FunctionBody {
+                locals: Locals::empty(),
+                body: main_body,
+                position: SectionPosition::new(0, 0),
+            });
+
+            // Export main function
+            module.exports.exports.push(Export {
+                name: "main".to_string(),
+                index: ExportIndex::Function(2), // Function index 2
+            });
+
+            // Create instance and test
+            let instance = Instance::new(&module);
+            let result = instance.invoke("main", vec![]).expect("Function call should succeed");
+
+            assert_eq!(result, vec![Value::I32(42)], "Main should call helper and return 42");
+        }
+
+        #[test]
+        fn test_recursive_factorial() {
+            // Test recursive function calls
+            let mut module = Module::new("test");
+
+            // Type: (i32) -> i32
+            module.types.types.push(FunctionType {
+                parameters: vec![ValueType::I32],
+                return_types: vec![ValueType::I32],
+            });
+
+            // Single function that calls itself
+            module
+                .functions
+                .functions
+                .push(crate::parser::module::Function { ftype_index: 0 });
+
+            // Factorial function: if n <= 1 return 1, else return n * factorial(n-1)
+            let instructions = vec![
+                make_instruction(InstructionKind::LocalGet { local_idx: 0 }), // n
+                make_instruction(InstructionKind::I32Const { value: 1 }),
+                make_instruction(InstructionKind::I32LeS), // n <= 1?
+                make_instruction(InstructionKind::If {
+                    block_type: BlockType::Value(ValueType::I32),
+                }),
+                make_instruction(InstructionKind::I32Const { value: 1 }), // then: return 1
+                make_instruction(InstructionKind::Else),
+                make_instruction(InstructionKind::LocalGet { local_idx: 0 }), // else: n
+                make_instruction(InstructionKind::LocalGet { local_idx: 0 }), // n
+                make_instruction(InstructionKind::I32Const { value: 1 }),
+                make_instruction(InstructionKind::I32Sub), // n - 1
+                make_instruction(InstructionKind::Call { func_idx: 0 }), // factorial(n-1)
+                make_instruction(InstructionKind::I32Mul), // n * factorial(n-1)
+                make_instruction(InstructionKind::End),
+            ];
+
+            let body = StructureBuilder::build_function(&instructions, 1, vec![ValueType::I32])
+                .expect("Failed to build factorial function");
+            module.code.code.push(FunctionBody {
+                locals: Locals::empty(),
+                body,
+                position: SectionPosition::new(0, 0),
+            });
+
+            module.exports.exports.push(Export {
+                name: "factorial".to_string(),
+                index: ExportIndex::Function(0),
+            });
+
+            let instance = Instance::new(&module);
+
+            // Test factorial(5) = 120
+            let result = instance
+                .invoke("factorial", vec![Value::I32(5)])
+                .expect("Factorial should succeed");
+            assert_eq!(result, vec![Value::I32(120)]);
+
+            // Test factorial(0) = 1
+            let result = instance
+                .invoke("factorial", vec![Value::I32(0)])
+                .expect("Factorial should succeed");
+            assert_eq!(result, vec![Value::I32(1)]);
+        }
+    }
+
+    // ============================================================================
+    // Variable Tests (Local and Global)
+    // ============================================================================
+    mod variables {
+        use super::*;
+
+        // ============================================================================
+        // Local Variable Tests
+        // ============================================================================
+
+        #[test]
+        fn local_get_first_arg() {
+            // First function argument is local 0
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_get_multiple_args() {
+            // Multiple arguments become locals 0, 1, 2, etc.
+            ExecutorTest::new()
+                .args(vec![Value::I32(10), Value::I64(20), Value::F32(30.0)])
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 2 })
+                .returns(vec![ValueType::I64, ValueType::I32, ValueType::F32])
+                .expect_stack(vec![Value::I64(20), Value::I32(10), Value::F32(30.0)]);
+        }
+
+        #[test]
+        fn local_get_same_local_twice() {
+            // Getting the same local multiple times
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_get_out_of_bounds() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .expect_error("Local variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn local_get_with_drop() {
+            // Test interaction with drop
+            ExecutorTest::new()
+                .args(vec![Value::I32(42), Value::I64(84)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .inst(InstructionKind::Drop)
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_set_basic() {
+            // Set a local and read it back
+            ExecutorTest::new()
+                .args(vec![Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalSet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_set_multiple() {
+            // Set multiple locals
+            ExecutorTest::new()
+                .args(vec![Value::I32(1), Value::I64(2), Value::F32(3.0)])
+                .inst(InstructionKind::I32Const { value: 10 })
+                .inst(InstructionKind::LocalSet { local_idx: 0 })
+                .inst(InstructionKind::I64Const { value: 20 })
+                .inst(InstructionKind::LocalSet { local_idx: 1 })
+                .inst(InstructionKind::F32Const { value: 30.0 })
+                .inst(InstructionKind::LocalSet { local_idx: 2 })
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .inst(InstructionKind::LocalGet { local_idx: 2 })
+                .returns(vec![ValueType::I32, ValueType::I64, ValueType::F32])
+                .expect_stack(vec![Value::I32(10), Value::I64(20), Value::F32(30.0)]);
+        }
+
+        #[test]
+        fn local_set_out_of_bounds() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::LocalSet { local_idx: 1 })
+                .expect_error("Local variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn local_set_empty_stack() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalSet { local_idx: 0 })
+                .expect_error("Stack underflow");
+        }
+
+        #[test]
+        fn local_set_get_sequence() {
+            // Complex sequence of sets and gets
+            ExecutorTest::new()
+                .args(vec![Value::I32(1), Value::I32(2)])
+                .inst(InstructionKind::LocalGet { local_idx: 0 }) // stack: [1]
+                .inst(InstructionKind::LocalGet { local_idx: 1 }) // stack: [1, 2]
+                .inst(InstructionKind::LocalSet { local_idx: 0 }) // stack: [1], local[0] = 2
+                .inst(InstructionKind::LocalSet { local_idx: 1 }) // stack: [], local[1] = 1
+                .inst(InstructionKind::LocalGet { local_idx: 0 }) // stack: [2]
+                .inst(InstructionKind::LocalGet { local_idx: 1 }) // stack: [2, 1]
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(2), Value::I32(1)]);
+        }
+
+        #[test]
+        fn local_tee_basic() {
+            // Tee sets local but leaves value on stack
+            ExecutorTest::new()
+                .args(vec![Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_tee_verify_stored() {
+            // Verify that tee actually stores the value
+            ExecutorTest::new()
+                .args(vec![Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn local_tee_multiple() {
+            // Use tee with multiple locals
+            ExecutorTest::new()
+                .args(vec![Value::I32(1), Value::I64(2), Value::F32(3.0)])
+                .inst(InstructionKind::I32Const { value: 10 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .inst(InstructionKind::I64Const { value: 20 })
+                .inst(InstructionKind::LocalTee { local_idx: 1 })
+                .inst(InstructionKind::F32Const { value: 30.0 })
+                .inst(InstructionKind::LocalTee { local_idx: 2 })
+                .returns(vec![ValueType::I32, ValueType::I64, ValueType::F32])
+                .expect_stack(vec![Value::I32(10), Value::I64(20), Value::F32(30.0)]);
+        }
+
+        #[test]
+        fn local_tee_out_of_bounds() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::LocalTee { local_idx: 1 })
+                .expect_error("Local variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn local_tee_empty_stack() {
+            ExecutorTest::new()
+                .args(vec![Value::I32(42)])
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .expect_error("Stack underflow");
+        }
+
+        #[test]
+        fn local_tee_chain() {
+            // Chain multiple tees
+            ExecutorTest::new()
+                .args(vec![Value::I32(0), Value::I32(0)])
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::LocalTee { local_idx: 0 })
+                .inst(InstructionKind::LocalTee { local_idx: 1 })
+                .inst(InstructionKind::Drop)
+                .inst(InstructionKind::LocalGet { local_idx: 0 })
+                .inst(InstructionKind::LocalGet { local_idx: 1 })
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(42), Value::I32(42)]);
+        }
+
+        // ============================================================================
+        // Global Variable Tests
+        // ============================================================================
+
+        #[test]
+        fn global_get_basic() {
+            // Test basic global.get with actual global
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(42), false)
+                .inst(InstructionKind::GlobalGet { global_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn global_get_multiple() {
+            // Test multiple globals with different types
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(10), false)
+                .global(ValueType::F64, Value::F64(3.14), false)
+                .global(ValueType::I64, Value::I64(100), false)
+                .inst(InstructionKind::GlobalGet { global_idx: 1 })
+                .inst(InstructionKind::GlobalGet { global_idx: 0 })
+                .inst(InstructionKind::GlobalGet { global_idx: 2 })
+                .returns(vec![ValueType::F64, ValueType::I32, ValueType::I64])
+                .expect_stack(vec![Value::F64(3.14), Value::I32(10), Value::I64(100)]);
+        }
+
+        #[test]
+        fn global_get_out_of_bounds() {
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(42), false)
+                .inst(InstructionKind::GlobalGet { global_idx: 1 })
+                .expect_error("Global variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn global_set_basic() {
+            // Test basic global.set with mutable global
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(0), true) // mutable
+                .inst(InstructionKind::I32Const { value: 42 })
+                .inst(InstructionKind::GlobalSet { global_idx: 0 })
+                .inst(InstructionKind::GlobalGet { global_idx: 0 })
+                .returns(vec![ValueType::I32])
+                .expect_stack(vec![Value::I32(42)]);
+        }
+
+        #[test]
+        fn global_set_multiple_types() {
+            // Test setting different value types
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(0), true)
+                .global(ValueType::F32, Value::F32(0.0), true)
+                .global(ValueType::I64, Value::I64(0), true)
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::GlobalSet { global_idx: 0 })
+                .inst(InstructionKind::F32Const { value: 2.5 })
+                .inst(InstructionKind::GlobalSet { global_idx: 1 })
+                .inst(InstructionKind::I64Const { value: 999 })
+                .inst(InstructionKind::GlobalSet { global_idx: 2 })
+                .inst(InstructionKind::GlobalGet { global_idx: 0 })
+                .inst(InstructionKind::GlobalGet { global_idx: 1 })
+                .inst(InstructionKind::GlobalGet { global_idx: 2 })
+                .returns(vec![ValueType::I32, ValueType::F32, ValueType::I64])
+                .expect_stack(vec![Value::I32(100), Value::F32(2.5), Value::I64(999)]);
+        }
+
+        #[test]
+        fn global_set_out_of_bounds() {
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(42), true)
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::GlobalSet { global_idx: 1 })
+                .expect_error("Global variable index out of bounds: 1");
+        }
+
+        #[test]
+        fn global_set_empty_stack() {
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(42), true)
+                .inst(InstructionKind::GlobalSet { global_idx: 0 })
+                .expect_error("Stack underflow");
+        }
+
+        #[test]
+        fn global_set_immutable() {
+            // Test that setting immutable global fails
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(42), false) // immutable
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::GlobalSet { global_idx: 0 })
+                .expect_error("Cannot set immutable global");
+        }
+
+        #[test]
+        fn global_mixed_mutability() {
+            // Test mix of mutable and immutable globals
+            ExecutorTest::new()
+                .global(ValueType::I32, Value::I32(10), false) // immutable
+                .global(ValueType::I32, Value::I32(20), true) // mutable
+                .inst(InstructionKind::I32Const { value: 100 })
+                .inst(InstructionKind::GlobalSet { global_idx: 1 }) // Should work (mutable)
+                .inst(InstructionKind::GlobalGet { global_idx: 0 }) // Should get immutable value
+                .inst(InstructionKind::GlobalGet { global_idx: 1 }) // Should get new value
+                .returns(vec![ValueType::I32, ValueType::I32])
+                .expect_stack(vec![Value::I32(10), Value::I32(100)]);
         }
     }
 }

@@ -181,6 +181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     implemented.insert("else".to_string());
     implemented.insert("return".to_string());
     implemented.insert("br_table".to_string());
+    implemented.insert("call".to_string());
     implemented.insert("memory.size".to_string());
     implemented.insert("memory.grow".to_string());
     // Memory load/store operations

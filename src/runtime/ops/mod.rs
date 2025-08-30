@@ -10,7 +10,6 @@ pub mod conversion;
 pub mod memory;
 pub mod numeric;
 pub mod parametric;
-pub mod variable;
 
 // Re-export commonly used types for operation implementations
 pub(crate) use crate::parser::instruction::MemArg;
