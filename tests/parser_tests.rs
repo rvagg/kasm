@@ -2,7 +2,7 @@
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
     use kasm::parser::module;
-    use kasm::runtime::{Instance, Value};
+    use kasm::runtime::{implemented::is_instruction_implemented, Instance, Value};
     use rstest::rstest;
     use serde::de::{self, Deserializer};
     use serde::Deserialize;
@@ -278,251 +278,34 @@ mod tests {
 
                     // Get the function body and check for unimplemented instructions
                     if let Some(body) = module.code.code.get(func_idx as usize) {
+                        // Check if all instructions in the function are implemented
+                        let instructions = body.body.flatten();
                         let mut skip_reason = None;
 
-                        let instructions = body.body.flatten();
+                        // First check if all instructions are implemented
                         for instruction in &instructions {
-                            match &instruction.kind {
-                                // Implemented instructions
-                                InstructionKind::I32Const { .. }
-                                | InstructionKind::I64Const { .. }
-                                | InstructionKind::F32Const { .. }
-                                | InstructionKind::F64Const { .. }
-                                | InstructionKind::Nop
-                                | InstructionKind::End
-                                | InstructionKind::Drop => {
-                                    // These are implemented, continue checking
-                                }
+                            if !is_instruction_implemented(&instruction.kind) {
+                                let mnemonic = instruction.kind.mnemonic();
+                                skip_reason = Some(format!("unimplemented instruction: {}", mnemonic));
+                                break;
+                            }
+                        }
 
-                                // TODO: Local Variables
-                                InstructionKind::LocalGet { .. }
-                                | InstructionKind::LocalSet { .. }
-                                | InstructionKind::LocalTee { .. } => {
-                                    skip_reason = Some("local.get/local.set/local.tee instructions");
-                                    break;
-                                }
+                        if skip_reason.is_none() {
+                            // Additional checks for SIMD instructions (which have their own category)
+                            for instruction in &instructions {
+                                match &instruction.kind {
+                                    // SIMD instructions (not yet implemented)
+                                    InstructionKind::V128Load { .. }
+                                    | InstructionKind::V128Store { .. }
+                                    | InstructionKind::V128Const { .. } => {
+                                        skip_reason = Some("SIMD instructions".to_string());
+                                        break;
+                                    }
 
-                                // TODO: Control Flow
-                                InstructionKind::Block { .. }
-                                | InstructionKind::Loop { .. }
-                                | InstructionKind::If { .. }
-                                | InstructionKind::Else
-                                | InstructionKind::Br { .. }
-                                | InstructionKind::BrIf { .. }
-                                | InstructionKind::BrTable { .. }
-                                | InstructionKind::Return => {
-                                    skip_reason = Some("control flow instructions");
-                                    break;
-                                }
-
-                                // TODO: Function Calls
-                                InstructionKind::Call { .. } | InstructionKind::CallIndirect { .. } => {
-                                    skip_reason = Some("call instructions");
-                                    break;
-                                }
-
-                                // TODO: Memory Operations
-                                InstructionKind::I32Load { .. }
-                                | InstructionKind::I64Load { .. }
-                                | InstructionKind::F32Load { .. }
-                                | InstructionKind::F64Load { .. }
-                                | InstructionKind::I32Load8S { .. }
-                                | InstructionKind::I32Load8U { .. }
-                                | InstructionKind::I32Load16S { .. }
-                                | InstructionKind::I32Load16U { .. }
-                                | InstructionKind::I64Load8S { .. }
-                                | InstructionKind::I64Load8U { .. }
-                                | InstructionKind::I64Load16S { .. }
-                                | InstructionKind::I64Load16U { .. }
-                                | InstructionKind::I64Load32S { .. }
-                                | InstructionKind::I64Load32U { .. }
-                                | InstructionKind::I32Store { .. }
-                                | InstructionKind::I64Store { .. }
-                                | InstructionKind::F32Store { .. }
-                                | InstructionKind::F64Store { .. }
-                                | InstructionKind::I32Store8 { .. }
-                                | InstructionKind::I32Store16 { .. }
-                                | InstructionKind::I64Store8 { .. }
-                                | InstructionKind::I64Store16 { .. }
-                                | InstructionKind::I64Store32 { .. }
-                                | InstructionKind::MemorySize
-                                | InstructionKind::MemoryGrow
-                                | InstructionKind::MemoryInit { .. }
-                                | InstructionKind::DataDrop { .. }
-                                | InstructionKind::MemoryCopy
-                                | InstructionKind::MemoryFill => {
-                                    skip_reason = Some("memory operation");
-                                    break;
-                                }
-
-                                // TODO: Numeric Operations
-                                InstructionKind::I32Eqz
-                                | InstructionKind::I32Eq
-                                | InstructionKind::I32Ne
-                                | InstructionKind::I32LtS
-                                | InstructionKind::I32LtU
-                                | InstructionKind::I32GtS
-                                | InstructionKind::I32GtU
-                                | InstructionKind::I32LeS
-                                | InstructionKind::I32LeU
-                                | InstructionKind::I32GeS
-                                | InstructionKind::I32GeU
-                                | InstructionKind::I32Clz
-                                | InstructionKind::I32Ctz
-                                | InstructionKind::I32Popcnt
-                                | InstructionKind::I32Add
-                                | InstructionKind::I32Sub
-                                | InstructionKind::I32Mul
-                                | InstructionKind::I32DivS
-                                | InstructionKind::I32DivU
-                                | InstructionKind::I32RemS
-                                | InstructionKind::I32RemU
-                                | InstructionKind::I32And
-                                | InstructionKind::I32Or
-                                | InstructionKind::I32Xor
-                                | InstructionKind::I32Shl
-                                | InstructionKind::I32ShrS
-                                | InstructionKind::I32ShrU
-                                | InstructionKind::I32Rotl
-                                | InstructionKind::I32Rotr
-                                | InstructionKind::I64Eqz
-                                | InstructionKind::I64Eq
-                                | InstructionKind::I64Ne
-                                | InstructionKind::I64LtS
-                                | InstructionKind::I64LtU
-                                | InstructionKind::I64GtS
-                                | InstructionKind::I64GtU
-                                | InstructionKind::I64LeS
-                                | InstructionKind::I64LeU
-                                | InstructionKind::I64GeS
-                                | InstructionKind::I64GeU
-                                | InstructionKind::I64Clz
-                                | InstructionKind::I64Ctz
-                                | InstructionKind::I64Popcnt
-                                | InstructionKind::I64Add
-                                | InstructionKind::I64Sub
-                                | InstructionKind::I64Mul
-                                | InstructionKind::I64DivS
-                                | InstructionKind::I64DivU
-                                | InstructionKind::I64RemS
-                                | InstructionKind::I64RemU
-                                | InstructionKind::I64And
-                                | InstructionKind::I64Or
-                                | InstructionKind::I64Xor
-                                | InstructionKind::I64Shl
-                                | InstructionKind::I64ShrS
-                                | InstructionKind::I64ShrU
-                                | InstructionKind::I64Rotl
-                                | InstructionKind::I64Rotr
-                                | InstructionKind::F32Eq
-                                | InstructionKind::F32Ne
-                                | InstructionKind::F32Lt
-                                | InstructionKind::F32Gt
-                                | InstructionKind::F32Le
-                                | InstructionKind::F32Ge
-                                | InstructionKind::F32Abs
-                                | InstructionKind::F32Neg
-                                | InstructionKind::F32Ceil
-                                | InstructionKind::F32Floor
-                                | InstructionKind::F32Trunc
-                                | InstructionKind::F32Nearest
-                                | InstructionKind::F32Sqrt
-                                | InstructionKind::F32Add
-                                | InstructionKind::F32Sub
-                                | InstructionKind::F32Mul
-                                | InstructionKind::F32Div
-                                | InstructionKind::F32Min
-                                | InstructionKind::F32Max
-                                | InstructionKind::F32Copysign
-                                | InstructionKind::F64Eq
-                                | InstructionKind::F64Ne
-                                | InstructionKind::F64Lt
-                                | InstructionKind::F64Gt
-                                | InstructionKind::F64Le
-                                | InstructionKind::F64Ge
-                                | InstructionKind::F64Abs
-                                | InstructionKind::F64Neg
-                                | InstructionKind::F64Ceil
-                                | InstructionKind::F64Floor
-                                | InstructionKind::F64Trunc
-                                | InstructionKind::F64Nearest
-                                | InstructionKind::F64Sqrt
-                                | InstructionKind::F64Add
-                                | InstructionKind::F64Sub
-                                | InstructionKind::F64Mul
-                                | InstructionKind::F64Div
-                                | InstructionKind::F64Min
-                                | InstructionKind::F64Max
-                                | InstructionKind::F64Copysign
-                                | InstructionKind::I32WrapI64
-                                | InstructionKind::I32TruncF32S
-                                | InstructionKind::I32TruncF32U
-                                | InstructionKind::I32TruncF64S
-                                | InstructionKind::I32TruncF64U
-                                | InstructionKind::I64ExtendI32S
-                                | InstructionKind::I64ExtendI32U
-                                | InstructionKind::I64TruncF32S
-                                | InstructionKind::I64TruncF32U
-                                | InstructionKind::I64TruncF64S
-                                | InstructionKind::I64TruncF64U
-                                | InstructionKind::F32ConvertI32S
-                                | InstructionKind::F32ConvertI32U
-                                | InstructionKind::F32ConvertI64S
-                                | InstructionKind::F32ConvertI64U
-                                | InstructionKind::F32DemoteF64
-                                | InstructionKind::F64ConvertI32S
-                                | InstructionKind::F64ConvertI32U
-                                | InstructionKind::F64ConvertI64S
-                                | InstructionKind::F64ConvertI64U
-                                | InstructionKind::F64PromoteF32
-                                | InstructionKind::I32ReinterpretF32
-                                | InstructionKind::I64ReinterpretF64
-                                | InstructionKind::F32ReinterpretI32
-                                | InstructionKind::F64ReinterpretI64
-                                | InstructionKind::I32Extend8S
-                                | InstructionKind::I32Extend16S
-                                | InstructionKind::I64Extend8S
-                                | InstructionKind::I64Extend16S
-                                | InstructionKind::I64Extend32S
-                                | InstructionKind::I32TruncSatF32S
-                                | InstructionKind::I32TruncSatF32U
-                                | InstructionKind::I32TruncSatF64S
-                                | InstructionKind::I32TruncSatF64U
-                                | InstructionKind::I64TruncSatF32S
-                                | InstructionKind::I64TruncSatF32U
-                                | InstructionKind::I64TruncSatF64S
-                                | InstructionKind::I64TruncSatF64U => {
-                                    skip_reason = Some("numeric operations");
-                                    break;
-                                }
-
-                                // TODO: Advanced Features
-                                InstructionKind::GlobalGet { .. }
-                                | InstructionKind::GlobalSet { .. }
-                                | InstructionKind::TableGet { .. }
-                                | InstructionKind::TableSet { .. }
-                                | InstructionKind::TableInit { .. }
-                                | InstructionKind::ElemDrop { .. }
-                                | InstructionKind::TableCopy { .. }
-                                | InstructionKind::TableGrow { .. }
-                                | InstructionKind::TableSize { .. }
-                                | InstructionKind::TableFill { .. }
-                                | InstructionKind::RefNull { .. }
-                                | InstructionKind::RefIsNull
-                                | InstructionKind::RefFunc { .. }
-                                | InstructionKind::Select
-                                | InstructionKind::SelectTyped { .. }
-                                | InstructionKind::Unreachable => {
-                                    skip_reason = Some("advanced features");
-                                    break;
-                                }
-
-                                // SIMD
-                                InstructionKind::V128Load { .. }
-                                | InstructionKind::V128Store { .. }
-                                | InstructionKind::V128Const { .. } => {
-                                    skip_reason = Some("SIMD instructions");
-                                    break;
+                                    _ => {
+                                        // All other instructions are handled by is_instruction_implemented
+                                    }
                                 }
                             }
                         }

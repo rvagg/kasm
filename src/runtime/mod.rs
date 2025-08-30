@@ -6,6 +6,7 @@
 pub mod control;
 pub mod executor;
 pub mod frame;
+pub mod implemented;
 pub mod instance;
 pub mod memory;
 pub mod ops;
