@@ -1,18 +1,19 @@
 //! WebAssembly module instance
 
 use super::{executor::Executor, RuntimeError, Value};
-use crate::parser::module::{ExportIndex, Module};
+use crate::parser::module::{ExportIndex, Module, Positional};
 use std::collections::HashMap;
 
 /// A WebAssembly module instance
 pub struct Instance<'a> {
     module: &'a Module,
     exports: HashMap<String, u32>, // Maps export name to function index
+    executor: Executor<'a>,        // Persistent executor to maintain state
 }
 
 impl<'a> Instance<'a> {
     /// Create a new instance from a parsed module
-    pub fn new(module: &'a Module) -> Self {
+    pub fn new(module: &'a Module) -> Result<Self, RuntimeError> {
         let mut exports = HashMap::new();
 
         // Build export map
@@ -22,11 +23,41 @@ impl<'a> Instance<'a> {
             }
         }
 
-        Instance { module, exports }
+        // Create persistent executor - this initialises memory and globals
+        let mut executor = Executor::new(module)?;
+
+        // Execute start function if present
+        if module.start.has_position() {
+            let start_func_idx = module.start.start;
+
+            // Get the function body
+            let num_imported_functions = module.imports.function_count();
+
+            if (start_func_idx as usize) < num_imported_functions {
+                return Err(RuntimeError::UnimplementedInstruction(
+                    "Cannot execute imported start function".to_string(),
+                ));
+            }
+
+            let code_idx = start_func_idx as usize - num_imported_functions;
+            let func_body = module
+                .code
+                .get(code_idx)
+                .ok_or(RuntimeError::FunctionIndexOutOfBounds(start_func_idx))?;
+
+            // Execute the start function (no arguments, no return values)
+            executor.execute_function_with_locals(&func_body.body, vec![], &[], Some(&func_body.locals))?;
+        }
+
+        Ok(Instance {
+            module,
+            exports,
+            executor,
+        })
     }
 
     /// Invoke an exported function by name
-    pub fn invoke(&self, name: &str, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    pub fn invoke(&mut self, name: &str, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
         // Find the export
         let export_index = self
             .exports
@@ -99,9 +130,9 @@ impl<'a> Instance<'a> {
         // Use the pre-built structured representation from FunctionBody
         let structured_func = &body.body;
 
-        // Execute the function
-        let mut executor = Executor::new(self.module)?;
-        executor.execute_function(structured_func, args, &func_type.return_types)
+        // Execute the function with locals information using the persistent executor
+        self.executor
+            .execute_function_with_locals(structured_func, args, &func_type.return_types, Some(&body.locals))
     }
 
     /// Get the module reference

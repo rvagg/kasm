@@ -4,9 +4,49 @@
 //! as specified in the WebAssembly specification section 4.4.8 (Control Instructions).
 
 use super::*;
-use crate::parser::instruction::BlockType;
 use crate::parser::structured::BlockEnd;
 use crate::runtime::control::LabelStack;
+
+/// Perform the actual branch operation to a target label
+/// This is the common implementation used by br, br_if, and br_table
+///
+/// Steps:
+/// 1. Get the target label to determine arity and stack height
+/// 2. Pop arity values from the stack (these will be the results/parameters)
+/// 3. Restore stack to the label's entry height (removes intermediate values)
+/// 4. Push the result values back
+/// 5. Return Branch(label_idx) to signal the branch
+fn perform_branch(stack: &mut Stack, label_stack: &LabelStack, label_idx: u32) -> Result<BlockEnd, RuntimeError> {
+    // Get the target label to determine arity and stack height
+    let label = label_stack
+        .get(label_idx)
+        .ok_or(RuntimeError::InvalidLabel(label_idx))?;
+
+    // Get the arity based on label type
+    // For loops: we need to preserve parameters
+    // For blocks/ifs: we need to preserve return values
+    let arity = label.arity();
+
+    // Pop arity values from stack (these will be the results/parameters)
+    let mut values = Vec::with_capacity(arity);
+    for _ in 0..arity {
+        values.push(stack.pop()?);
+    }
+    values.reverse(); // Restore original order
+
+    // Restore stack to the label's entry height
+    // This removes any intermediate values that were on the stack
+    while stack.len() > label.stack_height {
+        stack.pop()?;
+    }
+
+    // Push the result values back
+    for value in values {
+        stack.push(value);
+    }
+
+    Ok(BlockEnd::Branch(label_idx))
+}
 
 /// br l - Unconditional branch
 /// spec: 4.4.8
@@ -21,36 +61,7 @@ use crate::runtime::control::LabelStack;
 /// 7. Push the values val^n to the stack.
 /// 8. Jump to the continuation of L.
 pub fn br(stack: &mut Stack, label_stack: &LabelStack, label_idx: u32) -> Result<BlockEnd, RuntimeError> {
-    // Get the target label to determine arity
-    let label = label_stack
-        .get(label_idx)
-        .ok_or(RuntimeError::InvalidLabel(label_idx))?;
-
-    let arity = match &label.block_type {
-        BlockType::Empty => 0,
-        BlockType::Value(_) => 1,
-        BlockType::FuncType(idx) => {
-            // For now, we don't have access to function types here
-            // This would need to be looked up from the module
-            return Err(RuntimeError::UnimplementedInstruction(format!(
-                "Branch with function type {idx} not yet supported"
-            )));
-        }
-    };
-
-    // Pop arity values from stack (these will be the block results)
-    let mut values = Vec::with_capacity(arity);
-    for _ in 0..arity {
-        values.push(stack.pop()?);
-    }
-    values.reverse(); // Restore original order
-
-    // Push values back
-    for value in values {
-        stack.push(value);
-    }
-
-    Ok(BlockEnd::Branch(label_idx))
+    perform_branch(stack, label_stack, label_idx)
 }
 
 /// br_if l - Conditional branch
@@ -64,34 +75,7 @@ pub fn br(stack: &mut Stack, label_stack: &LabelStack, label_idx: u32) -> Result
 pub fn br_if(stack: &mut Stack, label_stack: &LabelStack, label_idx: u32) -> Result<BlockEnd, RuntimeError> {
     let condition = stack.pop_i32()?;
     if condition != 0 {
-        // Get the target label to determine arity
-        let label = label_stack
-            .get(label_idx)
-            .ok_or(RuntimeError::InvalidLabel(label_idx))?;
-
-        let arity = match &label.block_type {
-            BlockType::Empty => 0,
-            BlockType::Value(_) => 1,
-            BlockType::FuncType(idx) => {
-                return Err(RuntimeError::UnimplementedInstruction(format!(
-                    "Branch with function type {idx} not yet supported"
-                )));
-            }
-        };
-
-        // Pop arity values from stack
-        let mut values = Vec::with_capacity(arity);
-        for _ in 0..arity {
-            values.push(stack.pop()?);
-        }
-        values.reverse();
-
-        // Push values back
-        for value in values {
-            stack.push(value);
-        }
-
-        Ok(BlockEnd::Branch(label_idx))
+        perform_branch(stack, label_stack, label_idx)
     } else {
         Ok(BlockEnd::Normal)
     }
@@ -122,32 +106,8 @@ pub fn br_table(
         default
     };
 
-    // Now branch to the target (same as Br)
-    let label = label_stack.get(target).ok_or(RuntimeError::InvalidLabel(target))?;
-
-    let arity = match &label.block_type {
-        BlockType::Empty => 0,
-        BlockType::Value(_) => 1,
-        BlockType::FuncType(idx) => {
-            return Err(RuntimeError::UnimplementedInstruction(format!(
-                "Branch with function type {idx} not yet supported"
-            )));
-        }
-    };
-
-    // Pop arity values from stack
-    let mut values = Vec::with_capacity(arity);
-    for _ in 0..arity {
-        values.push(stack.pop()?);
-    }
-    values.reverse();
-
-    // Push values back
-    for value in values {
-        stack.push(value);
-    }
-
-    Ok(BlockEnd::Branch(target))
+    // Now branch to the target using the common implementation
+    perform_branch(stack, label_stack, target)
 }
 
 /// return - Return from function

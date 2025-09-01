@@ -112,7 +112,7 @@ pub fn decode_function(
     function_index: u32,
 ) -> Result<StructuredFunction, DecodeError> {
     let ftype = module
-        .get_function_type(function_index)
+        .get_function_type(function_index as usize)
         .ok_or(super::super::validate::ValidationError::UnknownFunctionType)?;
 
     let ctx = module.validation_context();

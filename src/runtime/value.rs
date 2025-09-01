@@ -11,6 +11,10 @@ pub enum Value {
     I64(i64),
     F32(f32),
     F64(f64),
+    /// Function reference - either null or a function index
+    FuncRef(Option<u32>),
+    /// External reference - either null or an external reference index
+    ExternRef(Option<u32>),
 }
 
 impl Value {
@@ -21,6 +25,8 @@ impl Value {
             Value::I64(_) => ValueType::I64,
             Value::F32(_) => ValueType::F32,
             Value::F64(_) => ValueType::F64,
+            Value::FuncRef(_) => ValueType::FuncRef,
+            Value::ExternRef(_) => ValueType::ExternRef,
         }
     }
 
@@ -56,53 +62,170 @@ impl Value {
         }
     }
 
+    /// Convert to funcref, returning None if wrong type
+    pub fn as_funcref(&self) -> Option<Option<u32>> {
+        match self {
+            Value::FuncRef(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Convert to externref, returning None if wrong type
+    pub fn as_externref(&self) -> Option<Option<u32>> {
+        match self {
+            Value::ExternRef(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Parse an i32 value from a string
+    fn parse_i32(value: &str) -> Result<Value, String> {
+        value
+            .parse::<u32>()
+            .map(|v| Value::I32(v as i32))
+            .map_err(|e| format!("Failed to parse i32: {e}"))
+    }
+
+    /// Parse an i64 value from a string
+    fn parse_i64(value: &str) -> Result<Value, String> {
+        value
+            .parse::<u64>()
+            .map(|v| Value::I64(v as i64))
+            .map_err(|e| format!("Failed to parse i64: {e}"))
+    }
+
+    /// Parse a NaN with payload for f32
+    fn parse_f32_nan_payload(value: &str, negative: bool) -> Result<Value, String> {
+        let prefix_len = if negative { 7 } else { 6 }; // Skip "-nan:0x" or "nan:0x"
+        let payload_str = &value[prefix_len..];
+
+        u32::from_str_radix(payload_str, 16)
+            .map(|payload| {
+                let base_bits = if negative { 0xffc00000 } else { 0x7fc00000 };
+                let bits = base_bits | (payload & 0x3fffff);
+                Value::F32(f32::from_bits(bits))
+            })
+            .map_err(|e| format!("Failed to parse f32 NaN payload: {e}"))
+    }
+
+    /// Parse an f32 value from a string
+    fn parse_f32(value: &str) -> Result<Value, String> {
+        match value {
+            "nan:canonical" | "nan:0x400000" => {
+                // Canonical NaN: sign = 0, quiet bit = 1, payload = 0
+                Ok(Value::F32(f32::from_bits(0x7fc00000)))
+            }
+            "nan:arithmetic" => {
+                // Any arithmetic NaN (we'll use canonical for simplicity)
+                Ok(Value::F32(f32::from_bits(0x7fc00000)))
+            }
+            "inf" => Ok(Value::F32(f32::INFINITY)),
+            "-inf" => Ok(Value::F32(f32::NEG_INFINITY)),
+            _ if value.starts_with("nan:0x") => Self::parse_f32_nan_payload(value, false),
+            _ if value.starts_with("-nan:0x") => Self::parse_f32_nan_payload(value, true),
+            _ if value.starts_with("0x") => {
+                // Handle hex representation
+                let hex = &value[2..];
+                u32::from_str_radix(hex, 16)
+                    .map(|bits| Value::F32(f32::from_bits(bits)))
+                    .map_err(|e| format!("Failed to parse f32 hex: {e}"))
+            }
+            _ => {
+                // Try as bits first (for integer representation of float bits)
+                value
+                    .parse::<u32>()
+                    .map(|bits| Value::F32(f32::from_bits(bits)))
+                    .or_else(|_| {
+                        // Fall back to parsing as float
+                        value.parse::<f32>().map(Value::F32)
+                    })
+                    .map_err(|e| format!("Failed to parse f32: {e}"))
+            }
+        }
+    }
+
+    /// Parse a NaN with payload for f64
+    fn parse_f64_nan_payload(value: &str, negative: bool) -> Result<Value, String> {
+        let prefix_len = if negative { 7 } else { 6 }; // Skip "-nan:0x" or "nan:0x"
+        let payload_str = &value[prefix_len..];
+
+        u64::from_str_radix(payload_str, 16)
+            .map(|payload| {
+                let base_bits = if negative {
+                    0xfff8000000000000
+                } else {
+                    0x7ff8000000000000
+                };
+                let bits = base_bits | (payload & 0x7ffffffffffff);
+                Value::F64(f64::from_bits(bits))
+            })
+            .map_err(|e| format!("Failed to parse f64 NaN payload: {e}"))
+    }
+
+    /// Parse an f64 value from a string
+    fn parse_f64(value: &str) -> Result<Value, String> {
+        match value {
+            "nan:canonical" | "nan:0x8000000000000" => {
+                // Canonical NaN: sign = 0, quiet bit = 1, payload = 0
+                Ok(Value::F64(f64::from_bits(0x7ff8000000000000)))
+            }
+            "nan:arithmetic" => {
+                // Any arithmetic NaN (we'll use canonical for simplicity)
+                Ok(Value::F64(f64::from_bits(0x7ff8000000000000)))
+            }
+            "inf" => Ok(Value::F64(f64::INFINITY)),
+            "-inf" => Ok(Value::F64(f64::NEG_INFINITY)),
+            _ if value.starts_with("nan:0x") => Self::parse_f64_nan_payload(value, false),
+            _ if value.starts_with("-nan:0x") => Self::parse_f64_nan_payload(value, true),
+            _ if value.starts_with("0x") => {
+                // Handle hex representation
+                let hex = &value[2..];
+                u64::from_str_radix(hex, 16)
+                    .map(|bits| Value::F64(f64::from_bits(bits)))
+                    .map_err(|e| format!("Failed to parse f64 hex: {e}"))
+            }
+            _ => {
+                // Try as bits first (for integer representation of float bits)
+                value
+                    .parse::<u64>()
+                    .map(|bits| Value::F64(f64::from_bits(bits)))
+                    .or_else(|_| {
+                        // Fall back to parsing as float
+                        value.parse::<f64>().map(Value::F64)
+                    })
+                    .map_err(|e| format!("Failed to parse f64: {e}"))
+            }
+        }
+    }
+
+    /// Parse a reference type value from a string
+    fn parse_ref(value: &str, ref_type: &str) -> Result<Value, String> {
+        if value == "null" {
+            match ref_type {
+                "funcref" => Ok(Value::FuncRef(None)),
+                "externref" => Ok(Value::ExternRef(None)),
+                _ => Err(format!("Unknown reference type: {ref_type}")),
+            }
+        } else {
+            value
+                .parse::<u32>()
+                .map(|idx| match ref_type {
+                    "funcref" => Value::FuncRef(Some(idx)),
+                    "externref" => Value::ExternRef(Some(idx)),
+                    _ => unreachable!(),
+                })
+                .map_err(|e| format!("Failed to parse {ref_type}: {e}"))
+        }
+    }
+
     /// Create from a type string and value string (used in tests)
     pub fn from_strings(typ: &str, value: &str) -> Result<Self, String> {
         match typ {
-            "i32" => value
-                .parse::<u32>()
-                .map(|v| Value::I32(v as i32))
-                .map_err(|e| format!("Failed to parse i32: {e}")),
-            "i64" => value
-                .parse::<u64>()
-                .map(|v| Value::I64(v as i64))
-                .map_err(|e| format!("Failed to parse i64: {e}")),
-            "f32" => {
-                if let Some(hex) = value.strip_prefix("0x") {
-                    // Handle hex representation
-                    u32::from_str_radix(hex, 16)
-                        .map(|bits| Value::F32(f32::from_bits(bits)))
-                        .map_err(|e| format!("Failed to parse f32 hex: {e}"))
-                } else {
-                    // Try as bits first (for integer representation of float bits)
-                    value
-                        .parse::<u32>()
-                        .map(|bits| Value::F32(f32::from_bits(bits)))
-                        .or_else(|_| {
-                            // Fall back to parsing as float
-                            value.parse::<f32>().map(Value::F32)
-                        })
-                        .map_err(|e| format!("Failed to parse f32: {e}"))
-                }
-            }
-            "f64" => {
-                if let Some(hex) = value.strip_prefix("0x") {
-                    // Handle hex representation
-                    u64::from_str_radix(hex, 16)
-                        .map(|bits| Value::F64(f64::from_bits(bits)))
-                        .map_err(|e| format!("Failed to parse f64 hex: {e}"))
-                } else {
-                    // Try as bits first (for integer representation of float bits)
-                    value
-                        .parse::<u64>()
-                        .map(|bits| Value::F64(f64::from_bits(bits)))
-                        .or_else(|_| {
-                            // Fall back to parsing as float
-                            value.parse::<f64>().map(Value::F64)
-                        })
-                        .map_err(|e| format!("Failed to parse f64: {e}"))
-                }
-            }
+            "i32" => Self::parse_i32(value),
+            "i64" => Self::parse_i64(value),
+            "f32" => Self::parse_f32(value),
+            "f64" => Self::parse_f64(value),
+            "funcref" | "externref" => Self::parse_ref(value, typ),
             t => Err(format!("Unknown value type: {t}")),
         }
     }
@@ -112,8 +235,52 @@ impl Value {
         match self {
             Value::I32(v) => ("i32".to_string(), (*v as u32).to_string()),
             Value::I64(v) => ("i64".to_string(), (*v as u64).to_string()),
-            Value::F32(v) => ("f32".to_string(), v.to_bits().to_string()),
-            Value::F64(v) => ("f64".to_string(), v.to_bits().to_string()),
+            Value::F32(v) => {
+                let bits = v.to_bits();
+                let value_str = if v.is_nan() {
+                    // Check if it's a canonical NaN
+                    if bits == 0x7fc00000 || bits == 0xffc00000 {
+                        "nan:canonical".to_string()
+                    } else {
+                        // It's an arithmetic NaN
+                        "nan:arithmetic".to_string()
+                    }
+                } else {
+                    // Regular value, return as bits
+                    bits.to_string()
+                };
+                ("f32".to_string(), value_str)
+            }
+            Value::F64(v) => {
+                let bits = v.to_bits();
+                let value_str = if v.is_nan() {
+                    // Check if it's a canonical NaN
+                    if bits == 0x7ff8000000000000 || bits == 0xfff8000000000000 {
+                        "nan:canonical".to_string()
+                    } else {
+                        // It's an arithmetic NaN
+                        "nan:arithmetic".to_string()
+                    }
+                } else {
+                    // Regular value, return as bits
+                    bits.to_string()
+                };
+                ("f64".to_string(), value_str)
+            }
+            Value::FuncRef(v) => {
+                let value_str = match v {
+                    None => "null".to_string(),
+                    Some(idx) => idx.to_string(),
+                };
+                ("funcref".to_string(), value_str)
+            }
+            Value::ExternRef(v) => {
+                let value_str = match v {
+                    None => "null".to_string(),
+                    Some(idx) => idx.to_string(),
+                };
+                ("externref".to_string(), value_str)
+            }
         }
     }
 }
@@ -125,6 +292,10 @@ impl fmt::Display for Value {
             Value::I64(v) => write!(f, "i64:{v}"),
             Value::F32(v) => write!(f, "f32:{}", v.to_hex()),
             Value::F64(v) => write!(f, "f64:{}", v.to_hex()),
+            Value::FuncRef(None) => write!(f, "funcref:null"),
+            Value::FuncRef(Some(idx)) => write!(f, "funcref:{}", idx),
+            Value::ExternRef(None) => write!(f, "externref:null"),
+            Value::ExternRef(Some(idx)) => write!(f, "externref:{}", idx),
         }
     }
 }

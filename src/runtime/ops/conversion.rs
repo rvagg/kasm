@@ -253,17 +253,18 @@ pub fn i32_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
-    // Check range: i32::MIN to i32::MAX
-    // Note: We need to be careful with the bounds
-    // The upper bound must be exclusive because 2^31 doesn't fit in i32
-    const MIN: f32 = -2147483648.0; // i32::MIN as f32 (exact)
+    // Truncate first, then check range
+    let truncated = value.trunc();
+
+    // Check if truncated value fits in i32
+    const MIN: f32 = -2147483648.0; // i32::MIN as f32
     const MAX: f32 = 2147483648.0; // 2^31 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I32(value.trunc() as i32));
+    stack.push(Value::I32(truncated as i32));
     Ok(())
 }
 
@@ -284,14 +285,23 @@ pub fn i32_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
+    // Truncate first to handle subnormals that become -0.0
+    let truncated = value.trunc();
+
+    // -0.0 is valid and converts to 0
+    if truncated == 0.0 {
+        stack.push(Value::I32(0));
+        return Ok(());
+    }
+
     const MIN: f32 = 0.0;
     const MAX: f32 = 4294967296.0; // 2^32 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I32(value.trunc() as u32 as i32));
+    stack.push(Value::I32(truncated as u32 as i32));
     Ok(())
 }
 
@@ -312,14 +322,18 @@ pub fn i32_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
-    const MIN: f64 = -2147483648.0; // i32::MIN as f64 (exact)
+    // Truncate first, then check range
+    let truncated = value.trunc();
+
+    // Check if truncated value fits in i32
+    const MIN: f64 = -2147483648.0; // i32::MIN as f64
     const MAX: f64 = 2147483648.0; // 2^31 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I32(value.trunc() as i32));
+    stack.push(Value::I32(truncated as i32));
     Ok(())
 }
 
@@ -340,14 +354,23 @@ pub fn i32_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
+    // Truncate first to handle subnormals that become -0.0
+    let truncated = value.trunc();
+
+    // -0.0 is valid and converts to 0
+    if truncated == 0.0 {
+        stack.push(Value::I32(0));
+        return Ok(());
+    }
+
     const MIN: f64 = 0.0;
     const MAX: f64 = 4294967296.0; // 2^32 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I32(value.trunc() as u32 as i32));
+    stack.push(Value::I32(truncated as u32 as i32));
     Ok(())
 }
 
@@ -368,15 +391,18 @@ pub fn i64_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
+    // Truncate first, then check range
+    let truncated = value.trunc();
+
     // f32 can't represent the full i64 range precisely
     const MIN: f32 = -9223372036854775808.0; // i64::MIN as f32
     const MAX: f32 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I64(value.trunc() as i64));
+    stack.push(Value::I64(truncated as i64));
     Ok(())
 }
 
@@ -397,14 +423,23 @@ pub fn i64_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
+    // Truncate first to handle subnormals that become -0.0
+    let truncated = value.trunc();
+
+    // -0.0 is valid and converts to 0
+    if truncated == 0.0 {
+        stack.push(Value::I64(0));
+        return Ok(());
+    }
+
     const MIN: f32 = 0.0;
     const MAX: f32 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I64(value.trunc() as u64 as i64));
+    stack.push(Value::I64(truncated as u64 as i64));
     Ok(())
 }
 
@@ -425,15 +460,18 @@ pub fn i64_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
+    // Truncate first, then check range
+    let truncated = value.trunc();
+
     // f64 can't represent the full i64 range precisely at the extremes
     const MIN: f64 = -9223372036854775808.0; // i64::MIN as f64
     const MAX: f64 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I64(value.trunc() as i64));
+    stack.push(Value::I64(truncated as i64));
     Ok(())
 }
 
@@ -454,14 +492,23 @@ pub fn i64_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         ));
     }
 
+    // Truncate first to handle subnormals that become -0.0
+    let truncated = value.trunc();
+
+    // -0.0 is valid and converts to 0
+    if truncated == 0.0 {
+        stack.push(Value::I64(0));
+        return Ok(());
+    }
+
     const MIN: f64 = 0.0;
     const MAX: f64 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
 
-    if !(MIN..MAX).contains(&value) {
+    if !(MIN..MAX).contains(&truncated) {
         return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
     }
 
-    stack.push(Value::I64(value.trunc() as u64 as i64));
+    stack.push(Value::I64(truncated as u64 as i64));
     Ok(())
 }
 

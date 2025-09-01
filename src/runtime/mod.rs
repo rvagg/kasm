@@ -50,4 +50,6 @@ pub enum RuntimeError {
     InvalidConversion(String),
     #[error("Trap: {0}")]
     Trap(String),
+    #[error("Invalid constant expression: {0}")]
+    InvalidConstExpr(String),
 }

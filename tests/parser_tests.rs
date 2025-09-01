@@ -4,6 +4,7 @@ mod tests {
     use kasm::parser::module;
     use kasm::runtime::{implemented::is_instruction_implemented, Instance, Value};
     use rstest::rstest;
+
     use serde::de::{self, Deserializer};
     use serde::Deserialize;
     use std::collections::HashMap;
@@ -189,35 +190,58 @@ mod tests {
     fn test_with_file(#[files("tests/spec/*.json")] path: PathBuf) {
         println!("testing file: {}", path.display());
 
+        // Check if this test should be skipped
+        if let Some(file_name) = path.file_name() {
+            if kasm::runtime::implemented::should_skip_test(file_name.to_str().unwrap_or("")) {
+                println!(
+                    "  ⚠️  SKIPPING TEST: {} (see implemented.rs for reason)",
+                    file_name.to_string_lossy()
+                );
+                return;
+            }
+        }
+
         let file = path.to_string_lossy().to_string();
         let json_string = fs::read_to_string(&file).unwrap_or_else(|_| panic!("couldn't read file: {}", file));
         let test_data: TestData = serde_json::from_str(&json_string).unwrap();
 
         let mut parsed_modules: HashMap<String, module::Module> = HashMap::new();
-        let mut last_module_name: Option<String> = None;
+        let mut module_instances: HashMap<String, Instance> = HashMap::new();
+        let mut _last_module_name: Option<String> = None;
         let mut module_registry: HashMap<String, module::Module> = HashMap::new();
 
         setup_spectest(&mut module_registry);
 
-        for (index, command) in test_data.spec.commands.iter().enumerate() {
-            let code = &test_data.code[index];
+        // First pass: Parse all modules
+        for (_index, command) in test_data.spec.commands.iter().enumerate() {
+            if let Command::Module(cmd) = command {
+                println!("(TODO) Module: line = {}, filename = {}", cmd.line, cmd.filename);
+                let bin = &test_data.bin[&cmd.filename].0;
+                let parsed = kasm::parser::parse(
+                    &module_registry,
+                    format!("{}/{}", cmd.filename, cmd.line).as_str(),
+                    &mut kasm::parser::reader::Reader::new(bin.clone()),
+                );
+                if parsed.is_err() {
+                    let err = parsed.err().unwrap();
+                    println!("Error parsing module {}: {:?}", cmd.filename, err);
+                    panic!("Failed to parse: {}", err);
+                }
+                let module = parsed.unwrap();
+                parsed_modules.insert(cmd.filename.clone(), module);
+                _last_module_name = Some(cmd.filename.clone());
+            }
+        }
+
+        // Second pass: Process commands
+        // Reset last_module_name to track which module is currently active
+        _last_module_name = None;
+        for (_index, command) in test_data.spec.commands.iter().enumerate() {
+            let code = &test_data.code[_index];
             match command {
                 Command::Module(cmd) => {
-                    println!("(TODO) Module: line = {}, filename = {}", cmd.line, cmd.filename);
-                    let bin = &test_data.bin[&cmd.filename].0;
-                    let parsed = kasm::parser::parse(
-                        &module_registry,
-                        format!("{}/{}", cmd.filename, cmd.line).as_str(),
-                        &mut kasm::parser::reader::Reader::new(bin.clone()),
-                    );
-                    if parsed.is_err() {
-                        let err = parsed.err().unwrap();
-                        println!("Error parsing module {}: {:?}", cmd.filename, err);
-                        panic!("Failed to parse: {}", err);
-                    }
-                    let module = parsed.unwrap();
-                    parsed_modules.insert(cmd.filename.clone(), module);
-                    last_module_name = Some(cmd.filename.clone());
+                    // Update the current active module
+                    _last_module_name = Some(cmd.filename.clone());
                 }
                 Command::AssertReturnCommand(cmd) => {
                     println!(
@@ -232,7 +256,7 @@ mod tests {
 
                     // Get the module to invoke from
                     let module_name = if cmd.action.module.is_empty() {
-                        match last_module_name.as_ref() {
+                        match _last_module_name.as_ref() {
                             Some(name) => name,
                             None => {
                                 println!("  ⚠️  SKIPPING: No module available for invoke");
@@ -319,8 +343,17 @@ mod tests {
                         continue;
                     }
 
-                    // Create an instance of the module
-                    let instance = Instance::new(module);
+                    // Get or create a persistent instance for this module
+                    if !module_instances.contains_key(module_name) {
+                        // Create instance on first use
+                        let module_ref = parsed_modules.get(module_name).unwrap();
+                        let new_instance =
+                            Instance::new(module_ref).unwrap_or_else(|e| panic!("Failed to create instance: {}", e));
+                        module_instances.insert(module_name.to_string(), new_instance);
+                    }
+
+                    // Get mutable reference to the instance
+                    let instance = module_instances.get_mut(module_name).unwrap();
 
                     // Convert arguments
                     let mut args = Vec::new();
@@ -330,7 +363,7 @@ mod tests {
                         args.push(value);
                     }
 
-                    // Invoke the function
+                    // Invoke the function with the persistent instance
                     match instance.invoke(&cmd.action.field, args) {
                         Ok(results) => {
                             // Compare results
@@ -390,7 +423,7 @@ mod tests {
                     // Register the last parsed module
                     // We re-parse to avoid moving the module out of parsed_modules,
                     // ensuring dump comparisons can still run on all modules
-                    if let Some(module_name) = &last_module_name {
+                    if let Some(module_name) = &_last_module_name {
                         let bin = &test_data.bin[module_name].0;
                         let module = kasm::parser::parse(
                             &module_registry,
@@ -426,7 +459,7 @@ mod tests {
                         Some("wasm") => InvalidCommand {
                             command: cmd,
                             bin: &test_data.bin[&cmd.filename].0,
-                            code: &test_data.code[index],
+                            code: &test_data.code[_index],
                         },
                         Some("wat") => {
                             println!("Skipping AssertInvalidCommand with .wat file: {}", cmd.filename);

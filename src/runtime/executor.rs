@@ -8,8 +8,8 @@ use super::{
     stack::Stack,
     RuntimeError, Value,
 };
-use crate::parser::instruction::{Instruction, InstructionKind};
-use crate::parser::module::{FunctionType, Module, ValueType};
+use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
+use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
 
 /// Maximum call stack depth to prevent stack overflow
@@ -58,25 +58,34 @@ impl<'a> Executor<'a> {
             }
         };
 
-        // Initialize globals from module
+        // Initialise globals from module
+
         let mut globals = Vec::new();
-        for global in &module.globals.globals {
-            // For now, initialize all globals to zero of their type
-            // TODO: Execute init expressions
-            let initial_value = match global.global_type.value_type {
-                ValueType::I32 => Value::I32(0),
-                ValueType::I64 => Value::I64(0),
-                ValueType::F32 => Value::F32(0.0),
-                ValueType::F64 => Value::F64(0.0),
-                ValueType::V128 | ValueType::FuncRef | ValueType::ExternRef => {
-                    return Err(RuntimeError::UnimplementedInstruction(format!(
-                        "Global type {:?} not yet supported",
-                        global.global_type.value_type
-                    )));
-                }
-            };
-            globals.push(initial_value);
+
+        // Reserve space for imported globals with default values
+        // In a real implementation, these would be provided by the import object
+        for import in &module.imports.imports {
+            if let ExternalKind::Global(global_type) = &import.external_kind {
+                let initial_value = match global_type.value_type {
+                    ValueType::I32 => Value::I32(0),
+                    ValueType::I64 => Value::I64(0),
+                    ValueType::F32 => Value::F32(0.0),
+                    ValueType::F64 => Value::F64(0.0),
+                    ValueType::FuncRef => Value::FuncRef(None),
+                    ValueType::ExternRef => Value::ExternRef(None),
+                    ValueType::V128 => {
+                        return Err(RuntimeError::UnimplementedInstruction(
+                            "V128 type not yet supported".to_string(),
+                        ));
+                    }
+                };
+                globals.push(initial_value);
+            }
         }
+
+        // We can't evaluate init expressions yet because the executor isn't created
+        // Store the module's globals info for later initialization
+        let module_globals = module.globals.globals.clone();
 
         // Build function registry - collect all function bodies
         // First, count imported functions (they come first in the index space)
@@ -84,7 +93,7 @@ impl<'a> Executor<'a> {
             .imports
             .imports
             .iter()
-            .filter(|import| matches!(import.external_kind, crate::parser::module::ExternalKind::Function(_)))
+            .filter(|import| matches!(import.external_kind, ExternalKind::Function(_)))
             .count();
 
         let mut functions = Vec::new();
@@ -102,7 +111,8 @@ impl<'a> Executor<'a> {
         // Collect function types for quick access
         let function_types = module.types.types.clone();
 
-        Ok(Executor {
+        // Create executor instance
+        let mut executor = Executor {
             module,
             stack: Stack::new(),
             call_stack: Vec::new(),
@@ -110,7 +120,160 @@ impl<'a> Executor<'a> {
             globals,
             functions,
             function_types,
-        })
+        };
+
+        // Now initialise module's own globals with their init expressions
+        for global in &module_globals {
+            let initial_value = if global.init.is_empty() {
+                // No init expression, use default
+                match global.global_type.value_type {
+                    ValueType::I32 => Value::I32(0),
+                    ValueType::I64 => Value::I64(0),
+                    ValueType::F32 => Value::F32(0.0),
+                    ValueType::F64 => Value::F64(0.0),
+                    ValueType::FuncRef => Value::FuncRef(None),
+                    ValueType::ExternRef => Value::ExternRef(None),
+                    ValueType::V128 => {
+                        return Err(RuntimeError::UnimplementedInstruction(
+                            "V128 type not yet supported".to_string(),
+                        ));
+                    }
+                }
+            } else {
+                // Evaluate the init expression
+                executor.evaluate_const_expr(&global.init)?
+            };
+            executor.globals.push(initial_value);
+        }
+
+        // Initialise memory with data sections
+        executor.initialise_data_sections()?;
+
+        Ok(executor)
+    }
+
+    /// Initialise memory with data from data sections
+    fn initialise_data_sections(&mut self) -> Result<(), RuntimeError> {
+        // Process each data segment
+        for data_segment in &self.module.data.data {
+            match &data_segment.mode {
+                DataMode::Active { memory_index, offset } => {
+                    // Check memory index is valid (WebAssembly 1.0 only supports one memory)
+                    if *memory_index != 0 {
+                        return Err(RuntimeError::MemoryError(format!(
+                            "Invalid memory index {} in data segment",
+                            memory_index
+                        )));
+                    }
+
+                    // Check we have a memory
+                    if self.memories.is_empty() {
+                        return Err(RuntimeError::MemoryError(
+                            "Data segment requires memory but none exists".to_string(),
+                        ));
+                    }
+
+                    // Evaluate the offset expression to get the starting address
+                    // The offset expression should be a constant expression
+                    let offset_value = self.evaluate_const_expr(offset)?;
+
+                    // Extract the offset as u32
+                    let offset_addr = match offset_value {
+                        Value::I32(v) => v as u32,
+                        _ => {
+                            return Err(RuntimeError::MemoryError(
+                                "Data segment offset must be an i32".to_string(),
+                            ))
+                        }
+                    };
+
+                    // Write the data to memory
+                    let memory = &mut self.memories[0];
+                    let data = &data_segment.init;
+
+                    // Check if the data fits in memory
+                    let end_addr = offset_addr as usize + data.len();
+                    let memory_size_bytes = (memory.size() as usize) * 65536; // Convert pages to bytes
+                    if end_addr > memory_size_bytes {
+                        return Err(RuntimeError::MemoryError(format!(
+                            "Data segment at offset {} with length {} exceeds memory size {} bytes",
+                            offset_addr,
+                            data.len(),
+                            memory_size_bytes
+                        )));
+                    }
+
+                    // Copy the data into memory using the shared helper
+                    ops::memory::copy_to_memory(memory, offset_addr, data)?;
+                }
+                DataMode::Passive => {
+                    // Passive data segments are not automatically initialised
+                    // They're used with memory.init instruction
+                    // For now, we skip them
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Evaluate a constant expression (used for data/element segment offsets and global init)
+    fn evaluate_const_expr(&self, instructions: &[Instruction]) -> Result<Value, RuntimeError> {
+        // Constant expressions are limited to a small set of instructions
+        // They must end with an End instruction
+        if instructions.is_empty() {
+            return Err(RuntimeError::InvalidConstExpr("Empty constant expression".to_string()));
+        }
+
+        // Check that the last instruction is End
+        match instructions.last() {
+            Some(inst) if matches!(inst.kind, InstructionKind::End) => {}
+            _ => {
+                return Err(RuntimeError::InvalidConstExpr(
+                    "Constant expression must end with End instruction".to_string(),
+                ));
+            }
+        }
+
+        // For now, handle the common cases (single instruction + End)
+        if instructions.len() == 2 {
+            match &instructions[0].kind {
+                InstructionKind::I32Const { value } => Ok(Value::I32(*value)),
+                InstructionKind::I64Const { value } => Ok(Value::I64(*value)),
+                InstructionKind::F32Const { value } => Ok(Value::F32(*value)),
+                InstructionKind::F64Const { value } => Ok(Value::F64(*value)),
+                InstructionKind::GlobalGet { global_idx } => {
+                    // Get the global value
+                    if (*global_idx as usize) >= self.globals.len() {
+                        return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
+                    }
+                    Ok(self.globals[*global_idx as usize].clone())
+                }
+                InstructionKind::RefNull { ref_type } => match ref_type {
+                    ValueType::FuncRef => Ok(Value::FuncRef(None)),
+                    ValueType::ExternRef => Ok(Value::ExternRef(None)),
+                    _ => Err(RuntimeError::InvalidConstExpr(format!(
+                        "Invalid reference type for ref.null: {:?}",
+                        ref_type
+                    ))),
+                },
+                _ => Err(RuntimeError::InvalidConstExpr(format!(
+                    "Unsupported instruction in constant expression: {:?}",
+                    instructions[0].kind
+                ))),
+            }
+        } else if instructions.len() == 1 && matches!(instructions[0].kind, InstructionKind::End) {
+            // Just an End instruction - this shouldn't happen in valid WebAssembly
+            Err(RuntimeError::InvalidConstExpr(
+                "Constant expression cannot be just End".to_string(),
+            ))
+        } else {
+            // TODO: Support more complex constant expressions (e.g., i32.add with two consts)
+            Err(RuntimeError::InvalidConstExpr(format!(
+                "Unsupported constant expression with {} instructions",
+                instructions.len()
+            )))
+        }
     }
 
     /// Push a new call frame for a function call
@@ -120,12 +283,25 @@ impl<'a> Executor<'a> {
             return Err(RuntimeError::Trap("call stack exhausted".to_string()));
         }
 
-        // Get the function type
+        // Calculate the number of imported functions
+        let num_imported_functions = self.module.imports.function_count();
+
+        // Get the function declaration from the functions section
+        // Note: functions section only contains non-imported functions,
+        // so we need to subtract the number of imports if this is not an imported function
+        let func_decl_idx = if (func_idx as usize) < num_imported_functions {
+            // This shouldn't happen as we check for imports in handle_call, but be safe
+            return Err(RuntimeError::UnimplementedInstruction(format!(
+                "Cannot push frame for imported function at index {func_idx}"
+            )));
+        } else {
+            func_idx as usize - num_imported_functions
+        };
+
         let func = self
             .module
             .functions
-            .functions
-            .get(func_idx as usize)
+            .get(func_decl_idx)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_type = self
@@ -151,19 +327,19 @@ impl<'a> Executor<'a> {
             }
         }
 
-        // Get the function body
+        // Get the function body from the code section
+        // The code section also only contains non-imported functions
         let body = self
             .module
             .code
-            .code
-            .get(func_idx as usize)
+            .get(func_decl_idx)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
-        // Initialize locals: parameters first, then local declarations
+        // Initialise locals: parameters first, then local declarations
         let mut locals = args;
         for (count, local_type) in body.locals.iter() {
             for _ in 0..*count {
-                // Initialize locals to zero
+                // Initialise locals to zero
                 let zero_value = match local_type {
                     ValueType::I32 => Value::I32(0),
                     ValueType::I64 => Value::I64(0),
@@ -229,20 +405,57 @@ impl<'a> Executor<'a> {
             .ok_or(RuntimeError::InvalidFunctionType)
     }
 
+    /// Create a function label for the implicit function block
+    /// In WebAssembly, a function body is an implicit block
+    fn create_function_label(&self, return_types: &[ValueType]) -> Label {
+        let block_type = match return_types.len() {
+            0 => BlockType::Empty,
+            1 => BlockType::Value(return_types[0]),
+            _ => {
+                // For multi-value returns, we'd ideally use BlockType::FuncType
+                // but we don't have a function type index here.
+                // This is a temporary workaround - proper support would need BlockType::FuncType
+                BlockType::Empty
+            }
+        };
+
+        Label {
+            label_type: LabelType::Block, // Function body is a block
+            block_type,
+            stack_height: self.stack.len(),
+            unreachable: false,
+            param_types: vec![], // Functions don't consume parameters from stack
+            return_types: return_types.to_vec(),
+        }
+    }
+
     /// Handle a function call instruction
     fn handle_call(&mut self, func_idx: u32) -> Result<(), RuntimeError> {
-        // Get function type to know parameter and return counts
+        // Calculate the number of imported functions
+        let num_imported_functions = self.module.imports.function_count();
+
+        // Check if this is an imported function (which we can't execute)
+        if (func_idx as usize) < num_imported_functions {
+            return Err(RuntimeError::UnimplementedInstruction(format!(
+                "Cannot execute imported function at index {func_idx}"
+            )));
+        }
+
+        // Get the function declaration from the functions section
+        // Note: functions section only contains non-imported functions,
+        // so we need to subtract the number of imports
+        let func_decl_idx = func_idx as usize - num_imported_functions;
         let func = self
             .module
             .functions
-            .functions
-            .get(func_idx as usize)
+            .get(func_decl_idx)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_type = self
             .function_types
             .get(func.ftype_index as usize)
-            .ok_or(RuntimeError::InvalidFunctionType)?;
+            .ok_or(RuntimeError::InvalidFunctionType)?
+            .clone();
 
         // Pop arguments from the operand stack (in reverse order)
         let mut args = Vec::new();
@@ -272,23 +485,33 @@ impl<'a> Executor<'a> {
             }
         };
 
+        // Push implicit function block label
+        let func_label = self.create_function_label(&func_type.return_types);
+        self.current_label_stack_mut()?.push(func_label);
+
         // Execute the called function
         let result = self.execute_instructions(&body.body);
+
+        // Pop the function label
+        self.current_label_stack_mut()?.pop();
 
         // Pop the call frame
         let _frame = self.pop_call_frame().unwrap();
 
         // Handle the result
         match result {
-            Ok(BlockEnd::Normal) | Ok(BlockEnd::Return) => {
+            Ok(BlockEnd::Normal) | Ok(BlockEnd::Return) | Ok(BlockEnd::Branch(0)) => {
                 // Function completed normally, return values are on the stack
+                // Branch(0) means branch to the function's implicit block, which is like normal completion
                 // The caller is responsible for verifying the correct number and types
                 // of return values when popping them from the stack
                 Ok(())
             }
-            Ok(BlockEnd::Branch(_)) => {
-                // Uncaught branch in function
-                Err(RuntimeError::Trap("uncaught branch in function".to_string()))
+            Ok(BlockEnd::Branch(depth)) => {
+                // Uncaught branch in function (depth > 0)
+                Err(RuntimeError::Trap(format!(
+                    "uncaught branch with depth {depth} in function"
+                )))
             }
             Err(e) => Err(e),
         }
@@ -311,26 +534,69 @@ impl<'a> Executor<'a> {
         args: Vec<Value>,
         return_types: &[ValueType],
     ) -> Result<Vec<Value>, RuntimeError> {
+        self.execute_function_with_locals(func, args, return_types, None)
+    }
+
+    /// Execute a function with explicit locals information
+    pub fn execute_function_with_locals(
+        &mut self,
+        func: &StructuredFunction,
+        args: Vec<Value>,
+        return_types: &[ValueType],
+        locals_info: Option<&Locals>,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        // Initialise locals: parameters first, then local declarations
+        let mut locals = args;
+
+        // Add declared locals if provided
+        if let Some(locals_info) = locals_info {
+            for (count, local_type) in locals_info.iter() {
+                for _ in 0..*count {
+                    // Initialise locals to zero
+                    let zero_value = match local_type {
+                        ValueType::I32 => Value::I32(0),
+                        ValueType::I64 => Value::I64(0),
+                        ValueType::F32 => Value::F32(0.0),
+                        ValueType::F64 => Value::F64(0.0),
+                        _ => {
+                            return Err(RuntimeError::UnimplementedInstruction(format!(
+                                "Local type {local_type:?} not supported"
+                            )))
+                        }
+                    };
+                    locals.push(zero_value);
+                }
+            }
+        }
+
         // Create initial call frame
         let initial_frame = CallFrame {
             function_idx: 0, // Top-level function
             ip: 0,
-            locals: args,
+            locals,
             label_stack: Vec::new(),
             return_arity: return_types.len(),
         };
         self.call_stack.push(initial_frame);
 
+        // Push implicit function block label
+        let func_label = self.create_function_label(return_types);
+        self.current_label_stack_mut()?.push(func_label);
+
         // Execute the function body
         let result = self.execute_instructions(&func.body);
+
+        // Pop the function label
+        self.current_label_stack_mut()?.pop();
 
         // Pop the initial frame
         self.call_stack.pop();
 
         // Handle the result
         match result {
-            Ok(BlockEnd::Normal) => {
-                // Normal completion - collect return values
+            Ok(BlockEnd::Normal) | Ok(BlockEnd::Branch(0)) => {
+                // Normal completion or branch to function block - collect return values
+                // Branch(0) means branch to the function's implicit block, which is like normal completion
                 let mut results = Vec::new();
                 for return_type in return_types.iter().rev() {
                     let value = self.stack.pop_typed(*return_type)?;
@@ -350,7 +616,7 @@ impl<'a> Executor<'a> {
                 Ok(results)
             }
             Ok(BlockEnd::Branch(depth)) => {
-                // Uncaught branch
+                // Uncaught branch (depth > 0)
                 Err(RuntimeError::InvalidLabel(depth))
             }
             Err(e) => Err(e),
@@ -368,20 +634,78 @@ impl<'a> Executor<'a> {
         Ok(BlockEnd::Normal)
     }
 
+    /// Resolve a block type to its parameter and return types
+    fn resolve_block_type(&self, block_type: &BlockType) -> Result<(Vec<ValueType>, Vec<ValueType>), RuntimeError> {
+        match block_type {
+            BlockType::Empty => Ok((vec![], vec![])),
+            BlockType::Value(vt) => Ok((vec![], vec![*vt])),
+            BlockType::FuncType(idx) => {
+                let func_type = self
+                    .module
+                    .types
+                    .types
+                    .get(*idx as usize)
+                    .ok_or(RuntimeError::InvalidFunctionType)?;
+                Ok((func_type.parameters.clone(), func_type.return_types.clone()))
+            }
+        }
+    }
+
+    /// Create a label with resolved type information
+    fn create_label(
+        &self,
+        label_type: LabelType,
+        block_type: BlockType,
+        stack_height: usize,
+    ) -> Result<Label, RuntimeError> {
+        let (param_types, return_types) = self.resolve_block_type(&block_type)?;
+
+        Ok(Label {
+            label_type,
+            block_type,
+            stack_height,
+            unreachable: false,
+            param_types,
+            return_types,
+        })
+    }
+
+    /// Common setup for block-like structures (block, loop, if)
+    /// 1. Resolves block type to get parameter types
+    /// 2. Pops parameters from stack (blocks consume their parameters)
+    /// 3. Creates and pushes label
+    /// 4. Pushes parameters back for the body to use
+    fn setup_block_structure(&mut self, label_type: LabelType, block_type: BlockType) -> Result<(), RuntimeError> {
+        // Resolve block type to get parameter types
+        let (param_types, _) = self.resolve_block_type(&block_type)?;
+
+        // Pop parameters from stack (blocks consume their parameters)
+        let mut params = Vec::with_capacity(param_types.len());
+        for _ in &param_types {
+            params.push(self.stack.pop()?);
+        }
+        params.reverse();
+
+        // Create and push label (stack height is after params consumed)
+        let label = self.create_label(label_type, block_type, self.stack.len())?;
+        self.current_label_stack_mut()?.push(label);
+
+        // Push parameters back for the body to use
+        for param in params {
+            self.stack.push(param);
+        }
+
+        Ok(())
+    }
+
     /// Execute a single instruction
     fn execute_instruction(&mut self, instruction: &StructuredInstruction) -> Result<BlockEnd, RuntimeError> {
         match instruction {
             StructuredInstruction::Plain(inst) => self.execute_plain_instruction(inst),
 
             StructuredInstruction::Block { block_type, body, .. } => {
-                // Push label for the block
-                let label = Label {
-                    label_type: LabelType::Block,
-                    block_type: *block_type,
-                    stack_height: self.stack.len(),
-                    unreachable: false,
-                };
-                self.current_label_stack_mut()?.push(label);
+                // Setup block structure (handle parameters and label)
+                self.setup_block_structure(LabelType::Block, *block_type)?;
 
                 // Execute the block body
                 let result = self.execute_instructions(body);
@@ -395,6 +719,7 @@ impl<'a> Executor<'a> {
                     Ok(BlockEnd::Return) => Ok(BlockEnd::Return),
                     Ok(BlockEnd::Branch(0)) => {
                         // Branch to this block (depth 0) - just exit normally
+                        // The br/br_if instruction has already handled the stack properly
                         Ok(BlockEnd::Normal)
                     }
                     Ok(BlockEnd::Branch(depth)) => {
@@ -406,14 +731,8 @@ impl<'a> Executor<'a> {
             }
 
             StructuredInstruction::Loop { block_type, body, .. } => {
-                // Push label for the loop
-                let label = Label {
-                    label_type: LabelType::Loop,
-                    block_type: *block_type,
-                    stack_height: self.stack.len(),
-                    unreachable: false,
-                };
-                self.current_label_stack_mut()?.push(label);
+                // Setup loop structure (handle parameters and label)
+                self.setup_block_structure(LabelType::Loop, *block_type)?;
 
                 // Execute the loop body
                 loop {
@@ -432,7 +751,7 @@ impl<'a> Executor<'a> {
                         }
                         Ok(BlockEnd::Branch(0)) => {
                             // Branch to this loop (depth 0) - continue the loop
-                            // The label is already on the stack, just continue
+                            // Stack has been restored by br instruction with loop parameters
                             continue;
                         }
                         Ok(BlockEnd::Branch(depth)) => {
@@ -457,14 +776,8 @@ impl<'a> Executor<'a> {
                 // Pop condition
                 let condition = self.stack.pop_i32()?;
 
-                // Push label for the if
-                let label = Label {
-                    label_type: LabelType::If,
-                    block_type: *block_type,
-                    stack_height: self.stack.len(),
-                    unreachable: false,
-                };
-                self.current_label_stack_mut()?.push(label);
+                // Setup if structure (handle parameters and label)
+                self.setup_block_structure(LabelType::If, *block_type)?;
 
                 // Execute appropriate branch
                 let result = if condition != 0 {
@@ -562,14 +875,103 @@ impl<'a> Executor<'a> {
             // ----------------------------------------------------------------
             // 4.4.8 Control Instructions
             //
-            // unreachable - trap immediately
+
+            // unreachable - Trap immediately
+            // spec: 4.4.8
+            // [t1*] → [t2*]
+            //
+            // From the spec:
+            // 1. Trap.
+            //
+            // The unreachable instruction causes an immediate trap.
+            // It is typically used to indicate unreachable code.
             Unreachable => ops::control::unreachable(),
 
-            // nop
+            // nop - No operation
+            // spec: 4.4.8
+            // [] → []
+            //
+            // From the spec:
             // 1. Do nothing.
+            //
+            // The nop instruction does nothing.
             Nop => Ok(BlockEnd::Normal),
 
             // ----------------------------------------------------------------
+            // 4.4.3 Reference Instructions
+            //
+
+            // ref.null t - Push null reference
+            // spec: 4.4.3
+            // [] → [t]
+            //
+            // From the spec:
+            // 1. Push the value ref.null t to the stack.
+            //
+            // The instruction produces a null value of the given reference type.
+            RefNull { ref_type } => {
+                match ref_type {
+                    ValueType::FuncRef => self.stack.push(Value::FuncRef(None)),
+                    ValueType::ExternRef => self.stack.push(Value::ExternRef(None)),
+                    _ => {
+                        return Err(RuntimeError::InvalidConversion(format!(
+                            "Invalid reference type for ref.null: {:?}",
+                            ref_type
+                        )))
+                    }
+                }
+                Ok(BlockEnd::Normal)
+            }
+
+            // ref.is_null - Test if reference is null
+            // spec: 4.4.3
+            // [t] → [i32]
+            //
+            // From the spec:
+            // 1. Assert: due to validation, a reference value is on the top of the stack.
+            // 2. Pop the value ref from the stack.
+            // 3. If ref is ref.null t, then:
+            //    a. Push the value i32.const 1 to the stack.
+            // 4. Else:
+            //    a. Push the value i32.const 0 to the stack.
+            RefIsNull => {
+                let value = self.stack.pop()?;
+                let is_null = match value {
+                    Value::FuncRef(None) | Value::ExternRef(None) => 1,
+                    Value::FuncRef(Some(_)) | Value::ExternRef(Some(_)) => 0,
+                    _ => {
+                        return Err(RuntimeError::TypeMismatch {
+                            expected: "reference type".to_string(),
+                            actual: format!("{:?}", value.typ()),
+                        })
+                    }
+                };
+                self.stack.push(Value::I32(is_null));
+                Ok(BlockEnd::Normal)
+            }
+
+            // ref.func x - Create function reference
+            // spec: 4.4.3
+            // [] → [funcref]
+            //
+            // From the spec:
+            // 1. Let F be the current frame.
+            // 2. Assert: due to validation, F.module.funcaddrs[x] exists.
+            // 3. Let a be the function address F.module.funcaddrs[x].
+            // 4. Push the value ref.func a to the stack.
+            //
+            // The instruction produces a non-null function reference to the function
+            // at the given index.
+            RefFunc { func_idx } => {
+                // Validate function index
+                let total_functions = self.module.imports.function_count() + self.module.functions.functions.len();
+                if *func_idx as usize >= total_functions {
+                    return Err(RuntimeError::FunctionIndexOutOfBounds(*func_idx));
+                }
+                self.stack.push(Value::FuncRef(Some(*func_idx)));
+                Ok(BlockEnd::Normal)
+            }
+
             // 4.4.4 Parametric Instructions
             //
             Drop => {
@@ -680,7 +1082,7 @@ impl<'a> Executor<'a> {
                 }
 
                 // Check mutability
-                if let Some(global_def) = self.module.globals.globals.get(*global_idx as usize) {
+                if let Some(global_def) = self.module.globals.get(*global_idx) {
                     if !global_def.global_type.mutable {
                         return Err(RuntimeError::InvalidConversion(
                             "Cannot set immutable global".to_string(),
@@ -693,28 +1095,53 @@ impl<'a> Executor<'a> {
             }
 
             // 4.4.8 Control Instructions
+
+            // br l - Unconditional branch
+            // spec: 4.4.8
+            // [t*] → [t*]
+            //
+            // Branches to the l-th enclosing block
             Br { label_idx } => {
                 let label_stack = self.current_label_stack()?;
                 let label_stack = LabelStack::from_vec(label_stack.clone());
                 ops::control::br(&mut self.stack, &label_stack, *label_idx)
             }
 
+            // br_if l - Conditional branch
+            // spec: 4.4.8
+            // [t* i32] → [t*]
+            //
+            // Branches to the l-th enclosing block if condition is non-zero
             BrIf { label_idx } => {
                 let label_stack = self.current_label_stack()?;
                 let label_stack = LabelStack::from_vec(label_stack.clone());
                 ops::control::br_if(&mut self.stack, &label_stack, *label_idx)
             }
 
+            // br_table l* lN - Indirect branch via table
+            // spec: 4.4.8
+            // [t* i32] → [t*]
+            //
+            // Branches to label indexed by operand, with default
             BrTable { labels, default } => {
                 let label_stack = self.current_label_stack()?;
                 let label_stack = LabelStack::from_vec(label_stack.clone());
                 ops::control::br_table(&mut self.stack, &label_stack, labels, *default)
             }
 
+            // return - Return from function
+            // spec: 4.4.8
+            // [t*] → [t*]
+            //
+            // Returns from the current function with values on stack
             Return => ops::control::return_op(),
 
+            // call x - Direct function call
+            // spec: 4.4.8
+            // [t1*] → [t2*]
+            //
+            // Calls function at index x
             Call { func_idx } => {
-                // Handle function call
                 self.handle_call(*func_idx)?;
                 Ok(BlockEnd::Normal)
             }
@@ -758,6 +1185,52 @@ impl<'a> Executor<'a> {
             I64Store8 { memarg } => with_memory!(store i64_store8(memarg)),
             I64Store16 { memarg } => with_memory!(store i64_store16(memarg)),
             I64Store32 { memarg } => with_memory!(store i64_store32(memarg)),
+
+            // 4.4.7.4 Bulk Memory Operations
+            // spec: bulk memory operations proposal (now standard)
+
+            // memory.init x - Initialize memory from data segment
+            // [i32 i32 i32] → []
+            // Stack: [dest_addr, src_offset, length]
+            MemoryInit { data_idx } => {
+                if let Some(memory) = &mut self.memories.first_mut() {
+                    ops::memory::memory_init(&mut self.stack, memory, *data_idx, &self.module.data.data)?;
+                } else {
+                    return Err(RuntimeError::MemoryError("No memory available".to_string()));
+                }
+                Ok(BlockEnd::Normal)
+            }
+
+            // memory.copy - Copy memory within the same memory
+            // [i32 i32 i32] → []
+            // Stack: [dest_addr, src_addr, length]
+            MemoryCopy => {
+                if let Some(memory) = &mut self.memories.first_mut() {
+                    ops::memory::memory_copy(&mut self.stack, memory)?;
+                } else {
+                    return Err(RuntimeError::MemoryError("No memory available".to_string()));
+                }
+                Ok(BlockEnd::Normal)
+            }
+
+            // memory.fill - Fill memory with a byte value
+            // [i32 i32 i32] → []
+            // Stack: [dest_addr, value, length]
+            MemoryFill => {
+                if let Some(memory) = &mut self.memories.first_mut() {
+                    ops::memory::memory_fill(&mut self.stack, memory)?;
+                } else {
+                    return Err(RuntimeError::MemoryError("No memory available".to_string()));
+                }
+                Ok(BlockEnd::Normal)
+            }
+
+            // data.drop x - Drop a data segment
+            // [] → []
+            // Prevents further use of data segment x
+            // Note: This is a no-op in our implementation as we don't
+            // track passive data segments separately after initialization
+            DataDrop { data_idx: _ } => Ok(BlockEnd::Normal),
 
             // ----------------------------------------------------------------
             // 4.4.1 Numeric Instructions - Unary Operations
@@ -1651,7 +2124,9 @@ mod tests {
     // ============================================================================
     mod function_calls {
         use super::*;
-        use crate::parser::module::{Export, ExportIndex, ExternalKind, FunctionBody, Import, Locals, SectionPosition};
+        use crate::parser::module::{
+            Export, ExportIndex, ExternalKind, Function, FunctionBody, Import, Locals, SectionPosition,
+        };
         use crate::runtime::Instance;
 
         #[test]
@@ -1684,10 +2159,10 @@ mod tests {
             });
 
             // Function section: declare our defined functions
-            module.functions.functions.push(crate::parser::module::Function {
+            module.functions.functions.push(Function {
                 ftype_index: 1, // helper uses type 1
             });
-            module.functions.functions.push(crate::parser::module::Function {
+            module.functions.functions.push(Function {
                 ftype_index: 1, // main uses type 1
             });
 
@@ -1721,7 +2196,7 @@ mod tests {
             });
 
             // Create instance and test
-            let instance = Instance::new(&module);
+            let mut instance = Instance::new(&module).expect("Instance creation should succeed");
             let result = instance.invoke("main", vec![]).expect("Function call should succeed");
 
             assert_eq!(result, vec![Value::I32(42)], "Main should call helper and return 42");
@@ -1739,10 +2214,7 @@ mod tests {
             });
 
             // Single function that calls itself
-            module
-                .functions
-                .functions
-                .push(crate::parser::module::Function { ftype_index: 0 });
+            module.functions.functions.push(Function { ftype_index: 0 });
 
             // Factorial function: if n <= 1 return 1, else return n * factorial(n-1)
             let instructions = vec![
@@ -1776,7 +2248,7 @@ mod tests {
                 index: ExportIndex::Function(0),
             });
 
-            let instance = Instance::new(&module);
+            let mut instance = Instance::new(&module).expect("Instance creation should succeed");
 
             // Test factorial(5) = 120
             let result = instance

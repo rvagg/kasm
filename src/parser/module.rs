@@ -92,9 +92,9 @@ impl Module {
             .unwrap_or_default()
     }
 
-    pub fn get_function_type(&self, index: u32) -> Option<&FunctionType> {
+    pub fn get_function_type(&self, index: usize) -> Option<&FunctionType> {
         self.functions
-            .get(index as u8)
+            .get(index)
             .and_then(|f| self.types.get(f.ftype_index as u8))
     }
 
@@ -374,6 +374,10 @@ impl ImportSection {
         self.imports.push(import);
     }
 
+    pub fn get(&self, index: usize) -> Option<&Import> {
+        self.imports.get(index)
+    }
+
     pub fn function_count(&self) -> usize {
         self.imports
             .iter()
@@ -562,8 +566,8 @@ impl FunctionSection {
         self.functions.is_empty()
     }
 
-    pub fn get(&self, index: u8) -> Option<&Function> {
-        self.functions.get(index as usize)
+    pub fn get(&self, index: usize) -> Option<&Function> {
+        self.functions.get(index)
     }
 }
 
@@ -1178,6 +1182,10 @@ impl CodeSection {
     pub fn is_empty(&self) -> bool {
         self.code.is_empty()
     }
+
+    pub fn get(&self, index: usize) -> Option<&FunctionBody> {
+        self.code.get(index)
+    }
 }
 
 impl SectionToString for CodeSection {
@@ -1212,7 +1220,7 @@ impl CodeSection {
         for (i, function_body) in self.code.iter().enumerate() {
             let fi = unit.imports.function_count() + i;
             let exp = unit.get_function_export_name(fi as u32);
-            let ftype_index = match unit.functions.get(i as u8) {
+            let ftype_index = match unit.functions.get(i) {
                 Some(f) => f.ftype_index,
                 None => {
                     result.push_str(&format!("invalid function index: {i}\n"));

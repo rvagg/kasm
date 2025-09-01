@@ -6,6 +6,59 @@
 use super::*;
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Copy data from a byte slice into memory
+/// This is used by both memory.init and data section initialization
+pub fn copy_to_memory(memory: &mut Memory, dest_addr: u32, data: &[u8]) -> Result<(), RuntimeError> {
+    // Write data to memory with bounds checking
+    for (i, &byte) in data.iter().enumerate() {
+        memory.write_u8(dest_addr + i as u32, byte)?;
+    }
+    Ok(())
+}
+
+/// Validate and convert memory operation arguments (length and addresses)
+/// Returns (length_u32, Option<src_addr_u32>, dest_addr_u32)
+fn validate_memory_args(
+    length: i32,
+    src_addr: Option<i32>,
+    dest_addr: i32,
+    operation: &str,
+) -> Result<(u32, Option<u32>, u32), RuntimeError> {
+    // Validate length
+    if length < 0 {
+        return Err(RuntimeError::MemoryError(format!("Negative length in {}", operation)));
+    }
+    let length = length as u32;
+
+    // Validate source address if provided
+    let src_addr = if let Some(src) = src_addr {
+        if src < 0 {
+            return Err(RuntimeError::MemoryError(format!(
+                "Negative source address in {}",
+                operation
+            )));
+        }
+        Some(src as u32)
+    } else {
+        None
+    };
+
+    // Validate destination address
+    if dest_addr < 0 {
+        return Err(RuntimeError::MemoryError(format!(
+            "Negative destination address in {}",
+            operation
+        )));
+    }
+    let dest_addr = dest_addr as u32;
+
+    Ok((length, src_addr, dest_addr))
+}
+
+// ============================================================================
 // Memory Load Operations (spec section 4.4.7.1)
 // ============================================================================
 
@@ -481,6 +534,109 @@ pub fn memory_grow(stack: &mut Stack, memory: &mut Memory) -> Result<(), Runtime
     // The grow function expects pages, not bytes
     let result = memory.grow(delta as u32);
     stack.push(Value::I32(result));
+
+    Ok(())
+}
+
+// Bulk Memory Operations
+// These are part of the bulk memory operations proposal which is now standard
+
+/// memory.init - Initialise memory from a data segment
+/// spec: bulk memory operations
+/// [i32 i32 i32] → []
+///
+/// Stack: [dest_addr, src_offset, length]
+/// Copies length bytes from data segment at src_offset to memory at dest_addr
+pub fn memory_init(
+    stack: &mut Stack,
+    memory: &mut Memory,
+    data_idx: u32,
+    data_segments: &[crate::parser::module::Data],
+) -> Result<(), RuntimeError> {
+    // Pop arguments in reverse order
+    let length = stack.pop_i32()?;
+    let src_offset = stack.pop_i32()?;
+    let dest_addr = stack.pop_i32()?;
+
+    // Validate and convert arguments
+    let (length, src_offset, dest_addr) = validate_memory_args(length, Some(src_offset), dest_addr, "memory.init")?;
+    let src_offset = src_offset.unwrap(); // We know it's Some from the call above
+
+    // Get the data segment
+    let data_segment = data_segments
+        .get(data_idx as usize)
+        .ok_or_else(|| RuntimeError::MemoryError(format!("Invalid data segment index: {}", data_idx)))?;
+
+    // Check bounds in data segment
+    let src_end = (src_offset as usize)
+        .checked_add(length as usize)
+        .ok_or_else(|| RuntimeError::MemoryError("Source range overflow in memory.init".to_string()))?;
+
+    if src_end > data_segment.init.len() {
+        return Err(RuntimeError::MemoryError(
+            "Source range exceeds data segment bounds in memory.init".to_string(),
+        ));
+    }
+
+    // Copy the data using the shared helper
+    let src_data = &data_segment.init[src_offset as usize..src_end];
+    copy_to_memory(memory, dest_addr, src_data)?;
+
+    Ok(())
+}
+
+/// memory.copy - Copy memory within the same memory
+/// spec: bulk memory operations
+/// [i32 i32 i32] → []
+///
+/// Stack: [dest_addr, src_addr, length]
+/// Copies length bytes from src_addr to dest_addr
+pub fn memory_copy(stack: &mut Stack, memory: &mut Memory) -> Result<(), RuntimeError> {
+    // Pop arguments in reverse order
+    let length = stack.pop_i32()?;
+    let src_addr = stack.pop_i32()?;
+    let dest_addr = stack.pop_i32()?;
+
+    // Validate and convert arguments
+    let (length, src_addr, dest_addr) = validate_memory_args(length, Some(src_addr), dest_addr, "memory.copy")?;
+    let src_addr = src_addr.unwrap(); // We know it's Some from the call above
+
+    // Read all bytes first (to handle overlapping regions correctly)
+    let mut bytes = Vec::with_capacity(length as usize);
+    for i in 0..length {
+        bytes.push(memory.read_u8(src_addr + i)?);
+    }
+
+    // Write bytes to destination
+    for (i, byte) in bytes.iter().enumerate() {
+        memory.write_u8(dest_addr + i as u32, *byte)?;
+    }
+
+    Ok(())
+}
+
+/// memory.fill - Fill memory with a byte value
+/// spec: bulk memory operations
+/// [i32 i32 i32] → []
+///
+/// Stack: [dest_addr, value, length]
+/// Fills length bytes at dest_addr with value
+pub fn memory_fill(stack: &mut Stack, memory: &mut Memory) -> Result<(), RuntimeError> {
+    // Pop arguments in reverse order
+    let length = stack.pop_i32()?;
+    let value = stack.pop_i32()?;
+    let dest_addr = stack.pop_i32()?;
+
+    // Validate and convert arguments
+    let (length, _, dest_addr) = validate_memory_args(length, None, dest_addr, "memory.fill")?;
+
+    // Value is treated as a byte (truncated to u8)
+    let byte_value = (value & 0xFF) as u8;
+
+    // Fill the memory
+    for i in 0..length {
+        memory.write_u8(dest_addr + i, byte_value)?;
+    }
 
     Ok(())
 }

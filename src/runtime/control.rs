@@ -10,7 +10,6 @@
 //! The label stack tracks active control constructs (blocks, loops, ifs) and enables
 //! structured control flow through branch instructions.
 
-use super::RuntimeError;
 use crate::parser::instruction::BlockType;
 use crate::parser::module::ValueType;
 
@@ -51,6 +50,10 @@ pub struct Label {
     /// Whether this label is unreachable (after unconditional branch/return)
     /// See: https://webassembly.github.io/spec/core/valid/instructions.html#control-instructions
     pub unreachable: bool,
+    /// Resolved parameter types (consumed on block entry)
+    pub param_types: Vec<ValueType>,
+    /// Resolved return types (produced on block exit)
+    pub return_types: Vec<ValueType>,
 }
 
 /// The label stack for managing nested control structures
@@ -138,33 +141,32 @@ impl Label {
     /// > "Let n be the arity of L"
     ///
     /// The arity determines how many values are popped from the stack when branching to this label.
-    pub fn arity(&self) -> Result<usize, RuntimeError> {
-        match &self.block_type {
-            BlockType::Empty => Ok(0),
-            BlockType::Value(_) => Ok(1),
-            BlockType::FuncType(_) => {
-                // For now, we don't support function types in blocks
-                // See: https://webassembly.github.io/spec/core/syntax/instructions.html#block-types
-                Err(RuntimeError::UnimplementedInstruction(
-                    "block with function type".to_string(),
-                ))
-            }
+    /// For loops, this returns the number of parameters (values consumed on branch TO the loop).
+    /// For blocks/ifs, this returns the number of return values.
+    pub fn arity(&self) -> usize {
+        if self.label_type == LabelType::Loop {
+            self.param_types.len()
+        } else {
+            self.return_types.len()
+        }
+    }
+
+    /// Get the values that should be kept when branching to this label
+    ///
+    /// For loops: the parameter types (branching jumps to the beginning)
+    /// For blocks/ifs: the return types (branching jumps to the end)
+    pub fn branch_types(&self) -> &[ValueType] {
+        if self.label_type == LabelType::Loop {
+            &self.param_types
+        } else {
+            &self.return_types
         }
     }
 
     /// Get the result types for this label
     ///
     /// Used for type checking and determining what values this control construct produces
-    pub fn results(&self) -> Result<Vec<ValueType>, RuntimeError> {
-        match &self.block_type {
-            BlockType::Empty => Ok(vec![]),
-            BlockType::Value(vt) => Ok(vec![*vt]),
-            BlockType::FuncType(_) => {
-                // For now, we don't support function types in blocks
-                Err(RuntimeError::UnimplementedInstruction(
-                    "block with function type".to_string(),
-                ))
-            }
-        }
+    pub fn results(&self) -> &[ValueType] {
+        &self.return_types
     }
 }
