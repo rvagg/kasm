@@ -1,15 +1,47 @@
 # kasm
 
-**"kasm"** is a placeholder name for a personal project; it is _not_ the "kasm" crate available on crates.io. If/when this matures enough to publish, I'll rename it.
+An experimental & educational WebAssembly runtime implementation in Rust that provides parsing, validation, and execution utilities for WebAssembly modules.
 
-This project is a collection of WASM utilities in Rust, that may evolve into something useful but currently implements a grab-bag of functionality that I expand as I have the time and inclination.
+**"kasm"** is a placeholder name for now, it won't be published to crates.io until it matures further.
 
-* `kasm::parser::reader::Reader` - a byte reader that supports various operations useful for consuming and decoding a WASM binary.
-* `kasm::parser::Module` - a representation of a parsed WASM binary.
-* `kasm::parser::parse(String, kasm::parser::reader::Reader)` - a function that parses a WASM binary into a `kasm::parser::Module` struct.
-  - [x] Binaries are parsed and represented
-  - [ ] WIP: A `Module` can be represented in string form, including disassembly, fully compatible with the WABT [`wasm-objdump`](https://webassembly.github.io/wabt/doc/wasm-objdump.1.html) utility.
-  - [ ] WIP: Full validation of WASM instruction sequences to ensure binaries represent valid programs.
+*If you want to join me in exploring WebAssembly by building, hit me up!*
+
+## Features
+
+- Complete WebAssembly binary parser with full section support
+- Disassembler compatible with WABT wasm-objdump format
+- Interpreter supporting all WebAssembly 1.0 instructions (aside from SIMD, WIP)
+- Structured control flow execution following WebAssembly design intent
+- Linear memory with bounds checking and page-based growth
+- Stack-based execution with runtime type checking
+- Passes most core WebAssembly specification tests (WIP)
+
+## Usage
+
+```bash
+# Parse and disassemble a WebAssembly module
+cargo run -- file.wasm --dump-disassemble
+
+# Run tests
+cargo test
+
+# Run all checks (formatting, linting, tests)
+./check.sh
+```
+
+## Project Structure
+
+- `src/parser/` - Binary parser and module representation
+- `src/runtime/` - WebAssembly interpreter and execution engine
+- `tests/` - Unit tests and WebAssembly specification test suite
+
+## Current Limitations
+
+- No import/export linking between modules
+- No table operations
+- Global variables not fully implemented
+- No SIMD instructions
+- Call instruction disabled in debug builds due to stack depth limitations
 
 ## License
 
