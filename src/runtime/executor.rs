@@ -15,6 +15,41 @@ use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruct
 /// Maximum call stack depth to prevent stack overflow
 const MAX_CALL_DEPTH: usize = 1000;
 
+/// Execution state for the state machine executor
+#[derive(Debug, Clone)]
+enum ExecutionState {
+    /// Continue to next instruction
+    Continue,
+    /// Enter a nested instruction sequence (block/loop/if body)
+    EnterNested(Vec<StructuredInstruction>),
+    /// Call a function
+    CallFunction(u32),
+    /// Return from current function
+    ReturnFromFunction,
+    /// Branch to label at given depth
+    BranchTo(u32),
+}
+
+/// Execution context representing a sequence of instructions being executed
+#[derive(Debug, Clone)]
+struct ExecutionContext {
+    /// Instructions in this context
+    instructions: Vec<StructuredInstruction>,
+    /// Current position in instruction sequence
+    position: usize,
+    /// What to do when this context completes
+    on_complete: ContextCompletion,
+}
+
+/// What to do when an execution context completes
+#[derive(Debug, Clone)]
+enum ContextCompletion {
+    /// Pop a label when done (for blocks/loops/ifs)
+    PopLabel,
+    /// Return from function when done
+    ReturnFunction,
+}
+
 /// Executes WebAssembly instructions
 pub struct Executor<'a> {
     module: &'a Module,
@@ -368,11 +403,6 @@ impl<'a> Executor<'a> {
         Ok(())
     }
 
-    /// Pop the current call frame and return to the caller
-    fn pop_call_frame(&mut self) -> Option<CallFrame> {
-        self.call_stack.pop()
-    }
-
     /// Get the current frame's locals (mutable)
     fn current_locals_mut(&mut self) -> Result<&mut Vec<Value>, RuntimeError> {
         self.call_stack
@@ -426,94 +456,6 @@ impl<'a> Executor<'a> {
             unreachable: false,
             param_types: vec![], // Functions don't consume parameters from stack
             return_types: return_types.to_vec(),
-        }
-    }
-
-    /// Handle a function call instruction
-    fn handle_call(&mut self, func_idx: u32) -> Result<(), RuntimeError> {
-        // Calculate the number of imported functions
-        let num_imported_functions = self.module.imports.function_count();
-
-        // Check if this is an imported function (which we can't execute)
-        if (func_idx as usize) < num_imported_functions {
-            return Err(RuntimeError::UnimplementedInstruction(format!(
-                "Cannot execute imported function at index {func_idx}"
-            )));
-        }
-
-        // Get the function declaration from the functions section
-        // Note: functions section only contains non-imported functions,
-        // so we need to subtract the number of imports
-        let func_decl_idx = func_idx as usize - num_imported_functions;
-        let func = self
-            .module
-            .functions
-            .get(func_decl_idx)
-            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
-
-        let func_type = self
-            .function_types
-            .get(func.ftype_index as usize)
-            .ok_or(RuntimeError::InvalidFunctionType)?
-            .clone();
-
-        // Pop arguments from the operand stack (in reverse order)
-        let mut args = Vec::new();
-        for param_type in func_type.parameters.iter().rev() {
-            let value = self.stack.pop_typed(*param_type)?;
-            args.push(value);
-        }
-        args.reverse();
-
-        // Push new call frame
-        self.push_call_frame(func_idx, args, func_type.return_types.len())?;
-
-        // Get the function body
-        let function_opt = self
-            .functions
-            .get(func_idx as usize)
-            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
-
-        // Check if this is an imported function (no body)
-        let body = match function_opt {
-            Some(body) => body.clone(),
-            None => {
-                // This is an imported function - we can't execute it
-                return Err(RuntimeError::UnimplementedInstruction(format!(
-                    "Cannot execute imported function at index {func_idx}"
-                )));
-            }
-        };
-
-        // Push implicit function block label
-        let func_label = self.create_function_label(&func_type.return_types);
-        self.current_label_stack_mut()?.push(func_label);
-
-        // Execute the called function
-        let result = self.execute_instructions(&body.body);
-
-        // Pop the function label
-        self.current_label_stack_mut()?.pop();
-
-        // Pop the call frame
-        let _frame = self.pop_call_frame().unwrap();
-
-        // Handle the result
-        match result {
-            Ok(BlockEnd::Normal) | Ok(BlockEnd::Return) | Ok(BlockEnd::Branch(0)) => {
-                // Function completed normally, return values are on the stack
-                // Branch(0) means branch to the function's implicit block, which is like normal completion
-                // The caller is responsible for verifying the correct number and types
-                // of return values when popping them from the stack
-                Ok(())
-            }
-            Ok(BlockEnd::Branch(depth)) => {
-                // Uncaught branch in function (depth > 0)
-                Err(RuntimeError::Trap(format!(
-                    "uncaught branch with depth {depth} in function"
-                )))
-            }
-            Err(e) => Err(e),
         }
     }
 
@@ -583,8 +525,174 @@ impl<'a> Executor<'a> {
         let func_label = self.create_function_label(return_types);
         self.current_label_stack_mut()?.push(func_label);
 
-        // Execute the function body
-        let result = self.execute_instructions(&func.body);
+        // Create initial execution context
+        let mut contexts = vec![ExecutionContext {
+            instructions: func.body.clone(),
+            position: 0,
+            on_complete: ContextCompletion::ReturnFunction,
+        }];
+
+        // Main execution loop
+        'execution: loop {
+            // Get current context
+            let context = match contexts.last_mut() {
+                Some(ctx) => ctx,
+                None => break 'execution, // No more contexts, we're done
+            };
+
+            // Check if we've reached end of current context
+            if context.position >= context.instructions.len() {
+                let completion = context.on_complete.clone();
+                contexts.pop();
+
+                match completion {
+                    ContextCompletion::PopLabel => {
+                        self.current_label_stack_mut()?.pop();
+                    }
+                    ContextCompletion::ReturnFunction => {
+                        // Function is complete - pop its label and frame
+                        if self.call_stack.len() > 1 {
+                            // We're returning from a called function
+                            self.current_label_stack_mut()?.pop();
+                            self.call_stack.pop();
+                            // Continue with the caller
+                        } else {
+                            // We're returning from the main function
+                            break 'execution;
+                        }
+                    }
+                }
+                continue 'execution;
+            }
+
+            // Execute current instruction
+            let instruction = context.instructions[context.position].clone();
+            let state = self.execute_instruction_state_machine(&instruction)?;
+
+            // Handle execution state
+            match state {
+                ExecutionState::Continue => {
+                    context.position += 1;
+                }
+
+                ExecutionState::EnterNested(instructions) => {
+                    context.position += 1; // Move past current instruction
+                    contexts.push(ExecutionContext {
+                        instructions,
+                        position: 0,
+                        on_complete: ContextCompletion::PopLabel,
+                    });
+                }
+
+                ExecutionState::CallFunction(func_idx) => {
+                    context.position += 1; // Move past call instruction
+
+                    // Prepare the call
+
+                    // Calculate the number of imported functions
+                    let num_imported_functions = self.module.imports.function_count();
+
+                    // Check if this is an imported function (which we can't execute)
+                    if (func_idx as usize) < num_imported_functions {
+                        return Err(RuntimeError::UnimplementedInstruction(format!(
+                            "Cannot execute imported function at index {func_idx}"
+                        )));
+                    }
+
+                    // Get the function declaration to find its type index
+                    let func_decl_idx = func_idx as usize - num_imported_functions;
+                    let func = self
+                        .module
+                        .functions
+                        .get(func_decl_idx)
+                        .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+                    // Get function type using the function's type index
+                    let func_type = self
+                        .function_types
+                        .get(func.ftype_index as usize)
+                        .ok_or(RuntimeError::InvalidFunctionType)?
+                        .clone();
+
+                    // Check call stack depth
+                    if self.call_stack.len() >= MAX_CALL_DEPTH {
+                        return Err(RuntimeError::CallStackOverflow);
+                    }
+
+                    // Pop arguments from the operand stack (in reverse order)
+                    let mut args = Vec::new();
+                    for param_type in func_type.parameters.iter().rev() {
+                        let value = self.stack.pop_typed(*param_type)?;
+                        args.push(value);
+                    }
+                    args.reverse();
+
+                    // Push new call frame
+                    self.push_call_frame(func_idx, args, func_type.return_types.len())?;
+
+                    // Get the function body
+                    let function_opt = self
+                        .functions
+                        .get(func_idx as usize)
+                        .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+                    let body = match function_opt {
+                        Some(body) => body.clone(),
+                        None => {
+                            return Err(RuntimeError::UnimplementedInstruction(format!(
+                                "Cannot execute imported function at index {func_idx}"
+                            )));
+                        }
+                    };
+
+                    // Push function label
+                    let func_label = self.create_function_label(&func_type.return_types);
+                    self.current_label_stack_mut()?.push(func_label);
+
+                    // Push new context for the called function
+                    contexts.push(ExecutionContext {
+                        instructions: body.body.clone(),
+                        position: 0,
+                        on_complete: ContextCompletion::ReturnFunction,
+                    });
+                }
+
+                ExecutionState::ReturnFromFunction => {
+                    // Find and pop all contexts until we reach a function boundary
+                    let mut found_function_boundary = false;
+
+                    while !contexts.is_empty() {
+                        let ctx = contexts.last().unwrap();
+                        let is_function = matches!(ctx.on_complete, ContextCompletion::ReturnFunction);
+                        contexts.pop();
+
+                        if is_function {
+                            found_function_boundary = true;
+                            // Also pop any labels in the current frame
+                            if !self.current_label_stack()?.is_empty() {
+                                self.current_label_stack_mut()?.pop();
+                            }
+                            break;
+                        } else {
+                            // Pop the label for this non-function context
+                            if !self.current_label_stack()?.is_empty() {
+                                self.current_label_stack_mut()?.pop();
+                            }
+                        }
+                    }
+
+                    // If we didn't find a function boundary, we're returning from the main function
+                    if !found_function_boundary && contexts.is_empty() {
+                        break 'execution;
+                    }
+                }
+
+                ExecutionState::BranchTo(depth) => {
+                    // Handle branching by unwinding contexts
+                    self.handle_branch(&mut contexts, depth)?;
+                }
+            }
+        }
 
         // Pop the function label
         self.current_label_stack_mut()?.pop();
@@ -592,46 +700,121 @@ impl<'a> Executor<'a> {
         // Pop the initial frame
         self.call_stack.pop();
 
-        // Handle the result
-        match result {
-            Ok(BlockEnd::Normal) | Ok(BlockEnd::Branch(0)) => {
-                // Normal completion or branch to function block - collect return values
-                // Branch(0) means branch to the function's implicit block, which is like normal completion
-                let mut results = Vec::new();
-                for return_type in return_types.iter().rev() {
-                    let value = self.stack.pop_typed(*return_type)?;
-                    results.push(value);
+        // Collect return values
+        let mut results = Vec::new();
+        for return_type in return_types.iter().rev() {
+            let value = self.stack.pop_typed(*return_type)?;
+            results.push(value);
+        }
+        results.reverse();
+        Ok(results)
+    }
+
+    /// Execute a single instruction and return execution state (for state machine)
+    fn execute_instruction_state_machine(
+        &mut self,
+        instruction: &StructuredInstruction,
+    ) -> Result<ExecutionState, RuntimeError> {
+        match instruction {
+            StructuredInstruction::Plain(inst) => {
+                // Special handling for Call instruction
+                if let InstructionKind::Call { func_idx } = &inst.kind {
+                    // Just prepare the call and return the state
+                    return Ok(ExecutionState::CallFunction(*func_idx));
                 }
-                results.reverse();
-                Ok(results)
-            }
-            Ok(BlockEnd::Return) => {
-                // Return instruction was executed - collect return values
-                let mut results = Vec::new();
-                for return_type in return_types.iter().rev() {
-                    let value = self.stack.pop_typed(*return_type)?;
-                    results.push(value);
+
+                // Execute as normal and convert BlockEnd to ExecutionState
+                match self.execute_plain_instruction(inst)? {
+                    BlockEnd::Normal => Ok(ExecutionState::Continue),
+                    BlockEnd::Return => Ok(ExecutionState::ReturnFromFunction),
+                    BlockEnd::Branch(depth) => Ok(ExecutionState::BranchTo(depth)),
                 }
-                results.reverse();
-                Ok(results)
             }
-            Ok(BlockEnd::Branch(depth)) => {
-                // Uncaught branch (depth > 0)
-                Err(RuntimeError::InvalidLabel(depth))
+
+            StructuredInstruction::Block { block_type, body, .. } => {
+                // Setup block label and parameters
+                self.setup_block_structure(LabelType::Block, *block_type)?;
+
+                // Return state to enter block body
+                Ok(ExecutionState::EnterNested(body.clone()))
             }
-            Err(e) => Err(e),
+
+            StructuredInstruction::Loop { block_type, body, .. } => {
+                // Setup loop label
+                self.setup_block_structure(LabelType::Loop, *block_type)?;
+
+                // Return state to enter loop body
+                Ok(ExecutionState::EnterNested(body.clone()))
+            }
+
+            StructuredInstruction::If {
+                block_type,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                // Pop condition
+                let condition_value = self.stack.pop()?;
+                let condition = condition_value.as_i32().ok_or(RuntimeError::TypeMismatch {
+                    expected: "i32".to_string(),
+                    actual: format!("{:?}", condition_value.typ()),
+                })?;
+
+                // Setup if label
+                self.setup_block_structure(LabelType::Block, *block_type)?;
+
+                // Choose branch
+                let body = if condition != 0 {
+                    then_branch.clone()
+                } else {
+                    else_branch.clone().unwrap_or_default()
+                };
+
+                Ok(ExecutionState::EnterNested(body))
+            }
         }
     }
 
-    /// Execute a sequence of instructions
-    fn execute_instructions(&mut self, instructions: &[StructuredInstruction]) -> Result<BlockEnd, RuntimeError> {
-        for instruction in instructions {
-            match self.execute_instruction(instruction)? {
-                BlockEnd::Normal => continue,
-                other => return Ok(other),
+    /// Handle branching by unwinding contexts (for state machine)
+    fn handle_branch(&mut self, contexts: &mut Vec<ExecutionContext>, depth: u32) -> Result<(), RuntimeError> {
+        let mut labels_to_pop = depth as usize;
+
+        // Pop contexts and labels until we reach the target
+        while labels_to_pop > 0 && !contexts.is_empty() {
+            let ctx = contexts.last().unwrap();
+
+            match ctx.on_complete {
+                ContextCompletion::PopLabel => {
+                    contexts.pop();
+                    self.current_label_stack_mut()?.pop();
+                    labels_to_pop -= 1;
+                }
+                ContextCompletion::ReturnFunction => {
+                    // Can't branch across function boundary
+                    return Err(RuntimeError::InvalidLabel(depth));
+                }
             }
         }
-        Ok(BlockEnd::Normal)
+
+        // Now we're at the target label
+        // Check what type it is and handle accordingly
+        let label_stack = self.current_label_stack()?;
+        if let Some(target_label) = label_stack.last() {
+            if target_label.label_type == LabelType::Loop {
+                // Restart the loop by resetting position
+                if let Some(ctx) = contexts.last_mut() {
+                    ctx.position = 0;
+                }
+            } else {
+                // For blocks and ifs, exit the context
+                if !contexts.is_empty() {
+                    contexts.pop();
+                    self.current_label_stack_mut()?.pop();
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Resolve a block type to its parameter and return types
@@ -696,117 +879,6 @@ impl<'a> Executor<'a> {
         }
 
         Ok(())
-    }
-
-    /// Execute a single instruction
-    fn execute_instruction(&mut self, instruction: &StructuredInstruction) -> Result<BlockEnd, RuntimeError> {
-        match instruction {
-            StructuredInstruction::Plain(inst) => self.execute_plain_instruction(inst),
-
-            StructuredInstruction::Block { block_type, body, .. } => {
-                // Setup block structure (handle parameters and label)
-                self.setup_block_structure(LabelType::Block, *block_type)?;
-
-                // Execute the block body
-                let result = self.execute_instructions(body);
-
-                // Pop the label
-                self.current_label_stack_mut()?.pop();
-
-                // Handle the result
-                match result {
-                    Ok(BlockEnd::Normal) => Ok(BlockEnd::Normal),
-                    Ok(BlockEnd::Return) => Ok(BlockEnd::Return),
-                    Ok(BlockEnd::Branch(0)) => {
-                        // Branch to this block (depth 0) - just exit normally
-                        // The br/br_if instruction has already handled the stack properly
-                        Ok(BlockEnd::Normal)
-                    }
-                    Ok(BlockEnd::Branch(depth)) => {
-                        // Branch to outer block
-                        Ok(BlockEnd::Branch(depth - 1))
-                    }
-                    Err(e) => Err(e),
-                }
-            }
-
-            StructuredInstruction::Loop { block_type, body, .. } => {
-                // Setup loop structure (handle parameters and label)
-                self.setup_block_structure(LabelType::Loop, *block_type)?;
-
-                // Execute the loop body
-                loop {
-                    let result = self.execute_instructions(body);
-
-                    match result {
-                        Ok(BlockEnd::Normal) => {
-                            // Normal completion - exit the loop
-                            self.current_label_stack_mut()?.pop();
-                            return Ok(BlockEnd::Normal);
-                        }
-                        Ok(BlockEnd::Return) => {
-                            // Return from function
-                            self.current_label_stack_mut()?.pop();
-                            return Ok(BlockEnd::Return);
-                        }
-                        Ok(BlockEnd::Branch(0)) => {
-                            // Branch to this loop (depth 0) - continue the loop
-                            // Stack has been restored by br instruction with loop parameters
-                            continue;
-                        }
-                        Ok(BlockEnd::Branch(depth)) => {
-                            // Branch to outer block
-                            self.current_label_stack_mut()?.pop();
-                            return Ok(BlockEnd::Branch(depth - 1));
-                        }
-                        Err(e) => {
-                            self.current_label_stack_mut()?.pop();
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-
-            StructuredInstruction::If {
-                block_type,
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                // Pop condition
-                let condition = self.stack.pop_i32()?;
-
-                // Setup if structure (handle parameters and label)
-                self.setup_block_structure(LabelType::If, *block_type)?;
-
-                // Execute appropriate branch
-                let result = if condition != 0 {
-                    self.execute_instructions(then_branch)
-                } else if let Some(else_body) = else_branch {
-                    self.execute_instructions(else_body)
-                } else {
-                    Ok(BlockEnd::Normal)
-                };
-
-                // Pop the label
-                self.current_label_stack_mut()?.pop();
-
-                // Handle the result
-                match result {
-                    Ok(BlockEnd::Normal) => Ok(BlockEnd::Normal),
-                    Ok(BlockEnd::Return) => Ok(BlockEnd::Return),
-                    Ok(BlockEnd::Branch(0)) => {
-                        // Branch to this if (depth 0) - just exit normally
-                        Ok(BlockEnd::Normal)
-                    }
-                    Ok(BlockEnd::Branch(depth)) => {
-                        // Branch to outer block
-                        Ok(BlockEnd::Branch(depth - 1))
-                    }
-                    Err(e) => Err(e),
-                }
-            }
-        }
     }
 
     /// Execute a plain (non-control-flow) instruction
@@ -1141,9 +1213,10 @@ impl<'a> Executor<'a> {
             // [t1*] → [t2*]
             //
             // Calls function at index x
-            Call { func_idx } => {
-                self.handle_call(*func_idx)?;
-                Ok(BlockEnd::Normal)
+            Call { func_idx: _ } => {
+                // This should never be reached - the state machine intercepts Call instructions
+                // before they get to execute_plain_instruction. If we reach here, it's a bug.
+                unreachable!("Call instruction should have been intercepted by state machine")
             }
 
             // ----------------------------------------------------------------

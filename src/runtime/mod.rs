@@ -52,4 +52,6 @@ pub enum RuntimeError {
     Trap(String),
     #[error("Invalid constant expression: {0}")]
     InvalidConstExpr(String),
+    #[error("Call stack overflow")]
+    CallStackOverflow,
 }

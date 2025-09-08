@@ -47,9 +47,7 @@ pub fn get_implemented_instructions() -> HashSet<String> {
     implemented.insert("return".to_string());
 
     // Function calls
-    // NOTE: call is implemented but disabled in debug mode due to stack overflow
-    // in call.json test which has deep recursion (works fine in release mode)
-    // implemented.insert("call".to_string());
+    implemented.insert("call".to_string());
     // call_indirect requires tables, not yet implemented
 
     // Memory operations

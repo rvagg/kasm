@@ -14,7 +14,7 @@ src/parser/         # Binary parser, validation
   structured.rs     # Control flow tree builder
 
 src/runtime/        # Interpreter
-  executor.rs       # Main execution loop
+  executor.rs       # State machine execution (no recursion)
   instance.rs       # Module instantiation
   ops/              # Instruction implementations (numeric, memory, control, etc.)
   memory.rs         # Linear memory (64KB pages, 4GB max)
@@ -23,10 +23,9 @@ src/runtime/        # Interpreter
 ```
 
 ## Status
-- 188 instructions implemented (see src/runtime/implemented.rs)
+- 189 instructions implemented (see src/runtime/implemented.rs)
 - 86/90 core spec tests pass (tests/spec/*.json)
 - Missing: imports/exports linking, tables, full globals, SIMD
-- call instruction disabled in debug mode (stack overflow on deep recursion)
 
 ## Development Workflow
 ```bash
@@ -62,7 +61,7 @@ cargo run --bin test_coverage  # See which instructions enable most tests
 Test skipping logic: When parser_tests encounters an unimplemented instruction, it skips the entire test file rather than failing. This allows incremental development while maintaining green tests.
 
 ## Key Files
-- src/runtime/executor.rs - Main interpreter loop with structured control flow
+- src/runtime/executor.rs - State machine interpreter with structured control flow
 - src/runtime/ops/*.rs - Instruction implementations by category
 - src/runtime/implemented.rs - Single source of truth for implemented instructions
 - tests/parser_tests.rs - Spec test harness that checks implemented.rs before running
