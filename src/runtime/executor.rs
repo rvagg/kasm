@@ -437,12 +437,14 @@ impl<'a> Executor<'a> {
         let mut locals = args;
         for (count, local_type) in body.locals.iter() {
             for _ in 0..*count {
-                // Initialise locals to zero
+                // Initialise locals to zero (or null for reference types)
                 let zero_value = match local_type {
                     ValueType::I32 => Value::I32(0),
                     ValueType::I64 => Value::I64(0),
                     ValueType::F32 => Value::F32(0.0),
                     ValueType::F64 => Value::F64(0.0),
+                    ValueType::FuncRef => Value::FuncRef(None),
+                    ValueType::ExternRef => Value::ExternRef(None),
                     _ => {
                         return Err(RuntimeError::UnimplementedInstruction(format!(
                             "Local type {local_type:?} not supported"
@@ -557,12 +559,14 @@ impl<'a> Executor<'a> {
         if let Some(locals_info) = locals_info {
             for (count, local_type) in locals_info.iter() {
                 for _ in 0..*count {
-                    // Initialise locals to zero
+                    // Initialise locals to zero (or null for reference types)
                     let zero_value = match local_type {
                         ValueType::I32 => Value::I32(0),
                         ValueType::I64 => Value::I64(0),
                         ValueType::F32 => Value::F32(0.0),
                         ValueType::F64 => Value::F64(0.0),
+                        ValueType::FuncRef => Value::FuncRef(None),
+                        ValueType::ExternRef => Value::ExternRef(None),
                         _ => {
                             return Err(RuntimeError::UnimplementedInstruction(format!(
                                 "Local type {local_type:?} not supported"
