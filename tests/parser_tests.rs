@@ -212,8 +212,8 @@ mod tests {
 
         setup_spectest(&mut module_registry);
 
-        // Create spectest imports for global values
-        let spectest_imports = create_spectest_imports();
+        // Create spectest imports for global values (mutable so we can add registered module exports)
+        let mut spectest_imports = create_spectest_imports();
 
         // First pass: Parse all modules
         for (_index, command) in test_data.spec.commands.iter().enumerate() {
@@ -435,6 +435,19 @@ mod tests {
                         )
                         .unwrap_or_else(|e| panic!("Failed to re-parse {} for registration: {}", module_name, e));
                         module_registry.insert(cmd.r#as.clone(), module);
+
+                        // Create an instance to extract global exports
+                        let registered_module = module_registry.get(&cmd.r#as).unwrap();
+                        if let Ok(instance) = Instance::new(registered_module, Some(&spectest_imports)) {
+                            // Extract all global exports and add them to imports
+                            for export in &registered_module.exports.exports {
+                                if let kasm::parser::module::ExportIndex::Global(_) = export.index {
+                                    if let Ok(global_value) = instance.get_global_export(&export.name) {
+                                        spectest_imports.add_global(&cmd.r#as, &export.name, global_value);
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         panic!("No module to register for command: {}", cmd.r#as);
                     }

@@ -861,6 +861,11 @@ impl ExportSection {
             .rev()
             .find(|e| matches!(e.index, ExportIndex::Function(idx) if idx == function_index))
     }
+
+    /// Get an export by name
+    pub fn get_by_name(&self, name: &str) -> Option<&Export> {
+        self.exports.iter().find(|e| e.name == name)
+    }
 }
 
 impl SectionToString for ExportSection {

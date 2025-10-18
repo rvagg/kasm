@@ -101,6 +101,18 @@ impl<'a> Executor<'a> {
 
         // Initialise tables from module definition
         let mut tables = Vec::new();
+
+        // First, initialise imported tables (they come first in the index space)
+        for import in &module.imports.imports {
+            if let ExternalKind::Table(table_type) = &import.external_kind {
+                // For now, create default tables for imports
+                // In the future, this should be extended to use ImportObject
+                let table = Table::new(table_type.ref_type, table_type.limits)?;
+                tables.push(table);
+            }
+        }
+
+        // Then, add locally defined tables
         for table_type in &module.table.tables {
             let table = Table::new(table_type.ref_type, table_type.limits)?;
             tables.push(table);
@@ -494,6 +506,17 @@ impl<'a> Executor<'a> {
         self.module
             .get_function_type_by_idx(func_idx)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))
+    }
+
+    /// Get a global value by index
+    ///
+    /// # Errors
+    /// - Returns `GlobalIndexOutOfBounds` if global_idx is invalid
+    pub fn get_global(&self, global_idx: u32) -> Result<Value, RuntimeError> {
+        self.globals
+            .get(global_idx as usize)
+            .cloned()
+            .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))
     }
 
     /// Get the current label stack (mutable)

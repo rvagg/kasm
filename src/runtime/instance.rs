@@ -139,4 +139,24 @@ impl<'a> Instance<'a> {
     pub fn module(&self) -> &Module {
         self.module
     }
+
+    /// Get an exported global value by name
+    ///
+    /// # Errors
+    /// - Returns `UnknownExport` if the export doesn't exist or isn't a global
+    pub fn get_global_export(&self, name: &str) -> Result<Value, RuntimeError> {
+        // Find the export using the helper
+        let export = self
+            .module
+            .exports
+            .get_by_name(name)
+            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
+
+        // Check it's a global export
+        if let ExportIndex::Global(global_idx) = export.index {
+            self.executor.get_global(global_idx)
+        } else {
+            Err(RuntimeError::UnknownExport(format!("{} is not a global export", name)))
+        }
+    }
 }
