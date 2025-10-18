@@ -47,7 +47,7 @@ pub fn get_implemented_instructions() -> HashSet<String> {
 
     // Function calls
     implemented.insert("call".to_string());
-    // call_indirect requires tables, not yet implemented
+    implemented.insert("call_indirect".to_string());
 
     // Table operations
     implemented.insert("table.get".to_string());

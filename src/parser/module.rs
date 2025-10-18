@@ -98,6 +98,28 @@ impl Module {
             .and_then(|f| self.types.get(f.ftype_index))
     }
 
+    /// Get function type for any function index (imported or local)
+    ///
+    /// # Arguments
+    /// * `func_idx` - The function index (0-based, imports first, then local functions)
+    ///
+    /// # Returns
+    /// The function type if the index is valid, None otherwise
+    pub fn get_function_type_by_idx(&self, func_idx: u32) -> Option<&FunctionType> {
+        let num_imported_functions = self.imports.function_count() as u32;
+
+        if func_idx < num_imported_functions {
+            // Imported function - use ImportSection helper
+            let type_idx = self.imports.get_function_type_index(func_idx)?;
+            self.types.get(type_idx)
+        } else {
+            // Local function
+            let local_idx = func_idx - num_imported_functions;
+            let func = self.functions.get(local_idx)?;
+            self.types.get(func.ftype_index)
+        }
+    }
+
     pub fn get_table(&self, index: u32) -> Option<&TableType> {
         self.imports
             .get_table(index)

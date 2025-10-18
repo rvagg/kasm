@@ -484,6 +484,18 @@ impl<'a> Executor<'a> {
             .ok_or(RuntimeError::InvalidFunctionType)
     }
 
+    /// Get the function type for a given function index
+    ///
+    /// Handles both imported and local functions by delegating to Module.
+    ///
+    /// # Errors
+    /// - Returns `FunctionIndexOutOfBounds` if func_idx is invalid
+    fn get_function_type(&self, func_idx: u32) -> Result<&FunctionType, RuntimeError> {
+        self.module
+            .get_function_type_by_idx(func_idx)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))
+    }
+
     /// Get the current label stack (mutable)
     fn current_label_stack_mut(&mut self) -> Result<&mut Vec<Label>, RuntimeError> {
         self.call_stack
@@ -788,6 +800,55 @@ impl<'a> Executor<'a> {
                 if let InstructionKind::Call { func_idx } = &inst.kind {
                     // Just prepare the call and return the state
                     return Ok(ExecutionState::CallFunction(*func_idx));
+                }
+
+                // Special handling for CallIndirect instruction
+                if let InstructionKind::CallIndirect { type_idx, table_idx } = &inst.kind {
+                    // Pop table element index from stack
+                    let table_elem_idx = self.stack.pop_i32()? as u32;
+
+                    // Get table
+                    let table = self
+                        .tables
+                        .get(*table_idx as usize)
+                        .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+
+                    // Get function reference from table
+                    let func_ref = table.get(table_elem_idx)?;
+
+                    // Extract function index from reference
+                    let func_idx = match func_ref {
+                        Value::FuncRef(Some(idx)) => idx,
+                        Value::FuncRef(None) => {
+                            return Err(RuntimeError::UndefinedElement(table_elem_idx));
+                        }
+                        _ => {
+                            return Err(RuntimeError::TypeMismatch {
+                                expected: "funcref".to_string(),
+                                actual: format!("{:?}", func_ref.typ()),
+                            });
+                        }
+                    };
+
+                    // Get expected function type from type_idx
+                    let expected_type = self
+                        .function_types
+                        .get(*type_idx as usize)
+                        .ok_or(RuntimeError::InvalidFunctionType)?;
+
+                    // Get actual function type
+                    let actual_type = self.get_function_type(func_idx)?;
+
+                    // CRITICAL: Type check must match exactly for security
+                    if expected_type != actual_type {
+                        return Err(RuntimeError::IndirectCallTypeMismatch {
+                            expected: format!("{:?}", expected_type),
+                            actual: format!("{:?}", actual_type),
+                        });
+                    }
+
+                    // Type check passed - proceed with call
+                    return Ok(ExecutionState::CallFunction(func_idx));
                 }
 
                 // Execute as normal and convert BlockEnd to ExecutionState
