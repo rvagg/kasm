@@ -94,8 +94,8 @@ impl Module {
 
     pub fn get_function_type(&self, index: usize) -> Option<&FunctionType> {
         self.functions
-            .get(index)
-            .and_then(|f| self.types.get(f.ftype_index as u8))
+            .get(index as u32)
+            .and_then(|f| self.types.get(f.ftype_index))
     }
 
     pub fn get_table(&self, index: u32) -> Option<&TableType> {
@@ -322,7 +322,8 @@ impl TypeSection {
         self.types.is_empty()
     }
 
-    pub fn get(&self, index: u8) -> Option<&FunctionType> {
+    /// Get a function type by index
+    pub fn get(&self, index: u32) -> Option<&FunctionType> {
         self.types.get(index as usize)
     }
 
@@ -374,8 +375,9 @@ impl ImportSection {
         self.imports.push(import);
     }
 
-    pub fn get(&self, index: usize) -> Option<&Import> {
-        self.imports.get(index)
+    /// Get an import by index
+    pub fn get(&self, index: u32) -> Option<&Import> {
+        self.imports.get(index as usize)
     }
 
     pub fn function_count(&self) -> usize {
@@ -566,8 +568,9 @@ impl FunctionSection {
         self.functions.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Option<&Function> {
-        self.functions.get(index)
+    /// Get a function by index
+    pub fn get(&self, index: u32) -> Option<&Function> {
+        self.functions.get(index as usize)
     }
 }
 
@@ -750,6 +753,7 @@ impl GlobalSection {
         self.globals.iter().position(|g| g == global).map(|i| i as u32)
     }
 
+    /// Get a global by index
     pub fn get(&self, index: u32) -> Option<&Global> {
         self.globals.get(index as usize)
     }
@@ -1183,8 +1187,9 @@ impl CodeSection {
         self.code.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Option<&FunctionBody> {
-        self.code.get(index)
+    /// Get a function body by index
+    pub fn get(&self, index: u32) -> Option<&FunctionBody> {
+        self.code.get(index as usize)
     }
 }
 
@@ -1220,14 +1225,14 @@ impl CodeSection {
         for (i, function_body) in self.code.iter().enumerate() {
             let fi = unit.imports.function_count() + i;
             let exp = unit.get_function_export_name(fi as u32);
-            let ftype_index = match unit.functions.get(i) {
+            let ftype_index = match unit.functions.get(i as u32) {
                 Some(f) => f.ftype_index,
                 None => {
                     result.push_str(&format!("invalid function index: {i}\n"));
                     continue;
                 }
             };
-            let ftype = match unit.types.get(ftype_index as u8) {
+            let ftype = match unit.types.get(ftype_index) {
                 Some(t) => t,
                 None => {
                     result.push_str(&format!("invalid type index: {ftype_index}\n"));

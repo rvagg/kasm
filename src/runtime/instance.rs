@@ -42,7 +42,7 @@ impl<'a> Instance<'a> {
             let code_idx = start_func_idx as usize - num_imported_functions;
             let func_body = module
                 .code
-                .get(code_idx)
+                .get(code_idx as u32)
                 .ok_or(RuntimeError::FunctionIndexOutOfBounds(start_func_idx))?;
 
             // Execute the start function (no arguments, no return values)

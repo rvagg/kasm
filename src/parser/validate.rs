@@ -475,10 +475,7 @@ impl<'a> CodeValidator<'a> {
     }
 
     fn get_type(&self, ti: u32) -> Result<&FunctionType, ValidationError> {
-        self.module
-            .types
-            .get(ti as u8)
-            .ok_or(ValidationError::UnknownFunctionType)
+        self.module.types.get(ti).ok_or(ValidationError::UnknownFunctionType)
     }
 }
 
@@ -889,11 +886,7 @@ impl Validator for CodeValidator<'_> {
                         end_types.push(Val(*t));
                     }
                     BlockType::FuncType(ti) => {
-                        let ftype = self
-                            .module
-                            .types
-                            .get(*ti as u8)
-                            .ok_or(ValidationError::UnknownBlockType)?;
+                        let ftype = self.module.types.get(*ti).ok_or(ValidationError::UnknownBlockType)?;
                         // parameters are stack ordered, so pick them in reverse
                         ftype.parameters.iter().rev().try_for_each(|v| {
                             match self.pop_expected(Val(*v)) {
@@ -1083,7 +1076,7 @@ impl Validator for CodeValidator<'_> {
                 let ftype = self
                     .module
                     .types
-                    .get(*type_idx as u8)
+                    .get(*type_idx)
                     .ok_or(ValidationError::UnknownFunctionType)?;
 
                 // parameters are stack ordered, so pick them in reverse
@@ -1116,7 +1109,7 @@ impl Validator for CodeValidator<'_> {
                 let ftype = self
                     .module
                     .types
-                    .get(*type_idx as u8)
+                    .get(*type_idx)
                     .ok_or(ValidationError::UnknownFunctionType)?;
 
                 // parameters are stack ordered, so pick them in reverse

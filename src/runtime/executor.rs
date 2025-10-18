@@ -331,7 +331,7 @@ impl<'a> Executor<'a> {
         let func = self
             .module
             .functions
-            .get(func_decl_idx)
+            .get(func_decl_idx as u32)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_type = self
@@ -362,7 +362,7 @@ impl<'a> Executor<'a> {
         let body = self
             .module
             .code
-            .get(func_decl_idx)
+            .get(func_decl_idx as u32)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         // Initialise locals: parameters first, then local declarations
@@ -599,7 +599,7 @@ impl<'a> Executor<'a> {
                     let func = self
                         .module
                         .functions
-                        .get(func_decl_idx)
+                        .get(func_decl_idx as u32)
                         .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
                     // Get function type using the function's type index
