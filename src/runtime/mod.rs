@@ -12,12 +12,14 @@ pub mod instance;
 pub mod memory;
 pub mod ops;
 pub mod stack;
+pub mod table;
 pub mod test_utils;
 pub mod value;
 
 pub use imports::ImportObject;
 pub use instance::Instance;
 pub use memory::Memory;
+pub use table::Table;
 pub use value::Value;
 
 #[derive(Debug, thiserror::Error)]
@@ -56,4 +58,14 @@ pub enum RuntimeError {
     InvalidConstExpr(String),
     #[error("Call stack overflow")]
     CallStackOverflow,
+    #[error("Table index out of bounds: {0}")]
+    TableIndexOutOfBounds(u32),
+    #[error("Table size exceeded")]
+    TableSizeExceeded,
+    #[error("Undefined table element: {0}")]
+    UndefinedElement(u32),
+    #[error("Indirect call type mismatch: expected {expected}, got {actual}")]
+    IndirectCallTypeMismatch { expected: String, actual: String },
+    #[error("Element index out of bounds: {0}")]
+    ElementIndexOutOfBounds(u32),
 }

@@ -7,6 +7,7 @@ use super::{
     memory::Memory,
     ops,
     stack::Stack,
+    table::Table,
     RuntimeError, Value,
 };
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
@@ -61,6 +62,8 @@ pub struct Executor<'a> {
     memories: Vec<Memory>,
     /// Global variable values
     globals: Vec<Value>,
+    /// Table instances
+    tables: Vec<Table>,
     /// Function bodies for quick access
     functions: Vec<Option<StructuredFunction>>,
     /// Function types for quick access
@@ -93,6 +96,14 @@ impl<'a> Executor<'a> {
                 Err(e) => return Err(e),
             }
         };
+
+        // Initialise tables from module definition
+        let mut tables = Vec::new();
+        for table_type in &module.table.tables {
+            let table = Table::new(table_type.ref_type, table_type.limits)?;
+            tables.push(table);
+        }
+        // Note: Element initialization happens in Phase 3
 
         // Initialise globals from module
 
@@ -145,6 +156,7 @@ impl<'a> Executor<'a> {
             call_stack: Vec::new(),
             memories,
             globals,
+            tables,
             functions,
             function_types,
         };
@@ -287,6 +299,14 @@ impl<'a> Executor<'a> {
                         ref_type
                     ))),
                 },
+                InstructionKind::RefFunc { func_idx } => {
+                    // Validate function exists
+                    let total_functions = self.module.imports.function_count() + self.module.functions.functions.len();
+                    if (*func_idx as usize) >= total_functions {
+                        return Err(RuntimeError::FunctionIndexOutOfBounds(*func_idx));
+                    }
+                    Ok(Value::FuncRef(Some(*func_idx)))
+                }
                 _ => Err(RuntimeError::InvalidConstExpr(format!(
                     "Unsupported instruction in constant expression: {:?}",
                     instructions[0].kind
@@ -1963,6 +1983,54 @@ impl<'a> Executor<'a> {
             }
             I64TruncSatF64U => {
                 ops::conversion::i64_trunc_sat_f64_u(&mut self.stack)?;
+                Ok(BlockEnd::Normal)
+            }
+
+            // ----------------------------------------------------------------
+            // Table Instructions
+            TableGet { table_idx } => {
+                let idx = self.stack.pop_i32()?;
+                let table = self
+                    .tables
+                    .get(*table_idx as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+
+                let value = table.get(idx as u32)?;
+
+                self.stack.push(value);
+                Ok(BlockEnd::Normal)
+            }
+            TableSet { table_idx } => {
+                let value = self.stack.pop()?;
+                let idx = self.stack.pop_i32()?;
+
+                let table = self
+                    .tables
+                    .get_mut(*table_idx as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+
+                table.set(idx as u32, Some(value))?;
+                Ok(BlockEnd::Normal)
+            }
+            TableSize { table_idx } => {
+                let table = self
+                    .tables
+                    .get(*table_idx as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+                self.stack.push(Value::I32(table.size() as i32));
+                Ok(BlockEnd::Normal)
+            }
+            TableGrow { table_idx } => {
+                let delta = self.stack.pop_i32()?;
+                let init_value = self.stack.pop()?;
+
+                let table = self
+                    .tables
+                    .get_mut(*table_idx as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+
+                let result = table.grow(delta as u32, Some(init_value))?;
+                self.stack.push(Value::I32(result as i32));
                 Ok(BlockEnd::Normal)
             }
 
