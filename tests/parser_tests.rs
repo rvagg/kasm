@@ -2,7 +2,7 @@
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
     use kasm::parser::module;
-    use kasm::runtime::{implemented::is_instruction_implemented, Instance, Value};
+    use kasm::runtime::{implemented::is_instruction_implemented, ImportObject, Instance, Value};
     use rstest::rstest;
 
     use serde::de::{self, Deserializer};
@@ -212,6 +212,9 @@ mod tests {
 
         setup_spectest(&mut module_registry);
 
+        // Create spectest imports for global values
+        let spectest_imports = create_spectest_imports();
+
         // First pass: Parse all modules
         for (_index, command) in test_data.spec.commands.iter().enumerate() {
             if let Command::Module(cmd) = command {
@@ -347,8 +350,8 @@ mod tests {
                     if !module_instances.contains_key(module_name) {
                         // Create instance on first use
                         let module_ref = parsed_modules.get(module_name).unwrap();
-                        let new_instance =
-                            Instance::new(module_ref).unwrap_or_else(|e| panic!("Failed to create instance: {}", e));
+                        let new_instance = Instance::new(module_ref, Some(&spectest_imports))
+                            .unwrap_or_else(|e| panic!("Failed to create instance: {}", e));
                         module_instances.insert(module_name.to_string(), new_instance);
                     }
 
@@ -753,5 +756,14 @@ mod tests {
             index: kasm::parser::module::ExportIndex::Function(funcidx),
             name,
         });
+    }
+
+    fn create_spectest_imports() -> ImportObject {
+        let mut imports = ImportObject::new();
+        imports.add_global("spectest", "global_i32", Value::I32(666));
+        imports.add_global("spectest", "global_i64", Value::I64(666));
+        imports.add_global("spectest", "global_f32", Value::F32(666.6));
+        imports.add_global("spectest", "global_f64", Value::F64(666.6));
+        imports
     }
 }

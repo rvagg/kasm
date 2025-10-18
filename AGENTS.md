@@ -16,6 +16,7 @@ src/parser/         # Binary parser, validation
 src/runtime/        # Interpreter
   executor.rs       # State machine execution (no recursion)
   instance.rs       # Module instantiation
+  imports.rs        # Import resolution (globals)
   ops/              # Instruction implementations (numeric, memory, control, etc.)
   memory.rs         # Linear memory (64KB pages, 4GB max)
   stack.rs          # Operand stack
@@ -23,17 +24,18 @@ src/runtime/        # Interpreter
 ```
 
 ## Status
-- 189 instructions implemented (see src/runtime/implemented.rs)
-- 86/90 core spec tests pass (tests/spec/*.json)
-- Missing: imports/exports linking, tables, full globals, SIMD
+- 191 instructions implemented (see src/runtime/implemented.rs)
+- 86/86 core spec tests pass (tests/spec/*.json)
+- Global imports: supported via ImportObject
+- Missing: function/memory/table imports, tables, call_indirect, SIMD
 
 ## Development Workflow
 ```bash
-cargo run -- file.wasm --dump-disassemble  # Parse and disassemble
-cargo test                                  # Run all tests
-cargo test <pattern>                        # Run specific tests
-cargo test -- --nocapture                   # Show println output
-./check.sh                                  # Format, lint, test
+cargo run --bin kasm -- file.wasm --dump-disassemble  # Parse and disassemble
+cargo test                                             # Run all tests
+cargo test <pattern>                                   # Run specific tests
+cargo test -- --nocapture                              # Show println output
+./check.sh                                             # Format, lint, test
 ```
 
 ## Adding Instructions
@@ -44,29 +46,26 @@ cargo test -- --nocapture                   # Show println output
 5. Run `./check.sh`
 
 ## Test Coverage System
-The project uses a coordinated test system:
-1. **src/runtime/implemented.rs** - Central registry of implemented instructions (`get_implemented_instructions()`)
-2. **tests/parser_tests.rs** - Spec test runner that:
-   - Parses each test module and checks if all instructions are implemented
-   - Skips tests with unimplemented instructions automatically
+1. **src/runtime/implemented.rs** - Central registry of implemented instructions
+2. **tests/parser_tests.rs** - Spec test runner:
+   - Checks if test's instructions are implemented
+   - Skips tests with unimplemented instructions (keeps tests green)
    - Runs assert_return/assert_trap/assert_invalid assertions
-3. **src/bin/test_coverage.rs** - Development tool that analyses spec tests to show:
-   - Which instructions block the most tests
-   - Priority order for implementing missing instructions
+   - Creates ImportObject with spectest globals (global_i32=666, etc.)
+3. **src/bin/test_coverage.rs** - Shows which instructions block most tests
 
 ```bash
 cargo run --bin test_coverage  # See which instructions enable most tests
 ```
 
-Test skipping logic: When parser_tests encounters an unimplemented instruction, it skips the entire test file rather than failing. This allows incremental development while maintaining green tests.
-
 ## Key Files
-- src/runtime/executor.rs - State machine interpreter with structured control flow
+- src/runtime/executor.rs - State machine interpreter, handles globals/locals/memory
+- src/runtime/instance.rs - Module instantiation, persistent executor state
+- src/runtime/imports.rs - Import resolution (currently globals only)
 - src/runtime/ops/*.rs - Instruction implementations by category
-- src/runtime/implemented.rs - Single source of truth for implemented instructions
-- tests/parser_tests.rs - Spec test harness that checks implemented.rs before running
-- tests/spec/*.json - WebAssembly spec tests (don't modify)
-- src/bin/test_coverage.rs - Development tool to prioritise instruction implementation
+- src/runtime/implemented.rs - Registry of implemented instructions
+- tests/parser_tests.rs - Spec test harness with spectest imports
+- src/bin/test_coverage.rs - Shows which instructions to prioritise
 
 ## Error Types
 - `DecodeError` - Parser errors with byte positions

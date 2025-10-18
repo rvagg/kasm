@@ -7,6 +7,7 @@ pub mod control;
 pub mod executor;
 pub mod frame;
 pub mod implemented;
+pub mod imports;
 pub mod instance;
 pub mod memory;
 pub mod ops;
@@ -14,6 +15,7 @@ pub mod stack;
 pub mod test_utils;
 pub mod value;
 
+pub use imports::ImportObject;
 pub use instance::Instance;
 pub use memory::Memory;
 pub use value::Value;

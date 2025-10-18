@@ -1,6 +1,6 @@
 //! WebAssembly module instance
 
-use super::{executor::Executor, RuntimeError, Value};
+use super::{executor::Executor, imports::ImportObject, RuntimeError, Value};
 use crate::parser::module::{ExportIndex, Module, Positional};
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ pub struct Instance<'a> {
 
 impl<'a> Instance<'a> {
     /// Create a new instance from a parsed module
-    pub fn new(module: &'a Module) -> Result<Self, RuntimeError> {
+    pub fn new(module: &'a Module, imports: Option<&ImportObject>) -> Result<Self, RuntimeError> {
         let mut exports = HashMap::new();
 
         // Build export map
@@ -24,7 +24,7 @@ impl<'a> Instance<'a> {
         }
 
         // Create persistent executor - this initialises memory and globals
-        let mut executor = Executor::new(module)?;
+        let mut executor = Executor::new(module, imports)?;
 
         // Execute start function if present
         if module.start.has_position() {

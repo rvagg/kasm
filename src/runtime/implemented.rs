@@ -29,9 +29,8 @@ pub fn get_implemented_instructions() -> HashSet<String> {
     implemented.insert("local.tee".to_string());
 
     // Global variables
-    // Global operations - not fully implemented (no import support)
-    // implemented.insert("global.get".to_string());
-    // implemented.insert("global.set".to_string());
+    implemented.insert("global.get".to_string());
+    implemented.insert("global.set".to_string());
 
     // Parametric instructions
     implemented.insert("select".to_string());

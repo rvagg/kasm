@@ -3,6 +3,7 @@
 use super::{
     control::{Label, LabelStack, LabelType},
     frame::CallFrame,
+    imports::{default_value_for_type, is_global_mutable, ImportObject},
     memory::Memory,
     ops,
     stack::Stack,
@@ -72,7 +73,7 @@ impl<'a> Executor<'a> {
     /// # Errors
     /// - If the module has more than one memory (WebAssembly 1.0 limitation)
     /// - If memory initialisation fails
-    pub fn new(module: &'a Module) -> Result<Self, RuntimeError> {
+    pub fn new(module: &'a Module, imports: Option<&ImportObject>) -> Result<Self, RuntimeError> {
         // Initialise memories from module definition
         let memories = if module.memory.memory.is_empty() {
             vec![]
@@ -97,29 +98,20 @@ impl<'a> Executor<'a> {
 
         let mut globals = Vec::new();
 
-        // Reserve space for imported globals with default values
-        // In a real implementation, these would be provided by the import object
+        // Initialise imported globals
         for import in &module.imports.imports {
             if let ExternalKind::Global(global_type) = &import.external_kind {
-                let initial_value = match global_type.value_type {
-                    ValueType::I32 => Value::I32(0),
-                    ValueType::I64 => Value::I64(0),
-                    ValueType::F32 => Value::F32(0.0),
-                    ValueType::F64 => Value::F64(0.0),
-                    ValueType::FuncRef => Value::FuncRef(None),
-                    ValueType::ExternRef => Value::ExternRef(None),
-                    ValueType::V128 => {
-                        return Err(RuntimeError::UnimplementedInstruction(
-                            "V128 type not yet supported".to_string(),
-                        ));
-                    }
+                let initial_value = if let Some(import_obj) = imports {
+                    import_obj.get_or_default(&import.module, &import.name, global_type.value_type)?
+                } else {
+                    default_value_for_type(global_type.value_type)?
                 };
                 globals.push(initial_value);
             }
         }
 
         // We can't evaluate init expressions yet because the executor isn't created
-        // Store the module's globals info for later initialization
+        // Store the module's globals info for later initialisation
         let module_globals = module.globals.globals.clone();
 
         // Build function registry - collect all function bodies
@@ -158,6 +150,8 @@ impl<'a> Executor<'a> {
         };
 
         // Now initialise module's own globals with their init expressions
+        // Globals can reference previously defined globals in their init expressions,
+        // so we need to evaluate them in order
         for global in &module_globals {
             let initial_value = if global.init.is_empty() {
                 // No init expression, use default
@@ -175,7 +169,8 @@ impl<'a> Executor<'a> {
                     }
                 }
             } else {
-                // Evaluate the init expression
+                // Evaluate the init expression with the current state of globals
+                // This allows later globals to reference earlier ones
                 executor.evaluate_const_expr(&global.init)?
             };
             executor.globals.push(initial_value);
@@ -1153,13 +1148,12 @@ impl<'a> Executor<'a> {
                     return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
                 }
 
-                // Check mutability
-                if let Some(global_def) = self.module.globals.get(*global_idx) {
-                    if !global_def.global_type.mutable {
-                        return Err(RuntimeError::InvalidConversion(
-                            "Cannot set immutable global".to_string(),
-                        ));
-                    }
+                // Check mutability - need to handle both imported and local globals
+                // Check if the global is mutable (handles both imported and module-defined globals)
+                if !is_global_mutable(self.module, *global_idx)? {
+                    return Err(RuntimeError::InvalidConversion(
+                        "Cannot set immutable global".to_string(),
+                    ));
                 }
 
                 self.globals[*global_idx as usize] = value;
@@ -1262,7 +1256,7 @@ impl<'a> Executor<'a> {
             // 4.4.7.4 Bulk Memory Operations
             // spec: bulk memory operations proposal (now standard)
 
-            // memory.init x - Initialize memory from data segment
+            // memory.init x - Initialise memory from data segment
             // [i32 i32 i32] → []
             // Stack: [dest_addr, src_offset, length]
             MemoryInit { data_idx } => {
@@ -1302,7 +1296,7 @@ impl<'a> Executor<'a> {
             // [] → []
             // Prevents further use of data segment x
             // Note: This is a no-op in our implementation as we don't
-            // track passive data segments separately after initialization
+            // track passive data segments separately after initialisation
             DataDrop { data_idx: _ } => Ok(BlockEnd::Normal),
 
             // ----------------------------------------------------------------
@@ -2129,7 +2123,7 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
             let result = executor
                 .execute_function(&func, vec![], &[ValueType::I32])
                 .expect("Execution should succeed");
@@ -2157,7 +2151,7 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
             let result = executor
                 .execute_function(&func, vec![], &[ValueType::I32])
                 .expect("Execution should succeed");
@@ -2269,7 +2263,7 @@ mod tests {
             });
 
             // Create instance and test
-            let mut instance = Instance::new(&module).expect("Instance creation should succeed");
+            let mut instance = Instance::new(&module, None).expect("Instance creation should succeed");
             let result = instance.invoke("main", vec![]).expect("Function call should succeed");
 
             assert_eq!(result, vec![Value::I32(42)], "Main should call helper and return 42");
@@ -2321,7 +2315,7 @@ mod tests {
                 index: ExportIndex::Function(0),
             });
 
-            let mut instance = Instance::new(&module).expect("Instance creation should succeed");
+            let mut instance = Instance::new(&module, None).expect("Instance creation should succeed");
 
             // Test factorial(5) = 120
             let result = instance

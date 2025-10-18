@@ -661,7 +661,7 @@ mod tests {
     ) -> Result<Vec<Value>, RuntimeError> {
         let structured_func = StructureBuilder::build_function(&instructions, 0, return_types.to_vec())
             .expect("Structure building should succeed");
-        let mut executor = Executor::new(module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(module, None).expect("Executor creation should succeed");
         executor.execute_function(&structured_func, args, return_types)
     }
 
@@ -676,7 +676,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let result = Executor::new(&module);
+        let result = Executor::new(&module, None);
         assert!(result.is_err());
         let error_msg = result.err().unwrap().to_string();
         assert!(error_msg.contains("only supports one memory"));
@@ -729,7 +729,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(10) },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 2 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -754,7 +754,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(2) },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 5 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -776,7 +776,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: -1 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -798,7 +798,7 @@ mod tests {
             limits: Limits { min: 2, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 0 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -820,7 +820,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(5) },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::MemorySize),
             make_instruction(InstructionKind::I32Const { value: 1 }),
@@ -880,7 +880,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 100 }), // address,
             make_instruction(InstructionKind::I32Const { value: 42 }),  // value,
@@ -908,7 +908,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 100 }),
             make_instruction(InstructionKind::I32Const { value: 0x12345678 }),
@@ -936,7 +936,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 0 }),
             make_instruction(InstructionKind::I32Const { value: 100 }),
@@ -985,7 +985,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
 
         // Try to load from last valid address (PAGE_SIZE - 4)
         let instructions = vec![
@@ -1027,7 +1027,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
 
         // Try to store at last valid address
         let instructions = vec![
@@ -1072,7 +1072,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: i32::MAX }),
             make_instruction(InstructionKind::I32Load {
@@ -1141,7 +1141,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
 
         // First call: store a value
         let store_instructions = vec![
