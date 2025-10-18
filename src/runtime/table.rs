@@ -142,6 +142,123 @@ impl Table {
         Ok(old_size)
     }
 
+    /// Fill a range of table elements with a value
+    ///
+    /// # Errors
+    ///
+    /// - Returns `TableIndexOutOfBounds` if the range is out of bounds or would overflow.
+    /// - Returns `TypeMismatch` if the value type doesn't match the table's reference type.
+    pub fn fill(&mut self, start: u32, count: u32, value: Option<Value>) -> Result<(), RuntimeError> {
+        let end = start
+            .checked_add(count)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))?;
+
+        if end > self.size() {
+            return Err(RuntimeError::TableIndexOutOfBounds(end));
+        }
+
+        // Validate value type
+        if let Some(val) = &value {
+            self.validate_element(val)?;
+        }
+
+        for i in start..end {
+            self.elements[i as usize] = value.clone();
+        }
+        Ok(())
+    }
+
+    /// Initialize table from element segment data
+    ///
+    /// # Errors
+    ///
+    /// - Returns `TableIndexOutOfBounds` if the range is out of bounds.
+    /// - Returns `TypeMismatch` if any value type doesn't match the table's reference type.
+    pub fn init(&mut self, dst_idx: u32, src: &[Option<Value>], src_idx: u32, count: u32) -> Result<(), RuntimeError> {
+        let src_end = (src_idx + count) as usize;
+        let dst_end = dst_idx
+            .checked_add(count)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))?;
+
+        if src_end > src.len() || dst_end > self.size() {
+            return Err(RuntimeError::TableIndexOutOfBounds(dst_end));
+        }
+
+        for i in 0..count {
+            let src_val = &src[(src_idx + i) as usize];
+            if let Some(val) = src_val {
+                self.validate_element(val)?;
+            }
+            self.elements[(dst_idx + i) as usize] = src_val.clone();
+        }
+        Ok(())
+    }
+
+    /// Copy within the same table or from another table
+    ///
+    /// # Errors
+    ///
+    /// - Returns `TableIndexOutOfBounds` if ranges are out of bounds.
+    pub fn copy_within(&mut self, dst_idx: u32, src_idx: u32, count: u32) -> Result<(), RuntimeError> {
+        let src_end = src_idx
+            .checked_add(count)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))?;
+        let dst_end = dst_idx
+            .checked_add(count)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))?;
+
+        if src_end > self.size() || dst_end > self.size() {
+            return Err(RuntimeError::TableIndexOutOfBounds(src_end.max(dst_end)));
+        }
+
+        if count > 0 {
+            // Clone the range first to handle overlaps correctly
+            let temp: Vec<_> = self.elements[src_idx as usize..src_end as usize].to_vec();
+            self.elements[dst_idx as usize..dst_end as usize].clone_from_slice(&temp);
+        }
+
+        Ok(())
+    }
+
+    /// Copy from another table into this table
+    ///
+    /// This is optimised for cross-table copies, using bulk slice operations
+    /// instead of element-by-element copying.
+    ///
+    /// # Errors
+    ///
+    /// - Returns `TableIndexOutOfBounds` if ranges are out of bounds.
+    /// - Returns `TypeMismatch` if the table reference types don't match.
+    pub fn copy_from(&mut self, dst_idx: u32, src: &Table, src_idx: u32, count: u32) -> Result<(), RuntimeError> {
+        // Validate types match (ONE type check)
+        if std::mem::discriminant(&self.ref_type) != std::mem::discriminant(&src.ref_type) {
+            return Err(RuntimeError::TypeMismatch {
+                expected: format!("{:?}", self.ref_type),
+                actual: format!("{:?}", src.ref_type),
+            });
+        }
+
+        // Bounds checking (TWO bounds checks total)
+        let src_end = src_idx
+            .checked_add(count)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))?;
+        let dst_end = dst_idx
+            .checked_add(count)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))?;
+
+        if src_end > src.size() || dst_end > self.size() {
+            return Err(RuntimeError::TableIndexOutOfBounds(src_end.max(dst_end)));
+        }
+
+        // Direct bulk copy - O(n) clone only, no per-element overhead
+        if count > 0 {
+            let temp: Vec<_> = src.elements[src_idx as usize..src_end as usize].to_vec();
+            self.elements[dst_idx as usize..dst_end as usize].clone_from_slice(&temp);
+        }
+
+        Ok(())
+    }
+
     /// Validate that a value matches this table's reference type
     fn validate_element(&self, value: &Value) -> Result<(), RuntimeError> {
         match (&self.ref_type, value) {

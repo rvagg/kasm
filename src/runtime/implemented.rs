@@ -54,6 +54,10 @@ pub fn get_implemented_instructions() -> HashSet<String> {
     implemented.insert("table.set".to_string());
     implemented.insert("table.size".to_string());
     implemented.insert("table.grow".to_string());
+    implemented.insert("table.init".to_string());
+    implemented.insert("table.copy".to_string());
+    implemented.insert("table.fill".to_string());
+    implemented.insert("elem.drop".to_string());
 
     // Reference operations
     implemented.insert("ref.null".to_string());

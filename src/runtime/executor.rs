@@ -64,6 +64,8 @@ pub struct Executor<'a> {
     globals: Vec<Value>,
     /// Table instances
     tables: Vec<Table>,
+    /// Element segments (for table.init)
+    element_segments: Vec<Vec<Option<Value>>>,
     /// Function bodies for quick access
     functions: Vec<Option<StructuredFunction>>,
     /// Function types for quick access
@@ -103,7 +105,6 @@ impl<'a> Executor<'a> {
             let table = Table::new(table_type.ref_type, table_type.limits)?;
             tables.push(table);
         }
-        // Note: Element initialization happens in Phase 3
 
         // Initialise globals from module
 
@@ -157,6 +158,7 @@ impl<'a> Executor<'a> {
             memories,
             globals,
             tables,
+            element_segments: Vec::new(), // Will be populated below
             functions,
             function_types,
         };
@@ -188,10 +190,56 @@ impl<'a> Executor<'a> {
             executor.globals.push(initial_value);
         }
 
+        // Process element segments
+        executor.initialise_element_segments()?;
+
         // Initialise memory with data sections
         executor.initialise_data_sections()?;
 
         Ok(executor)
+    }
+
+    /// Initialise tables with element segments
+    fn initialise_element_segments(&mut self) -> Result<(), RuntimeError> {
+        use crate::parser::module::ElementMode;
+
+        // Process each element segment
+        for element in &self.module.elements.elements {
+            // Evaluate init expressions to get values
+            let mut values = Vec::new();
+            for init_expr in &element.init {
+                let val = self.evaluate_const_expr(init_expr)?;
+                values.push(Some(val));
+            }
+
+            match &element.mode {
+                ElementMode::Active { table_index, offset } => {
+                    // Evaluate offset expression
+                    let offset_val = self.evaluate_const_expr(offset)?;
+                    let start_idx = match offset_val {
+                        Value::I32(v) => v as u32,
+                        _ => return Err(RuntimeError::InvalidConstExpr("Element offset must be i32".to_string())),
+                    };
+
+                    // Check table exists
+                    if (*table_index as usize) >= self.tables.len() {
+                        return Err(RuntimeError::TableIndexOutOfBounds(*table_index));
+                    }
+
+                    // Initialize table with element values
+                    self.tables[*table_index as usize].init(start_idx, &values, 0, values.len() as u32)?;
+
+                    // Store segment for potential table.init usage later
+                    self.element_segments.push(values);
+                }
+                ElementMode::Passive | ElementMode::Declarative => {
+                    // Store for later use with table.init
+                    self.element_segments.push(values);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Initialise memory with data from data sections
@@ -2031,6 +2079,79 @@ impl<'a> Executor<'a> {
 
                 let result = table.grow(delta as u32, Some(init_value))?;
                 self.stack.push(Value::I32(result as i32));
+                Ok(BlockEnd::Normal)
+            }
+            TableInit { elem_idx, table_idx } => {
+                let count = self.stack.pop_i32()? as u32;
+                let src_idx = self.stack.pop_i32()? as u32;
+                let dst_idx = self.stack.pop_i32()? as u32;
+
+                let src_segment = self
+                    .element_segments
+                    .get(*elem_idx as usize)
+                    .ok_or(RuntimeError::ElementIndexOutOfBounds(*elem_idx))?;
+
+                let table = self
+                    .tables
+                    .get_mut(*table_idx as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+
+                table.init(dst_idx, src_segment, src_idx, count)?;
+                Ok(BlockEnd::Normal)
+            }
+            TableCopy { dst_table, src_table } => {
+                let count = self.stack.pop_i32()? as u32;
+                let src_idx = self.stack.pop_i32()? as u32;
+                let dst_idx = self.stack.pop_i32()? as u32;
+
+                if dst_table == src_table {
+                    // Same table - use copy_within
+                    let table = self
+                        .tables
+                        .get_mut(*dst_table as usize)
+                        .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?;
+                    table.copy_within(dst_idx, src_idx, count)?;
+                } else {
+                    // Different tables - use optimised bulk copy
+                    // Validate table indices first
+                    if (*src_table as usize) >= self.tables.len() || (*dst_table as usize) >= self.tables.len() {
+                        return Err(RuntimeError::TableIndexOutOfBounds((*src_table).max(*dst_table)));
+                    }
+
+                    // Borrow source and destination separately using split_at_mut
+                    // This avoids the need for element-by-element copying
+                    let (src_ref, dst_ref) = if src_table < dst_table {
+                        let (left, right) = self.tables.split_at_mut(*dst_table as usize);
+                        (&left[*src_table as usize], &mut right[0])
+                    } else {
+                        let (left, right) = self.tables.split_at_mut(*src_table as usize);
+                        (&right[0], &mut left[*dst_table as usize])
+                    };
+
+                    dst_ref.copy_from(dst_idx, src_ref, src_idx, count)?;
+                }
+
+                Ok(BlockEnd::Normal)
+            }
+            TableFill { table_idx } => {
+                let count = self.stack.pop_i32()? as u32;
+                let value = self.stack.pop()?;
+                let start = self.stack.pop_i32()? as u32;
+
+                let table = self
+                    .tables
+                    .get_mut(*table_idx as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+
+                table.fill(start, count, Some(value))?;
+                Ok(BlockEnd::Normal)
+            }
+            ElemDrop { elem_idx } => {
+                if (*elem_idx as usize) >= self.element_segments.len() {
+                    return Err(RuntimeError::ElementIndexOutOfBounds(*elem_idx));
+                }
+                // Clear the segment
+                self.element_segments[*elem_idx as usize].clear();
                 Ok(BlockEnd::Normal)
             }
 
