@@ -1,5 +1,6 @@
 //! WebAssembly value representation
 
+use super::FuncAddr;
 use crate::parser::module::ValueType;
 use fhex::ToHex;
 use std::fmt;
@@ -11,8 +12,8 @@ pub enum Value {
     I64(i64),
     F32(f32),
     F64(f64),
-    /// Function reference - either null or a function index
-    FuncRef(Option<u32>),
+    /// Function reference - either null or a global function address
+    FuncRef(Option<FuncAddr>),
     /// External reference - either null or an external reference index
     ExternRef(Option<u32>),
 }
@@ -63,7 +64,7 @@ impl Value {
     }
 
     /// Convert to funcref, returning None if wrong type
-    pub fn as_funcref(&self) -> Option<Option<u32>> {
+    pub fn as_funcref(&self) -> Option<Option<FuncAddr>> {
         match self {
             Value::FuncRef(v) => Some(*v),
             _ => None,
@@ -208,10 +209,10 @@ impl Value {
             }
         } else {
             value
-                .parse::<u32>()
+                .parse::<usize>()
                 .map(|idx| match ref_type {
-                    "funcref" => Value::FuncRef(Some(idx)),
-                    "externref" => Value::ExternRef(Some(idx)),
+                    "funcref" => Value::FuncRef(Some(FuncAddr(idx))),
+                    "externref" => Value::ExternRef(Some(idx as u32)),
                     _ => unreachable!(),
                 })
                 .map_err(|e| format!("Failed to parse {ref_type}: {e}"))
@@ -270,7 +271,7 @@ impl Value {
             Value::FuncRef(v) => {
                 let value_str = match v {
                     None => "null".to_string(),
-                    Some(idx) => idx.to_string(),
+                    Some(FuncAddr(idx)) => idx.to_string(),
                 };
                 ("funcref".to_string(), value_str)
             }
@@ -293,7 +294,7 @@ impl fmt::Display for Value {
             Value::F32(v) => write!(f, "f32:{}", v.to_hex()),
             Value::F64(v) => write!(f, "f64:{}", v.to_hex()),
             Value::FuncRef(None) => write!(f, "funcref:null"),
-            Value::FuncRef(Some(idx)) => write!(f, "funcref:{}", idx),
+            Value::FuncRef(Some(FuncAddr(idx))) => write!(f, "funcref:{}", idx),
             Value::ExternRef(None) => write!(f, "externref:null"),
             Value::ExternRef(Some(idx)) => write!(f, "externref:{}", idx),
         }

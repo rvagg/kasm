@@ -275,6 +275,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::FuncAddr;
 
     #[test]
     fn test_table_creation() {
@@ -298,8 +299,8 @@ mod tests {
         assert_eq!(table.get(0).unwrap(), Value::FuncRef(None));
 
         // Set an element
-        table.set(0, Some(Value::FuncRef(Some(42)))).unwrap();
-        assert_eq!(table.get(0).unwrap(), Value::FuncRef(Some(42)));
+        table.set(0, Some(Value::FuncRef(Some(FuncAddr(42))))).unwrap();
+        assert_eq!(table.get(0).unwrap(), Value::FuncRef(Some(FuncAddr(42))));
 
         // Set to null explicitly
         table.set(0, Some(Value::FuncRef(None))).unwrap();
@@ -320,7 +321,7 @@ mod tests {
         assert!(matches!(result, Err(RuntimeError::TableIndexOutOfBounds(10))));
 
         // Out of bounds set
-        let result = table.set(10, Some(Value::FuncRef(Some(1))));
+        let result = table.set(10, Some(Value::FuncRef(Some(FuncAddr(1)))));
         assert!(matches!(result, Err(RuntimeError::TableIndexOutOfBounds(10))));
     }
 
@@ -338,10 +339,10 @@ mod tests {
         assert_eq!(table.get(14).unwrap(), Value::FuncRef(None));
 
         // Grow with init value
-        let old_size = table.grow(3, Some(Value::FuncRef(Some(99)))).unwrap();
+        let old_size = table.grow(3, Some(Value::FuncRef(Some(FuncAddr(99))))).unwrap();
         assert_eq!(old_size, 15);
         assert_eq!(table.size(), 18);
-        assert_eq!(table.get(17).unwrap(), Value::FuncRef(Some(99)));
+        assert_eq!(table.get(17).unwrap(), Value::FuncRef(Some(FuncAddr(99))));
     }
 
     #[test]
@@ -369,6 +370,6 @@ mod tests {
         assert!(matches!(result, Err(RuntimeError::TypeMismatch { .. })));
 
         // Correct type works
-        assert!(table.set(0, Some(Value::FuncRef(Some(1)))).is_ok());
+        assert!(table.set(0, Some(Value::FuncRef(Some(FuncAddr(1))))).is_ok());
     }
 }

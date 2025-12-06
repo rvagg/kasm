@@ -1,9 +1,9 @@
 //! Import resolution for WebAssembly modules
 //!
-//! This module provides a minimal import system, currently supporting only global imports.
-//! In the future, this could be extended to support function, memory, and table imports.
+//! This module provides import resolution for WebAssembly modules, supporting
+//! global and function imports.
 
-use super::{RuntimeError, Value};
+use super::{FuncAddr, RuntimeError, Value};
 use crate::parser::module::{ExternalKind, Module, ValueType};
 use std::collections::HashMap;
 
@@ -12,6 +12,8 @@ use std::collections::HashMap;
 pub struct ImportObject {
     /// Imported global variables mapped by (module_name, field_name)
     pub globals: HashMap<(String, String), Value>,
+    /// Imported functions mapped by (module_name, field_name)
+    pub functions: HashMap<(String, String), FuncAddr>,
 }
 
 impl ImportObject {
@@ -19,7 +21,24 @@ impl ImportObject {
     pub fn new() -> Self {
         Self {
             globals: HashMap::new(),
+            functions: HashMap::new(),
         }
+    }
+
+    /// Add a function import
+    pub fn add_function(&mut self, module: impl Into<String>, name: impl Into<String>, addr: FuncAddr) {
+        self.functions.insert((module.into(), name.into()), addr);
+    }
+
+    /// Get a function import
+    ///
+    /// # Errors
+    /// Returns `UnknownFunction` error if the import doesn't exist
+    pub fn get_function(&self, module: &str, name: &str) -> Result<FuncAddr, RuntimeError> {
+        self.functions
+            .get(&(module.to_string(), name.to_string()))
+            .copied()
+            .ok_or_else(|| RuntimeError::UnknownFunction(format!("{}.{}", module, name)))
     }
 
     /// Add a global import

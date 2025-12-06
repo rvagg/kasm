@@ -2,7 +2,7 @@
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
     use kasm::parser::module;
-    use kasm::runtime::{implemented::is_instruction_implemented, ImportObject, Instance, Value};
+    use kasm::runtime::{implemented::is_instruction_implemented, FunctionInstance, ImportObject, Store, Value};
     use rstest::rstest;
 
     use serde::de::{self, Deserializer};
@@ -206,14 +206,15 @@ mod tests {
         let test_data: TestData = serde_json::from_str(&json_string).unwrap();
 
         let mut parsed_modules: HashMap<String, module::Module> = HashMap::new();
-        let mut module_instances: HashMap<String, Instance> = HashMap::new();
+        let mut store = Store::new();
+        let mut instance_registry: HashMap<String, usize> = HashMap::new(); // Maps module name to instance_id
         let mut _last_module_name: Option<String> = None;
         let mut module_registry: HashMap<String, module::Module> = HashMap::new();
 
         setup_spectest(&mut module_registry);
 
-        // Create spectest imports for global values (mutable so we can add registered module exports)
-        let mut spectest_imports = create_spectest_imports();
+        // Create spectest imports for global values and functions (mutable so we can add registered module exports)
+        let mut spectest_imports = create_spectest_imports(&mut store);
 
         // First pass: Parse all modules
         for (_index, command) in test_data.spec.commands.iter().enumerate() {
@@ -347,16 +348,17 @@ mod tests {
                     }
 
                     // Get or create a persistent instance for this module
-                    if !module_instances.contains_key(module_name) {
-                        // Create instance on first use
+                    if !instance_registry.contains_key(module_name) {
+                        // Create instance on first use via Store
                         let module_ref = parsed_modules.get(module_name).unwrap();
-                        let new_instance = Instance::new(module_ref, Some(&spectest_imports))
+                        let instance_id = store
+                            .create_instance(module_ref, Some(&spectest_imports))
                             .unwrap_or_else(|e| panic!("Failed to create instance: {}", e));
-                        module_instances.insert(module_name.to_string(), new_instance);
+                        instance_registry.insert(module_name.to_string(), instance_id);
                     }
 
-                    // Get mutable reference to the instance
-                    let instance = module_instances.get_mut(module_name).unwrap();
+                    // Get the instance ID
+                    let instance_id = *instance_registry.get(module_name).unwrap();
 
                     // Convert arguments
                     let mut args = Vec::new();
@@ -366,8 +368,8 @@ mod tests {
                         args.push(value);
                     }
 
-                    // Invoke the function with the persistent instance
-                    match instance.invoke(&cmd.action.field, args) {
+                    // Invoke the function through Store (handles cross-module calls)
+                    match store.invoke_export(instance_id, &cmd.action.field, args) {
                         Ok(results) => {
                             // Compare results
                             if results.len() != cmd.expected.len() {
@@ -423,28 +425,29 @@ mod tests {
                         "RegisterCommand: line = {}, action type = {}, as = {}",
                         cmd.line, cmd.r#type, cmd.r#as
                     );
-                    // Register the last parsed module
-                    // We re-parse to avoid moving the module out of parsed_modules,
-                    // ensuring dump comparisons can still run on all modules
+                    // Register the last parsed module using the already-parsed version from parsed_modules
                     if let Some(module_name) = &_last_module_name {
-                        let bin = &test_data.bin[module_name].0;
-                        let module = kasm::parser::parse(
-                            &module_registry,
-                            format!("{}/register", module_name).as_str(),
-                            &mut kasm::parser::reader::Reader::new(bin.clone()),
-                        )
-                        .unwrap_or_else(|e| panic!("Failed to re-parse {} for registration: {}", module_name, e));
-                        module_registry.insert(cmd.r#as.clone(), module);
+                        let registered_name = cmd.r#as.clone();
 
-                        // Create an instance to extract global exports
-                        let registered_module = module_registry.get(&cmd.r#as).unwrap();
-                        if let Ok(instance) = Instance::new(registered_module, Some(&spectest_imports)) {
-                            // Extract all global exports and add them to imports
-                            for export in &registered_module.exports.exports {
-                                if let kasm::parser::module::ExportIndex::Global(_) = export.index {
-                                    if let Ok(global_value) = instance.get_global_export(&export.name) {
-                                        spectest_imports.add_global(&cmd.r#as, &export.name, global_value);
-                                    }
+                        // Use the already-parsed module to create an instance
+                        let source_module = parsed_modules.get(module_name).unwrap();
+                        let instance_id = store
+                            .create_instance(source_module, Some(&spectest_imports))
+                            .expect("Failed to create instance for registration");
+
+                        let instance = store.get_instance(instance_id).unwrap();
+
+                        // Extract all exports and add them to imports
+                        for export in &source_module.exports.exports {
+                            if let kasm::parser::module::ExportIndex::Global(_) = export.index {
+                                if let Ok(global_value) = instance.get_global_export(&export.name) {
+                                    spectest_imports.add_global(&registered_name, &export.name, global_value);
+                                }
+                            }
+                            // Extract function exports and add their FuncAddr to imports
+                            if let kasm::parser::module::ExportIndex::Function(_) = export.index {
+                                if let Ok(func_addr) = instance.get_function_addr(&export.name) {
+                                    spectest_imports.add_function(&registered_name, &export.name, func_addr);
                                 }
                             }
                         }
@@ -771,12 +774,90 @@ mod tests {
         });
     }
 
-    fn create_spectest_imports() -> ImportObject {
+    fn create_spectest_imports(store: &mut Store) -> ImportObject {
+        use kasm::parser::module::{FunctionType, ValueType};
+
         let mut imports = ImportObject::new();
+
+        // Add spectest global values
         imports.add_global("spectest", "global_i32", Value::I32(666));
         imports.add_global("spectest", "global_i64", Value::I64(666));
         imports.add_global("spectest", "global_f32", Value::F32(666.6));
         imports.add_global("spectest", "global_f64", Value::F64(666.6));
+
+        // Add spectest host functions as no-ops that return appropriate values
+        // These functions are called during spec tests but their implementations don't matter
+
+        // print() -> void
+        let print_addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|_args| Ok(vec![])),
+            func_type: FunctionType {
+                parameters: vec![],
+                return_types: vec![],
+            },
+        });
+        imports.add_function("spectest", "print", print_addr);
+
+        // print_i32(i32) -> void
+        let print_i32_addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|_args| Ok(vec![])),
+            func_type: FunctionType {
+                parameters: vec![ValueType::I32],
+                return_types: vec![],
+            },
+        });
+        imports.add_function("spectest", "print_i32", print_i32_addr);
+
+        // print_i64(i64) -> void
+        let print_i64_addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|_args| Ok(vec![])),
+            func_type: FunctionType {
+                parameters: vec![ValueType::I64],
+                return_types: vec![],
+            },
+        });
+        imports.add_function("spectest", "print_i64", print_i64_addr);
+
+        // print_f32(f32) -> void
+        let print_f32_addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|_args| Ok(vec![])),
+            func_type: FunctionType {
+                parameters: vec![ValueType::F32],
+                return_types: vec![],
+            },
+        });
+        imports.add_function("spectest", "print_f32", print_f32_addr);
+
+        // print_f64(f64) -> void
+        let print_f64_addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|_args| Ok(vec![])),
+            func_type: FunctionType {
+                parameters: vec![ValueType::F64],
+                return_types: vec![],
+            },
+        });
+        imports.add_function("spectest", "print_f64", print_f64_addr);
+
+        // print_i32_f32(i32, f32) -> void
+        let print_i32_f32_addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|_args| Ok(vec![])),
+            func_type: FunctionType {
+                parameters: vec![ValueType::I32, ValueType::F32],
+                return_types: vec![],
+            },
+        });
+        imports.add_function("spectest", "print_i32_f32", print_i32_f32_addr);
+
+        // print_f64_f64(f64, f64) -> void
+        let print_f64_f64_addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|_args| Ok(vec![])),
+            func_type: FunctionType {
+                parameters: vec![ValueType::F64, ValueType::F64],
+                return_types: vec![],
+            },
+        });
+        imports.add_function("spectest", "print_f64_f64", print_f64_f64_addr);
+
         imports
     }
 }

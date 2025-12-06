@@ -288,7 +288,7 @@ where
         result |= value;
         if (b & 0x80) == 0 {
             // Check that unused bits are not set
-            if i + 1 == max_bytes && size % 7 != 0 {
+            if i + 1 == max_bytes && !size.is_multiple_of(7) {
                 let unused_bits = 7 - size % 7;
                 if b >= (1 << (7 - unused_bits)) {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "integer too large"));

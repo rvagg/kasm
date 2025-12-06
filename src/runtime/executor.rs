@@ -8,7 +8,7 @@ use super::{
     ops,
     stack::Stack,
     table::Table,
-    RuntimeError, Value,
+    ExecutionOutcome, ExternalCallRequest, RuntimeError, Value,
 };
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
 use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
@@ -24,8 +24,13 @@ enum ExecutionState {
     Continue,
     /// Enter a nested instruction sequence (block/loop/if body)
     EnterNested(Vec<StructuredInstruction>),
-    /// Call a function
+    /// Call a local function (by local func_idx)
     CallFunction(u32),
+    /// Call an external function (cross-module, by FuncAddr)
+    CallExternalFunction {
+        func_addr: super::FuncAddr,
+        func_type: FunctionType,
+    },
     /// Return from current function
     ReturnFromFunction,
     /// Branch to label at given depth
@@ -52,6 +57,14 @@ enum ContextCompletion {
     ReturnFunction,
 }
 
+/// Result of handling a function call
+enum CallHandled {
+    /// Call was to a local function, context updated
+    LocalCall,
+    /// Call requires external dispatch
+    NeedsExternal(ExternalCallRequest),
+}
+
 /// Executes WebAssembly instructions
 pub struct Executor<'a> {
     module: &'a Module,
@@ -70,6 +83,14 @@ pub struct Executor<'a> {
     functions: Vec<Option<StructuredFunction>>,
     /// Function types for quick access
     function_types: Vec<FunctionType>,
+    /// Maps local function index to global FuncAddr (empty until linked)
+    function_addresses: Vec<super::FuncAddr>,
+    /// Module's global definitions (for initialisation after linking)
+    module_globals: Vec<crate::parser::module::Global>,
+    /// Saved execution contexts when paused for external call
+    saved_contexts: Option<Vec<ExecutionContext>>,
+    /// Expected return types when resuming from external call
+    saved_return_types: Vec<ValueType>,
 }
 
 impl<'a> Executor<'a> {
@@ -134,9 +155,28 @@ impl<'a> Executor<'a> {
             }
         }
 
-        // We can't evaluate init expressions yet because the executor isn't created
-        // Store the module's globals info for later initialisation
+        // Store the module's global definitions for later initialisation
+        // Init expressions can contain ref.func, so they must be evaluated after function_addresses are linked
         let module_globals = module.globals.globals.clone();
+
+        // Create module's own globals with default values for now
+        // They will be initialised with their init expressions after linking
+        for global in &module_globals {
+            let default_value = match global.global_type.value_type {
+                ValueType::I32 => Value::I32(0),
+                ValueType::I64 => Value::I64(0),
+                ValueType::F32 => Value::F32(0.0),
+                ValueType::F64 => Value::F64(0.0),
+                ValueType::FuncRef => Value::FuncRef(None),
+                ValueType::ExternRef => Value::ExternRef(None),
+                ValueType::V128 => {
+                    return Err(RuntimeError::UnimplementedInstruction(
+                        "V128 type not yet supported".to_string(),
+                    ));
+                }
+            };
+            globals.push(default_value);
+        }
 
         // Build function registry - collect all function bodies
         // First, count imported functions (they come first in the index space)
@@ -170,40 +210,18 @@ impl<'a> Executor<'a> {
             memories,
             globals,
             tables,
-            element_segments: Vec::new(), // Will be populated below
+            element_segments: Vec::new(), // Will be populated after linking
             functions,
             function_types,
+            function_addresses: Vec::new(), // Will be populated when instance is linked
+            module_globals,                 // Store for later initialisation
+            saved_contexts: None,           // For resumable execution
+            saved_return_types: Vec::new(), // For resumable execution
         };
 
-        // Now initialise module's own globals with their init expressions
-        // Globals can reference previously defined globals in their init expressions,
-        // so we need to evaluate them in order
-        for global in &module_globals {
-            let initial_value = if global.init.is_empty() {
-                // No init expression, use default
-                match global.global_type.value_type {
-                    ValueType::I32 => Value::I32(0),
-                    ValueType::I64 => Value::I64(0),
-                    ValueType::F32 => Value::F32(0.0),
-                    ValueType::F64 => Value::F64(0.0),
-                    ValueType::FuncRef => Value::FuncRef(None),
-                    ValueType::ExternRef => Value::ExternRef(None),
-                    ValueType::V128 => {
-                        return Err(RuntimeError::UnimplementedInstruction(
-                            "V128 type not yet supported".to_string(),
-                        ));
-                    }
-                }
-            } else {
-                // Evaluate the init expression with the current state of globals
-                // This allows later globals to reference earlier ones
-                executor.evaluate_const_expr(&global.init)?
-            };
-            executor.globals.push(initial_value);
-        }
-
-        // Process element segments
-        executor.initialise_element_segments()?;
+        // Note: Globals and element segments are NOT initialised here because their init
+        // expressions may contain ref.func instructions that require function_addresses to be linked first.
+        // They will be initialised by Instance::link_functions() after linking.
 
         // Initialise memory with data sections
         executor.initialise_data_sections()?;
@@ -211,8 +229,47 @@ impl<'a> Executor<'a> {
         Ok(executor)
     }
 
+    /// Initialise module globals with their init expressions
+    ///
+    /// This must be called after function_addresses have been linked, as global init
+    /// expressions can contain ref.func instructions that need the address mapping.
+    pub(super) fn initialise_globals(&mut self) -> Result<(), RuntimeError> {
+        // Calculate how many imported globals there are
+        let num_imported_globals = self
+            .module
+            .imports
+            .imports
+            .iter()
+            .filter(|import| matches!(import.external_kind, ExternalKind::Global(_)))
+            .count();
+
+        // Initialise module's own globals with their init expressions
+        // Globals can reference previously defined globals in their init expressions,
+        // so we need to evaluate them in order
+        for (idx, global) in self.module_globals.iter().enumerate() {
+            let global_idx = num_imported_globals + idx;
+
+            let initial_value = if global.init.is_empty() {
+                // No init expression, keep the default value that was already set
+                continue;
+            } else {
+                // Evaluate the init expression with the current state of globals
+                // This allows later globals to reference earlier ones
+                self.evaluate_const_expr(&global.init)?
+            };
+
+            // Update the global value
+            self.globals[global_idx] = initial_value;
+        }
+
+        Ok(())
+    }
+
     /// Initialise tables with element segments
-    fn initialise_element_segments(&mut self) -> Result<(), RuntimeError> {
+    ///
+    /// This must be called after function_addresses have been linked, as element
+    /// segments can contain ref.func instructions that need the address mapping.
+    pub(super) fn initialise_element_segments(&mut self) -> Result<(), RuntimeError> {
         use crate::parser::module::ElementMode;
 
         // Process each element segment
@@ -365,7 +422,13 @@ impl<'a> Executor<'a> {
                     if (*func_idx as usize) >= total_functions {
                         return Err(RuntimeError::FunctionIndexOutOfBounds(*func_idx));
                     }
-                    Ok(Value::FuncRef(Some(*func_idx)))
+                    // Map local func_idx to global FuncAddr
+                    let func_addr = self
+                        .function_addresses
+                        .get(*func_idx as usize)
+                        .copied()
+                        .ok_or(RuntimeError::FunctionIndexOutOfBounds(*func_idx))?;
+                    Ok(Value::FuncRef(Some(func_addr)))
                 }
                 _ => Err(RuntimeError::InvalidConstExpr(format!(
                     "Unsupported instruction in constant expression: {:?}",
@@ -519,6 +582,14 @@ impl<'a> Executor<'a> {
             .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))
     }
 
+    /// Link function addresses after instance creation
+    ///
+    /// This is called by Instance::link_functions() to provide the executor
+    /// with the mapping from local function indices to global FuncAddr.
+    pub(super) fn link_function_addresses(&mut self, function_addresses: Vec<super::FuncAddr>) {
+        self.function_addresses = function_addresses;
+    }
+
     /// Get the current label stack (mutable)
     fn current_label_stack_mut(&mut self) -> Result<&mut Vec<Label>, RuntimeError> {
         self.call_stack
@@ -575,18 +646,21 @@ impl<'a> Executor<'a> {
         func: &StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
-    ) -> Result<Vec<Value>, RuntimeError> {
+    ) -> Result<ExecutionOutcome, RuntimeError> {
         self.execute_function_with_locals(func, args, return_types, None)
     }
 
     /// Execute a function with explicit locals information
+    ///
+    /// Returns `ExecutionOutcome::Complete` if the function completes, or
+    /// `ExecutionOutcome::NeedsExternalCall` if a cross-module call is needed.
     pub fn execute_function_with_locals(
         &mut self,
         func: &StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
         locals_info: Option<&Locals>,
-    ) -> Result<Vec<Value>, RuntimeError> {
+    ) -> Result<ExecutionOutcome, RuntimeError> {
         // Initialise locals: parameters first, then local declarations
         let mut locals = args;
 
@@ -594,7 +668,6 @@ impl<'a> Executor<'a> {
         if let Some(locals_info) = locals_info {
             for (count, local_type) in locals_info.iter() {
                 for _ in 0..*count {
-                    // Initialise locals to zero (or null for reference types)
                     let zero_value = match local_type {
                         ValueType::I32 => Value::I32(0),
                         ValueType::I64 => Value::I64(0),
@@ -615,7 +688,7 @@ impl<'a> Executor<'a> {
 
         // Create initial call frame
         let initial_frame = CallFrame {
-            function_idx: 0, // Top-level function
+            function_idx: 0,
             ip: 0,
             locals,
             label_stack: Vec::new(),
@@ -628,18 +701,43 @@ impl<'a> Executor<'a> {
         self.current_label_stack_mut()?.push(func_label);
 
         // Create initial execution context
-        let mut contexts = vec![ExecutionContext {
+        let contexts = vec![ExecutionContext {
             instructions: func.body.clone(),
             position: 0,
             on_complete: ContextCompletion::ReturnFunction,
         }];
 
-        // Main execution loop
+        self.run_execution_loop(contexts, return_types.to_vec())
+    }
+
+    /// Resume execution after an external call completes
+    ///
+    /// This method is called when a cross-module call returns. It pushes the
+    /// results onto the operand stack and continues execution.
+    pub fn resume_with_results(&mut self, results: Vec<Value>) -> Result<ExecutionOutcome, RuntimeError> {
+        // Restore saved contexts
+        let contexts = self.saved_contexts.take().ok_or(RuntimeError::InvalidFunctionType)?;
+        let return_types = std::mem::take(&mut self.saved_return_types);
+
+        // Push results onto the operand stack
+        for value in results {
+            self.stack.push(value);
+        }
+
+        self.run_execution_loop(contexts, return_types)
+    }
+
+    /// Main execution loop shared by execute_function_with_locals and resume_with_results
+    fn run_execution_loop(
+        &mut self,
+        mut contexts: Vec<ExecutionContext>,
+        return_types: Vec<ValueType>,
+    ) -> Result<ExecutionOutcome, RuntimeError> {
         'execution: loop {
             // Get current context
             let context = match contexts.last_mut() {
                 Some(ctx) => ctx,
-                None => break 'execution, // No more contexts, we're done
+                None => break 'execution,
             };
 
             // Check if we've reached end of current context
@@ -652,14 +750,10 @@ impl<'a> Executor<'a> {
                         self.current_label_stack_mut()?.pop();
                     }
                     ContextCompletion::ReturnFunction => {
-                        // Function is complete - pop its label and frame
                         if self.call_stack.len() > 1 {
-                            // We're returning from a called function
                             self.current_label_stack_mut()?.pop();
                             self.call_stack.pop();
-                            // Continue with the caller
                         } else {
-                            // We're returning from the main function
                             break 'execution;
                         }
                     }
@@ -671,14 +765,13 @@ impl<'a> Executor<'a> {
             let instruction = context.instructions[context.position].clone();
             let state = self.execute_instruction_state_machine(&instruction)?;
 
-            // Handle execution state
             match state {
                 ExecutionState::Continue => {
                     context.position += 1;
                 }
 
                 ExecutionState::EnterNested(instructions) => {
-                    context.position += 1; // Move past current instruction
+                    context.position += 1;
                     contexts.push(ExecutionContext {
                         instructions,
                         position: 0,
@@ -687,129 +780,174 @@ impl<'a> Executor<'a> {
                 }
 
                 ExecutionState::CallFunction(func_idx) => {
-                    context.position += 1; // Move past call instruction
-
-                    // Prepare the call
-
-                    // Calculate the number of imported functions
-                    let num_imported_functions = self.module.imports.function_count();
-
-                    // Check if this is an imported function (which we can't execute)
-                    if (func_idx as usize) < num_imported_functions {
-                        return Err(RuntimeError::UnimplementedInstruction(format!(
-                            "Cannot execute imported function at index {func_idx}"
-                        )));
-                    }
-
-                    // Get the function declaration to find its type index
-                    let func_decl_idx = func_idx as usize - num_imported_functions;
-                    let func = self
-                        .module
-                        .functions
-                        .get(func_decl_idx as u32)
-                        .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
-
-                    // Get function type using the function's type index
-                    let func_type = self
-                        .function_types
-                        .get(func.ftype_index as usize)
-                        .ok_or(RuntimeError::InvalidFunctionType)?
-                        .clone();
-
-                    // Check call stack depth
-                    if self.call_stack.len() >= MAX_CALL_DEPTH {
-                        return Err(RuntimeError::CallStackOverflow);
-                    }
-
-                    // Pop arguments from the operand stack (in reverse order)
-                    let mut args = Vec::new();
-                    for param_type in func_type.parameters.iter().rev() {
-                        let value = self.stack.pop_typed(*param_type)?;
-                        args.push(value);
-                    }
-                    args.reverse();
-
-                    // Push new call frame
-                    self.push_call_frame(func_idx, args, func_type.return_types.len())?;
-
-                    // Get the function body
-                    let function_opt = self
-                        .functions
-                        .get(func_idx as usize)
-                        .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
-
-                    let body = match function_opt {
-                        Some(body) => body.clone(),
-                        None => {
-                            return Err(RuntimeError::UnimplementedInstruction(format!(
-                                "Cannot execute imported function at index {func_idx}"
-                            )));
+                    context.position += 1;
+                    match self.handle_call_function(func_idx, &mut contexts)? {
+                        CallHandled::LocalCall => {}
+                        CallHandled::NeedsExternal(request) => {
+                            self.saved_contexts = Some(contexts);
+                            self.saved_return_types = return_types;
+                            return Ok(ExecutionOutcome::NeedsExternalCall(request));
                         }
-                    };
+                    }
+                }
 
-                    // Push function label
-                    let func_label = self.create_function_label(&func_type.return_types);
-                    self.current_label_stack_mut()?.push(func_label);
-
-                    // Push new context for the called function
-                    contexts.push(ExecutionContext {
-                        instructions: body.body.clone(),
-                        position: 0,
-                        on_complete: ContextCompletion::ReturnFunction,
-                    });
+                ExecutionState::CallExternalFunction { func_addr, func_type } => {
+                    context.position += 1;
+                    let args = self.pop_args_for_call(&func_type)?;
+                    self.saved_contexts = Some(contexts);
+                    self.saved_return_types = return_types;
+                    return Ok(ExecutionOutcome::NeedsExternalCall(ExternalCallRequest {
+                        func_addr,
+                        args,
+                        return_types: func_type.return_types.clone(),
+                        func_type,
+                    }));
                 }
 
                 ExecutionState::ReturnFromFunction => {
-                    // Find and pop all contexts until we reach a function boundary
-                    let mut found_function_boundary = false;
-
-                    while !contexts.is_empty() {
-                        let ctx = contexts.last().unwrap();
-                        let is_function = matches!(ctx.on_complete, ContextCompletion::ReturnFunction);
-                        contexts.pop();
-
-                        if is_function {
-                            found_function_boundary = true;
-                            // Also pop any labels in the current frame
-                            if !self.current_label_stack()?.is_empty() {
-                                self.current_label_stack_mut()?.pop();
-                            }
-                            break;
-                        } else {
-                            // Pop the label for this non-function context
-                            if !self.current_label_stack()?.is_empty() {
-                                self.current_label_stack_mut()?.pop();
-                            }
-                        }
-                    }
-
-                    // If we didn't find a function boundary, we're returning from the main function
-                    if !found_function_boundary && contexts.is_empty() {
+                    if self.handle_return_from_function(&mut contexts)? {
                         break 'execution;
                     }
                 }
 
                 ExecutionState::BranchTo(depth) => {
-                    // Handle branching by unwinding contexts
                     self.handle_branch(&mut contexts, depth)?;
                 }
             }
         }
 
-        // Pop the function label
+        // Cleanup and collect results
         self.current_label_stack_mut()?.pop();
-
-        // Pop the initial frame
         self.call_stack.pop();
 
-        // Collect return values
         let mut results = Vec::new();
         for return_type in return_types.iter().rev() {
             let value = self.stack.pop_typed(*return_type)?;
             results.push(value);
         }
         results.reverse();
-        Ok(results)
+        Ok(ExecutionOutcome::Complete(results))
+    }
+
+    /// Handle a local or imported function call
+    ///
+    /// Returns `CallHandled::NeedsExternal` for imported functions,
+    /// or `CallHandled::LocalCall` after setting up local function context.
+    fn handle_call_function(
+        &mut self,
+        func_idx: u32,
+        contexts: &mut Vec<ExecutionContext>,
+    ) -> Result<CallHandled, RuntimeError> {
+        let num_imported_functions = self.module.imports.function_count();
+
+        // Check if this is an imported function (needs external call)
+        if (func_idx as usize) < num_imported_functions {
+            let import = &self.module.imports.imports[func_idx as usize];
+            let type_idx = match &import.external_kind {
+                ExternalKind::Function(idx) => *idx,
+                _ => return Err(RuntimeError::InvalidFunctionType),
+            };
+            let func_type = self
+                .function_types
+                .get(type_idx as usize)
+                .ok_or(RuntimeError::InvalidFunctionType)?
+                .clone();
+
+            let args = self.pop_args_for_call(&func_type)?;
+
+            let func_addr = self
+                .function_addresses
+                .get(func_idx as usize)
+                .copied()
+                .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+            return Ok(CallHandled::NeedsExternal(ExternalCallRequest {
+                func_addr,
+                args,
+                return_types: func_type.return_types.clone(),
+                func_type,
+            }));
+        }
+
+        // Local function call
+        let func_decl_idx = func_idx as usize - num_imported_functions;
+        let func = self
+            .module
+            .functions
+            .get(func_decl_idx as u32)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+        let func_type = self
+            .function_types
+            .get(func.ftype_index as usize)
+            .ok_or(RuntimeError::InvalidFunctionType)?
+            .clone();
+
+        if self.call_stack.len() >= MAX_CALL_DEPTH {
+            return Err(RuntimeError::CallStackOverflow);
+        }
+
+        let args = self.pop_args_for_call(&func_type)?;
+        self.push_call_frame(func_idx, args, func_type.return_types.len())?;
+
+        let function_opt = self
+            .functions
+            .get(func_idx as usize)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+
+        let body = match function_opt {
+            Some(body) => body.clone(),
+            None => {
+                return Err(RuntimeError::UnimplementedInstruction(format!(
+                    "Function body not found for local function at index {func_idx}"
+                )));
+            }
+        };
+
+        let func_label = self.create_function_label(&func_type.return_types);
+        self.current_label_stack_mut()?.push(func_label);
+
+        contexts.push(ExecutionContext {
+            instructions: body.body.clone(),
+            position: 0,
+            on_complete: ContextCompletion::ReturnFunction,
+        });
+
+        Ok(CallHandled::LocalCall)
+    }
+
+    /// Pop arguments from stack for a function call
+    fn pop_args_for_call(&mut self, func_type: &FunctionType) -> Result<Vec<Value>, RuntimeError> {
+        let mut args = Vec::new();
+        for param_type in func_type.parameters.iter().rev() {
+            let value = self.stack.pop_typed(*param_type)?;
+            args.push(value);
+        }
+        args.reverse();
+        Ok(args)
+    }
+
+    /// Handle return from function, returns true if execution should end
+    fn handle_return_from_function(&mut self, contexts: &mut Vec<ExecutionContext>) -> Result<bool, RuntimeError> {
+        let mut found_function_boundary = false;
+
+        while !contexts.is_empty() {
+            let ctx = contexts.last().unwrap();
+            let is_function = matches!(ctx.on_complete, ContextCompletion::ReturnFunction);
+            contexts.pop();
+
+            if is_function {
+                found_function_boundary = true;
+                if !self.current_label_stack()?.is_empty() {
+                    self.current_label_stack_mut()?.pop();
+                }
+                break;
+            } else if !self.current_label_stack()?.is_empty() {
+                self.current_label_stack_mut()?.pop();
+            }
+        }
+
+        Ok(!found_function_boundary && contexts.is_empty())
     }
 
     /// Execute a single instruction and return execution state (for state machine)
@@ -839,9 +977,9 @@ impl<'a> Executor<'a> {
                     // Get function reference from table
                     let func_ref = table.get(table_elem_idx)?;
 
-                    // Extract function index from reference
-                    let func_idx = match func_ref {
-                        Value::FuncRef(Some(idx)) => idx,
+                    // Extract function address from reference
+                    let func_addr = match func_ref {
+                        Value::FuncRef(Some(addr)) => addr,
                         Value::FuncRef(None) => {
                             return Err(RuntimeError::UndefinedElement(table_elem_idx));
                         }
@@ -857,21 +995,34 @@ impl<'a> Executor<'a> {
                     let expected_type = self
                         .function_types
                         .get(*type_idx as usize)
-                        .ok_or(RuntimeError::InvalidFunctionType)?;
+                        .ok_or(RuntimeError::InvalidFunctionType)?
+                        .clone();
 
-                    // Get actual function type
-                    let actual_type = self.get_function_type(func_idx)?;
+                    // Try to find FuncAddr in local function_addresses
+                    let local_func_idx = self.function_addresses.iter().position(|addr| *addr == func_addr);
 
-                    // CRITICAL: Type check must match exactly for security
-                    if expected_type != actual_type {
-                        return Err(RuntimeError::IndirectCallTypeMismatch {
-                            expected: format!("{:?}", expected_type),
-                            actual: format!("{:?}", actual_type),
-                        });
+                    if let Some(func_idx) = local_func_idx {
+                        // Local call - do type checking here
+                        let actual_type = self.get_function_type(func_idx as u32)?;
+
+                        // CRITICAL: Type check must match exactly for security
+                        if &expected_type != actual_type {
+                            return Err(RuntimeError::IndirectCallTypeMismatch {
+                                expected: format!("{:?}", expected_type),
+                                actual: format!("{:?}", actual_type),
+                            });
+                        }
+
+                        // Type check passed - proceed with local call
+                        return Ok(ExecutionState::CallFunction(func_idx as u32));
                     }
 
-                    // Type check passed - proceed with call
-                    return Ok(ExecutionState::CallFunction(func_idx));
+                    // Cross-module call - return external call request
+                    // Type checking will be done by the Store using the expected_type
+                    return Ok(ExecutionState::CallExternalFunction {
+                        func_addr,
+                        func_type: expected_type,
+                    });
                 }
 
                 // Execute as normal and convert BlockEnd to ExecutionState
@@ -1191,7 +1342,13 @@ impl<'a> Executor<'a> {
                 if *func_idx as usize >= total_functions {
                     return Err(RuntimeError::FunctionIndexOutOfBounds(*func_idx));
                 }
-                self.stack.push(Value::FuncRef(Some(*func_idx)));
+                // Map local func_idx to global FuncAddr
+                let func_addr = self
+                    .function_addresses
+                    .get(*func_idx as usize)
+                    .copied()
+                    .ok_or(RuntimeError::FunctionIndexOutOfBounds(*func_idx))?;
+                self.stack.push(Value::FuncRef(Some(func_addr)));
                 Ok(BlockEnd::Normal)
             }
 
@@ -2383,6 +2540,16 @@ mod tests {
     mod structured_execution {
         use super::*;
 
+        /// Helper to extract results from ExecutionOutcome for tests
+        fn unwrap_complete(outcome: super::super::ExecutionOutcome) -> Vec<Value> {
+            match outcome {
+                super::super::ExecutionOutcome::Complete(results) => results,
+                super::super::ExecutionOutcome::NeedsExternalCall(_) => {
+                    panic!("Test unexpectedly needs external call");
+                }
+            }
+        }
+
         #[test]
         fn test_structured_block() {
             // Test a simple block using structured execution
@@ -2401,11 +2568,11 @@ mod tests {
             // Execute using structured executor
             let module = Module::new("test");
             let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
-            let result = executor
+            let outcome = executor
                 .execute_function(&func, vec![], &[ValueType::I32])
                 .expect("Execution should succeed");
 
-            assert_eq!(result, vec![Value::I32(42)]);
+            assert_eq!(unwrap_complete(outcome), vec![Value::I32(42)]);
         }
 
         #[test]
@@ -2429,11 +2596,11 @@ mod tests {
             // Execute using structured executor
             let module = Module::new("test");
             let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
-            let result = executor
+            let outcome = executor
                 .execute_function(&func, vec![], &[ValueType::I32])
                 .expect("Execution should succeed");
 
-            assert_eq!(result, vec![Value::I32(10)]); // Should take then branch
+            assert_eq!(unwrap_complete(outcome), vec![Value::I32(10)]); // Should take then branch
         }
 
         #[test]
@@ -2471,7 +2638,7 @@ mod tests {
         use crate::parser::module::{
             Export, ExportIndex, ExternalKind, Function, FunctionBody, Import, Locals, SectionPosition,
         };
-        use crate::runtime::Instance;
+        use crate::runtime::{FunctionInstance, ImportObject, Store};
 
         #[test]
         fn test_call_with_imports() {
@@ -2539,9 +2706,23 @@ mod tests {
                 index: ExportIndex::Function(2), // Function index 2
             });
 
-            // Create instance and test
-            let mut instance = Instance::new(&module, None).expect("Instance creation should succeed");
-            let result = instance.invoke("main", vec![]).expect("Function call should succeed");
+            // Create store and import object with the required import
+            let mut store = Store::new();
+            let mut imports = ImportObject::new();
+
+            // Add the imported env.log function as a host function
+            let log_addr = store.allocate_function(FunctionInstance::Host {
+                func: Box::new(|_args| Ok(vec![])), // No-op log function
+                func_type: module.types.types[0].clone(),
+            });
+            imports.add_function("env", "log", log_addr);
+
+            let instance_id = store
+                .create_instance(&module, Some(&imports))
+                .expect("Instance creation should succeed");
+            let result = store
+                .invoke_export(instance_id, "main", vec![])
+                .expect("Function call should succeed");
 
             assert_eq!(result, vec![Value::I32(42)], "Main should call helper and return 42");
         }
@@ -2592,17 +2773,21 @@ mod tests {
                 index: ExportIndex::Function(0),
             });
 
-            let mut instance = Instance::new(&module, None).expect("Instance creation should succeed");
+            // Create store and instance
+            let mut store = Store::new();
+            let instance_id = store
+                .create_instance(&module, None)
+                .expect("Instance creation should succeed");
 
             // Test factorial(5) = 120
-            let result = instance
-                .invoke("factorial", vec![Value::I32(5)])
+            let result = store
+                .invoke_export(instance_id, "factorial", vec![Value::I32(5)])
                 .expect("Factorial should succeed");
             assert_eq!(result, vec![Value::I32(120)]);
 
             // Test factorial(0) = 1
-            let result = instance
-                .invoke("factorial", vec![Value::I32(0)])
+            let result = store
+                .invoke_export(instance_id, "factorial", vec![Value::I32(0)])
                 .expect("Factorial should succeed");
             assert_eq!(result, vec![Value::I32(1)]);
         }

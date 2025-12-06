@@ -14,9 +14,11 @@ src/parser/         # Binary parser, validation
   structured.rs     # Control flow tree builder
 
 src/runtime/        # Interpreter
+  store.rs          # Store-based execution, cross-module function calls
   executor.rs       # State machine execution (no recursion)
   instance.rs       # Module instantiation
-  imports.rs        # Import resolution (globals)
+  imports.rs        # Import resolution (globals, functions)
+  table.rs          # Table instances for indirect calls
   ops/              # Instruction implementations (numeric, memory, control, etc.)
   memory.rs         # Linear memory (64KB pages, 4GB max)
   stack.rs          # Operand stack
@@ -24,10 +26,13 @@ src/runtime/        # Interpreter
 ```
 
 ## Status
-- 191 instructions implemented (see src/runtime/implemented.rs)
+- 191+ instructions implemented (see src/runtime/implemented.rs)
 - 86/86 core spec tests pass (tests/spec/*.json)
+- Function imports: supported via Store and FuncAddr
 - Global imports: supported via ImportObject
-- Missing: function/memory/table imports, tables, call_indirect, SIMD
+- Tables and call_indirect: fully implemented
+- Cross-module function calls: supported via Store-based architecture
+- Missing: memory/table imports, SIMD
 
 ## Development Workflow
 ```bash
@@ -52,16 +57,19 @@ cargo test -- --nocapture                              # Show println output
    - Skips tests with unimplemented instructions (keeps tests green)
    - Runs assert_return/assert_trap/assert_invalid assertions
    - Creates ImportObject with spectest globals (global_i32=666, etc.)
+   - Uses Store for cross-module function execution
 3. **src/bin/test_coverage.rs** - Shows which instructions block most tests
 
 ```bash
-cargo run --bin test_coverage  # See which instructions enable most tests
+cargo run --bin test-coverage  # See which instructions enable most tests
 ```
 
 ## Key Files
-- src/runtime/executor.rs - State machine interpreter, handles globals/locals/memory
-- src/runtime/instance.rs - Module instantiation, persistent executor state
-- src/runtime/imports.rs - Import resolution (currently globals only)
+- src/runtime/store.rs - Store, FuncAddr, cross-module execution
+- src/runtime/executor.rs - State machine interpreter
+- src/runtime/instance.rs - Module instantiation
+- src/runtime/imports.rs - Import resolution (globals, functions)
+- src/runtime/table.rs - Table instances
 - src/runtime/ops/*.rs - Instruction implementations by category
 - src/runtime/implemented.rs - Registry of implemented instructions
 - tests/parser_tests.rs - Spec test harness with spectest imports
@@ -81,4 +89,4 @@ cargo run --bin test_coverage  # See which instructions enable most tests
 ## Performance Notes
 - Structured execution: O(1) branches but slower startup
 - Debug builds much slower than release
-- Use streaming parser for large modules
+- State machine executor: unlimited call depth, no Rust stack overflow

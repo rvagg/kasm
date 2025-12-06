@@ -649,8 +649,18 @@ mod tests {
     use crate::runtime::executor::Executor;
     use crate::runtime::memory::PAGE_SIZE;
     use crate::runtime::test_utils::test::{make_instruction, ExecutorTest};
-    use crate::runtime::{RuntimeError, Value};
+    use crate::runtime::{ExecutionOutcome, RuntimeError, Value};
     use InstructionKind::*; // Allow shorthand names
+
+    /// Helper to unwrap ExecutionOutcome::Complete for tests
+    fn unwrap_complete(outcome: ExecutionOutcome) -> Vec<Value> {
+        match outcome {
+            ExecutionOutcome::Complete(results) => results,
+            ExecutionOutcome::NeedsExternalCall(_) => {
+                panic!("Memory test unexpectedly needs external call");
+            }
+        }
+    }
 
     // Helper function for tests that need manual module setup
     fn execute_memory_test(
@@ -662,7 +672,13 @@ mod tests {
         let structured_func = StructureBuilder::build_function(&instructions, 0, return_types.to_vec())
             .expect("Structure building should succeed");
         let mut executor = Executor::new(module, None).expect("Executor creation should succeed");
-        executor.execute_function(&structured_func, args, return_types)
+        let outcome = executor.execute_function(&structured_func, args, return_types)?;
+        match outcome {
+            crate::runtime::ExecutionOutcome::Complete(results) => Ok(results),
+            crate::runtime::ExecutionOutcome::NeedsExternalCall(_) => {
+                panic!("Memory test unexpectedly needs external call");
+            }
+        }
     }
 
     #[test]
@@ -738,9 +754,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32, ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor
-            .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32])
-            .unwrap();
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32])
+                .unwrap(),
+        );
 
         // Should return old size (1) and new size (3)
         assert_eq!(result, vec![Value::I32(1), Value::I32(3)]);
@@ -762,7 +780,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
 
         // Should return -1 (failure)
         assert_eq!(result, vec![Value::I32(-1)]);
@@ -784,7 +802,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
 
         // Should return -1 (failure)
         assert_eq!(result, vec![Value::I32(-1)]);
@@ -806,7 +824,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
 
         // Should return current size (2)
         assert_eq!(result, vec![Value::I32(2)]);
@@ -844,19 +862,21 @@ mod tests {
             ],
         )
         .expect("Structure building should succeed");
-        let result = executor
-            .execute_function(
-                &func,
-                vec![],
-                &[
-                    ValueType::I32,
-                    ValueType::I32,
-                    ValueType::I32,
-                    ValueType::I32,
-                    ValueType::I32,
-                ],
-            )
-            .unwrap();
+        let result = unwrap_complete(
+            executor
+                .execute_function(
+                    &func,
+                    vec![],
+                    &[
+                        ValueType::I32,
+                        ValueType::I32,
+                        ValueType::I32,
+                        ValueType::I32,
+                        ValueType::I32,
+                    ],
+                )
+                .unwrap(),
+        );
 
         // Results: initial size (1), grow result (1), grow result (2),
         // final size (4), failed grow (-1)
@@ -895,7 +915,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
 
         assert_eq!(result, vec![Value::I32(42)]);
     }
@@ -923,7 +943,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
 
         assert_eq!(result, vec![Value::I32(0x12345678)]);
     }
@@ -970,9 +990,11 @@ mod tests {
         let func =
             StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32, ValueType::I32, ValueType::I32])
                 .expect("Structure building should succeed");
-        let result = executor
-            .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32, ValueType::I32])
-            .unwrap();
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32, ValueType::I32])
+                .unwrap(),
+        );
 
         assert_eq!(result, vec![Value::I32(100), Value::I32(200), Value::I32(300)]);
     }
@@ -999,7 +1021,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
         assert_eq!(result, vec![Value::I32(0)]); // Memory is zero-initialised
 
         // Try to load from out of bounds address
@@ -1043,7 +1065,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap();
+        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
         assert_eq!(result, vec![Value::I32(1)]);
 
         // Try to store at out of bounds address
@@ -1168,9 +1190,11 @@ mod tests {
         let load_func = StructureBuilder::build_function(&load_instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
 
-        let result = executor
-            .execute_function(&load_func, vec![], &[ValueType::I32])
-            .unwrap();
+        let result = unwrap_complete(
+            executor
+                .execute_function(&load_func, vec![], &[ValueType::I32])
+                .unwrap(),
+        );
 
         assert_eq!(result, vec![Value::I32(42)]);
     }

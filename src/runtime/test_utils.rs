@@ -117,10 +117,17 @@ pub mod test {
                         .expect("Setting global should succeed");
                 }
             }
-            let results = executor
+            let outcome = executor
                 .execute_function(&structured_func, self.args, &self.return_types)
                 .expect("Execution should succeed");
-            assert_eq!(results, expected);
+            match outcome {
+                crate::runtime::ExecutionOutcome::Complete(results) => {
+                    assert_eq!(results, expected);
+                }
+                crate::runtime::ExecutionOutcome::NeedsExternalCall(_) => {
+                    panic!("Test unexpectedly needs external call");
+                }
+            }
         }
 
         pub fn expect_error(mut self, error_contains: &str) {
