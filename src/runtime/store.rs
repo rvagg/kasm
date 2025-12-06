@@ -44,8 +44,9 @@
 //! The call stack enables arbitrarily deep cross-module chains (A → B → C → ...)
 //! where each module can perform computation before/after its external calls.
 
-use super::{ExecutionOutcome, Instance, RuntimeError, Value};
+use super::{ExecutionOutcome, Instance, Memory, RuntimeError, Table, Value};
 use crate::parser::module::{ExternalKind, FunctionType};
+use std::sync::{Arc, Mutex};
 
 /// Type alias for host function implementations
 type HostFunc = Box<dyn Fn(Vec<Value>) -> Result<Vec<Value>, RuntimeError>>;
@@ -56,6 +57,32 @@ type HostFunc = Box<dyn Fn(Vec<Value>) -> Result<Vec<Value>, RuntimeError>>;
 /// across module boundaries, enabling proper funcref semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FuncAddr(pub usize);
+
+/// Global memory address - index into the Store's memory registry
+///
+/// MemoryAddr provides stable, globally-unique identifiers for memory instances
+/// that can be shared across module boundaries for memory imports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MemoryAddr(pub usize);
+
+/// Global table address - index into the Store's table registry
+///
+/// TableAddr provides stable, globally-unique identifiers for table instances
+/// that can be shared across module boundaries for table imports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TableAddr(pub usize);
+
+/// Shared memory instance for cross-module access
+///
+/// Uses Arc<Mutex<>> to enable safe sharing between modules while maintaining
+/// Rust's ownership rules. The Mutex ensures safe concurrent access if needed.
+pub type SharedMemory = Arc<Mutex<Memory>>;
+
+/// Shared table instance for cross-module access
+///
+/// Uses Arc<Mutex<>> to enable safe sharing between modules while maintaining
+/// Rust's ownership rules. The Mutex ensures safe concurrent access if needed.
+pub type SharedTable = Arc<Mutex<Table>>;
 
 /// A function instance in the Store
 ///
@@ -91,6 +118,14 @@ pub struct Store<'a> {
 
     /// All module instances owned by this store
     instances: Vec<Instance<'a>>,
+
+    /// All memory instances, indexed by MemoryAddr
+    /// Shared via Arc<Mutex<>> to enable cross-module memory imports
+    memories: Vec<SharedMemory>,
+
+    /// All table instances, indexed by TableAddr
+    /// Shared via Arc<Mutex<>> to enable cross-module table imports
+    tables: Vec<SharedTable>,
 }
 
 impl<'a> Store<'a> {
@@ -99,6 +134,8 @@ impl<'a> Store<'a> {
         Store {
             functions: Vec::new(),
             instances: Vec::new(),
+            memories: Vec::new(),
+            tables: Vec::new(),
         }
     }
 
@@ -111,12 +148,48 @@ impl<'a> Store<'a> {
         addr
     }
 
+    /// Allocate a new memory address and register a memory instance
+    ///
+    /// The memory is wrapped in Arc<Mutex<>> for shared access across modules.
+    /// Returns the MemoryAddr that can be used to reference this memory.
+    pub fn allocate_memory(&mut self, memory: Memory) -> MemoryAddr {
+        let addr = MemoryAddr(self.memories.len());
+        self.memories.push(Arc::new(Mutex::new(memory)));
+        addr
+    }
+
+    /// Allocate a new table address and register a table instance
+    ///
+    /// The table is wrapped in Arc<Mutex<>> for shared access across modules.
+    /// Returns the TableAddr that can be used to reference this table.
+    pub fn allocate_table(&mut self, table: Table) -> TableAddr {
+        let addr = TableAddr(self.tables.len());
+        self.tables.push(Arc::new(Mutex::new(table)));
+        addr
+    }
+
+    /// Get a shared reference to a memory by its address
+    ///
+    /// Returns None if the address is invalid.
+    pub fn get_memory(&self, addr: MemoryAddr) -> Option<&SharedMemory> {
+        self.memories.get(addr.0)
+    }
+
+    /// Get a shared reference to a table by its address
+    ///
+    /// Returns None if the address is invalid.
+    pub fn get_table(&self, addr: TableAddr) -> Option<&SharedTable> {
+        self.tables.get(addr.0)
+    }
+
     /// Create and register a new instance in the Store
     ///
     /// This handles the full lifecycle:
-    /// 1. Creates the Instance
-    /// 2. Allocates FuncAddr for all its functions
-    /// 3. Adds it to the Store
+    /// 1. Resolves memory/table imports from ImportObject
+    /// 2. Creates local memories/tables and adds them to Store
+    /// 3. Creates the Instance with shared memories/tables
+    /// 4. Allocates FuncAddr for all its functions
+    /// 5. Links and initialises the instance
     ///
     /// Returns the instance ID
     pub fn create_instance(
@@ -126,10 +199,94 @@ impl<'a> Store<'a> {
     ) -> Result<usize, RuntimeError> {
         let instance_id = self.instances.len();
 
-        // Create instance (without function addresses yet)
-        let mut instance = Instance::new_unlinked(module, imports)?;
+        // === Phase 1: Resolve memories ===
+        let mut memories: Vec<SharedMemory> = Vec::new();
+        let mut memory_addresses: Vec<MemoryAddr> = Vec::new();
 
-        // Allocate function addresses
+        // Check if module has memory imports
+        let has_memory_import = module
+            .imports
+            .imports
+            .iter()
+            .any(|imp| matches!(imp.external_kind, ExternalKind::Memory(_)));
+
+        if has_memory_import {
+            // Resolve imported memory
+            for import in &module.imports.imports {
+                if let ExternalKind::Memory(_limits) = &import.external_kind {
+                    if let Some(import_obj) = imports {
+                        let mem_addr = import_obj.get_memory(&import.module, &import.name)?;
+                        let shared_mem = self
+                            .get_memory(mem_addr)
+                            .ok_or_else(|| {
+                                RuntimeError::MemoryError(format!(
+                                    "Memory import {}.{} not found in store",
+                                    import.module, import.name
+                                ))
+                            })?
+                            .clone();
+                        memories.push(shared_mem);
+                        memory_addresses.push(mem_addr);
+                    } else {
+                        return Err(RuntimeError::MemoryError(format!(
+                            "Memory import {}.{} not found",
+                            import.module, import.name
+                        )));
+                    }
+                }
+            }
+        } else {
+            // Create local memories
+            for mem_def in &module.memory.memory {
+                let memory = Memory::new(mem_def.limits.min, mem_def.limits.max)?;
+                let addr = self.allocate_memory(memory);
+                memories.push(self.get_memory(addr).unwrap().clone());
+                memory_addresses.push(addr);
+            }
+        }
+
+        // === Phase 2: Resolve tables ===
+        let mut tables: Vec<SharedTable> = Vec::new();
+        let mut table_addresses: Vec<TableAddr> = Vec::new();
+
+        // Imported tables (they come first in the index space)
+        for import in &module.imports.imports {
+            if let ExternalKind::Table(_table_type) = &import.external_kind {
+                if let Some(import_obj) = imports {
+                    let table_addr = import_obj.get_table(&import.module, &import.name)?;
+                    let shared_table = self
+                        .get_table(table_addr)
+                        .ok_or_else(|| {
+                            RuntimeError::MemoryError(format!(
+                                "Table import {}.{} not found in store",
+                                import.module, import.name
+                            ))
+                        })?
+                        .clone();
+                    tables.push(shared_table);
+                    table_addresses.push(table_addr);
+                } else {
+                    return Err(RuntimeError::MemoryError(format!(
+                        "Table import {}.{} not found",
+                        import.module, import.name
+                    )));
+                }
+            }
+        }
+
+        // Local tables
+        for table_type in &module.table.tables {
+            let table = Table::new(table_type.ref_type, table_type.limits)?;
+            let addr = self.allocate_table(table);
+            tables.push(self.get_table(addr).unwrap().clone());
+            table_addresses.push(addr);
+        }
+
+        // === Phase 3: Create instance with shared memories/tables ===
+        let mut instance =
+            Instance::new_unlinked(module, imports, memories, tables, memory_addresses, table_addresses)?;
+
+        // === Phase 4: Allocate function addresses ===
         let num_imported_funcs = module.imports.function_count();
         let mut function_addresses = Vec::new();
 
@@ -183,6 +340,7 @@ impl<'a> Store<'a> {
             function_addresses.push(addr);
         }
 
+        // === Phase 5: Link and initialise ===
         // Link the instance with its function addresses
         // This also initialises element segments now that addresses are available
         instance.link_functions(function_addresses)?;
@@ -911,5 +1069,164 @@ mod tests {
             .expect("Wasm-Host-Wasm chain should succeed");
 
         assert_eq!(result, vec![Value::I32(777)]);
+    }
+
+    // === Memory/Table allocation tests ===
+
+    #[test]
+    fn test_memory_allocation() {
+        let mut store = Store::new();
+
+        // Allocate a memory (1 page initial, 10 pages max)
+        let memory = Memory::new(1, Some(10)).unwrap();
+        let addr = store.allocate_memory(memory);
+
+        assert_eq!(addr, MemoryAddr(0));
+
+        // Verify we can retrieve it
+        let shared_mem = store.get_memory(addr);
+        assert!(shared_mem.is_some());
+
+        // Verify the memory properties through the mutex
+        let mem_guard = shared_mem.unwrap().lock().unwrap();
+        assert_eq!(mem_guard.size(), 1);
+    }
+
+    #[test]
+    fn test_table_allocation() {
+        use crate::parser::module::{Limits, RefType};
+
+        let mut store = Store::new();
+
+        // Allocate a table
+        let table = Table::new(RefType::FuncRef, Limits { min: 10, max: Some(20) }).unwrap();
+        let addr = store.allocate_table(table);
+
+        assert_eq!(addr, TableAddr(0));
+
+        // Verify we can retrieve it
+        let shared_table = store.get_table(addr);
+        assert!(shared_table.is_some());
+
+        // Verify the table properties through the mutex
+        let table_guard = shared_table.unwrap().lock().unwrap();
+        assert_eq!(table_guard.size(), 10);
+    }
+
+    #[test]
+    fn test_multiple_memory_allocations() {
+        let mut store = Store::new();
+
+        // Allocate multiple memories
+        let mem1 = Memory::new(1, Some(5)).unwrap();
+        let mem2 = Memory::new(2, Some(10)).unwrap();
+        let mem3 = Memory::new(3, None).unwrap();
+
+        let addr1 = store.allocate_memory(mem1);
+        let addr2 = store.allocate_memory(mem2);
+        let addr3 = store.allocate_memory(mem3);
+
+        // Each gets a unique address
+        assert_eq!(addr1, MemoryAddr(0));
+        assert_eq!(addr2, MemoryAddr(1));
+        assert_eq!(addr3, MemoryAddr(2));
+
+        // All are retrievable with correct properties
+        assert_eq!(store.get_memory(addr1).unwrap().lock().unwrap().size(), 1);
+        assert_eq!(store.get_memory(addr2).unwrap().lock().unwrap().size(), 2);
+        assert_eq!(store.get_memory(addr3).unwrap().lock().unwrap().size(), 3);
+    }
+
+    #[test]
+    fn test_multiple_table_allocations() {
+        use crate::parser::module::{Limits, RefType};
+
+        let mut store = Store::new();
+
+        // Allocate multiple tables
+        let table1 = Table::new(RefType::FuncRef, Limits { min: 5, max: Some(10) }).unwrap();
+        let table2 = Table::new(RefType::ExternRef, Limits { min: 8, max: None }).unwrap();
+
+        let addr1 = store.allocate_table(table1);
+        let addr2 = store.allocate_table(table2);
+
+        // Each gets a unique address
+        assert_eq!(addr1, TableAddr(0));
+        assert_eq!(addr2, TableAddr(1));
+
+        // All are retrievable with correct properties
+        assert_eq!(store.get_table(addr1).unwrap().lock().unwrap().size(), 5);
+        assert_eq!(store.get_table(addr2).unwrap().lock().unwrap().size(), 8);
+    }
+
+    #[test]
+    fn test_invalid_memory_address() {
+        let store = Store::new();
+
+        // Trying to get a memory that doesn't exist returns None
+        assert!(store.get_memory(MemoryAddr(0)).is_none());
+        assert!(store.get_memory(MemoryAddr(999)).is_none());
+    }
+
+    #[test]
+    fn test_invalid_table_address() {
+        let store = Store::new();
+
+        // Trying to get a table that doesn't exist returns None
+        assert!(store.get_table(TableAddr(0)).is_none());
+        assert!(store.get_table(TableAddr(999)).is_none());
+    }
+
+    #[test]
+    fn test_shared_memory_modification() {
+        let mut store = Store::new();
+
+        let memory = Memory::new(1, Some(10)).unwrap();
+        let addr = store.allocate_memory(memory);
+
+        // Get two references to the same memory
+        let ref1 = store.get_memory(addr).unwrap().clone();
+        let ref2 = store.get_memory(addr).unwrap().clone();
+
+        // Modify through one reference
+        {
+            let mut mem = ref1.lock().unwrap();
+            mem.write_u32(0, 0xDEADBEEF).unwrap();
+        }
+
+        // Read through the other reference - should see the modification
+        {
+            let mem = ref2.lock().unwrap();
+            let value = mem.read_u32(0).unwrap();
+            assert_eq!(value, 0xDEADBEEF);
+        }
+    }
+
+    #[test]
+    fn test_shared_table_modification() {
+        use crate::parser::module::{Limits, RefType};
+        use crate::runtime::FuncAddr;
+
+        let mut store = Store::new();
+
+        let table = Table::new(RefType::FuncRef, Limits { min: 10, max: Some(20) }).unwrap();
+        let addr = store.allocate_table(table);
+
+        // Get two references to the same table
+        let ref1 = store.get_table(addr).unwrap().clone();
+        let ref2 = store.get_table(addr).unwrap().clone();
+
+        // Modify through one reference
+        {
+            let mut tbl = ref1.lock().unwrap();
+            tbl.set(0, Some(Value::FuncRef(Some(FuncAddr(42))))).unwrap();
+        }
+
+        // Read through the other reference - should see the modification
+        {
+            let tbl = ref2.lock().unwrap();
+            let value = tbl.get(0).unwrap();
+            assert_eq!(value, Value::FuncRef(Some(FuncAddr(42))));
+        }
     }
 }

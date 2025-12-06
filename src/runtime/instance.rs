@@ -1,6 +1,9 @@
 //! WebAssembly module instance
 
-use super::{executor::Executor, imports::ImportObject, ExecutionOutcome, FuncAddr, RuntimeError, Value};
+use super::{
+    executor::Executor, imports::ImportObject, store::SharedMemory, store::SharedTable, ExecutionOutcome, FuncAddr,
+    MemoryAddr, RuntimeError, TableAddr, Value,
+};
 use crate::parser::module::{ExportIndex, Module, Positional};
 use std::collections::HashMap;
 
@@ -10,15 +13,26 @@ pub struct Instance<'a> {
     exports: HashMap<String, u32>, // Maps export name to function index
     /// Maps local function index to global FuncAddr
     function_addresses: Vec<FuncAddr>,
+    /// Maps local memory index to global MemoryAddr
+    memory_addresses: Vec<MemoryAddr>,
+    /// Maps local table index to global TableAddr
+    table_addresses: Vec<TableAddr>,
     executor: Executor<'a>, // Persistent executor to maintain state
 }
 
 impl<'a> Instance<'a> {
-    /// Create a new instance without function address linking
+    /// Create a new unlinked instance with shared memories and tables
     ///
-    /// This is called by Store::create_instance(). Use Store::create_instance() instead
-    /// of calling this directly.
-    pub(super) fn new_unlinked(module: &'a Module, imports: Option<&ImportObject>) -> Result<Self, RuntimeError> {
+    /// This is called by Store::create_instance(). Function addresses are linked
+    /// separately via link_functions().
+    pub(super) fn new_unlinked(
+        module: &'a Module,
+        imports: Option<&ImportObject>,
+        memories: Vec<SharedMemory>,
+        tables: Vec<SharedTable>,
+        memory_addresses: Vec<MemoryAddr>,
+        table_addresses: Vec<TableAddr>,
+    ) -> Result<Self, RuntimeError> {
         let mut exports = HashMap::new();
 
         // Build export map
@@ -28,13 +42,15 @@ impl<'a> Instance<'a> {
             }
         }
 
-        // Create persistent executor - this initialises memory and globals
-        let executor = Executor::new(module, imports)?;
+        // Create persistent executor with provided memories and tables
+        let executor = Executor::new_with_shared(module, imports, memories, tables)?;
 
         Ok(Instance {
             module,
             exports,
             function_addresses: Vec::new(),
+            memory_addresses,
+            table_addresses,
             executor,
         })
     }
@@ -275,6 +291,48 @@ impl<'a> Instance<'a> {
             self.executor.get_global(global_idx)
         } else {
             Err(RuntimeError::UnknownExport(format!("{} is not a global export", name)))
+        }
+    }
+
+    /// Get the MemoryAddr for an exported memory by name
+    ///
+    /// # Errors
+    /// - Returns `UnknownExport` if the export doesn't exist or isn't a memory
+    pub fn get_memory_addr(&self, name: &str) -> Result<MemoryAddr, RuntimeError> {
+        let export = self
+            .module
+            .exports
+            .get_by_name(name)
+            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
+
+        if let ExportIndex::Memory(mem_idx) = export.index {
+            self.memory_addresses
+                .get(mem_idx as usize)
+                .copied()
+                .ok_or_else(|| RuntimeError::UnknownExport(format!("Memory {} not found", name)))
+        } else {
+            Err(RuntimeError::UnknownExport(format!("{} is not a memory export", name)))
+        }
+    }
+
+    /// Get the TableAddr for an exported table by name
+    ///
+    /// # Errors
+    /// - Returns `UnknownExport` if the export doesn't exist or isn't a table
+    pub fn get_table_addr(&self, name: &str) -> Result<TableAddr, RuntimeError> {
+        let export = self
+            .module
+            .exports
+            .get_by_name(name)
+            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
+
+        if let ExportIndex::Table(table_idx) = export.index {
+            self.table_addresses
+                .get(table_idx as usize)
+                .copied()
+                .ok_or_else(|| RuntimeError::UnknownExport(format!("Table {} not found", name)))
+        } else {
+            Err(RuntimeError::UnknownExport(format!("{} is not a table export", name)))
         }
     }
 }

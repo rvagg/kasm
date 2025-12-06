@@ -20,7 +20,7 @@ pub mod value;
 pub use imports::ImportObject;
 pub use instance::Instance;
 pub use memory::Memory;
-pub use store::{FuncAddr, FunctionInstance, Store};
+pub use store::{FuncAddr, FunctionInstance, MemoryAddr, SharedMemory, SharedTable, Store, TableAddr};
 pub use table::Table;
 pub use value::Value;
 

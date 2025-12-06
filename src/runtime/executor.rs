@@ -7,12 +7,14 @@ use super::{
     memory::Memory,
     ops,
     stack::Stack,
+    store::{SharedMemory, SharedTable},
     table::Table,
     ExecutionOutcome, ExternalCallRequest, RuntimeError, Value,
 };
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
 use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
+use std::sync::{Arc, Mutex};
 
 /// Maximum call stack depth to prevent stack overflow
 const MAX_CALL_DEPTH: usize = 1000;
@@ -71,12 +73,13 @@ pub struct Executor<'a> {
     stack: Stack,
     /// Call stack for managing function calls (always has at least one frame during execution)
     call_stack: Vec<CallFrame>,
-    /// Memory instances (WebAssembly 1.0 supports only 1)
-    memories: Vec<Memory>,
+    /// Memory instances (shared for cross-module access)
+    /// WebAssembly 1.0 supports only 1 memory per module
+    memories: Vec<SharedMemory>,
     /// Global variable values
     globals: Vec<Value>,
-    /// Table instances
-    tables: Vec<Table>,
+    /// Table instances (shared for cross-module access)
+    tables: Vec<SharedTable>,
     /// Element segments (for table.init)
     element_segments: Vec<Vec<Option<Value>>>,
     /// Function bodies for quick access
@@ -100,45 +103,21 @@ impl<'a> Executor<'a> {
     /// - If the module has more than one memory (WebAssembly 1.0 limitation)
     /// - If memory initialisation fails
     pub fn new(module: &'a Module, imports: Option<&ImportObject>) -> Result<Self, RuntimeError> {
-        // Initialise memories from module definition
-        let memories = if module.memory.memory.is_empty() {
-            vec![]
-        } else {
-            // WebAssembly 1.0: Only one memory allowed per module
-            // This restriction is relaxed in the multi-memory proposal, but we don't support that yet
-            if module.memory.memory.len() > 1 {
-                return Err(RuntimeError::MemoryError(format!(
-                    "WebAssembly 1.0 only supports one memory per module, found {}",
-                    module.memory.memory.len()
-                )));
-            }
+        // Create memories and tables from module definition
+        let (memories, tables) = Self::create_memories_and_tables(module)?;
+        Self::new_with_shared(module, imports, memories, tables)
+    }
 
-            let mem_def = &module.memory.memory[0];
-            match Memory::new(mem_def.limits.min, mem_def.limits.max) {
-                Ok(memory) => vec![memory],
-                Err(e) => return Err(e),
-            }
-        };
-
-        // Initialise tables from module definition
-        let mut tables = Vec::new();
-
-        // First, initialise imported tables (they come first in the index space)
-        for import in &module.imports.imports {
-            if let ExternalKind::Table(table_type) = &import.external_kind {
-                // For now, create default tables for imports
-                // In the future, this should be extended to use ImportObject
-                let table = Table::new(table_type.ref_type, table_type.limits)?;
-                tables.push(table);
-            }
-        }
-
-        // Then, add locally defined tables
-        for table_type in &module.table.tables {
-            let table = Table::new(table_type.ref_type, table_type.limits)?;
-            tables.push(table);
-        }
-
+    /// Create a new executor with pre-provided shared memories and tables
+    ///
+    /// This is used by Store::create_instance() when memory/table imports are involved.
+    /// The memories and tables must be in the correct order: imported first, then local.
+    pub fn new_with_shared(
+        module: &'a Module,
+        imports: Option<&ImportObject>,
+        memories: Vec<SharedMemory>,
+        tables: Vec<SharedTable>,
+    ) -> Result<Self, RuntimeError> {
         // Initialise globals from module
 
         let mut globals = Vec::new();
@@ -229,6 +208,51 @@ impl<'a> Executor<'a> {
         Ok(executor)
     }
 
+    /// Create memories and tables from module definition
+    ///
+    /// This is used when no external memories/tables are provided.
+    /// Imported memories/tables are created as new instances (for backward compatibility).
+    fn create_memories_and_tables(module: &Module) -> Result<(Vec<SharedMemory>, Vec<SharedTable>), RuntimeError> {
+        // Initialise memories from module definition
+        let memories: Vec<SharedMemory> = if module.memory.memory.is_empty() {
+            vec![]
+        } else {
+            // WebAssembly 1.0: Only one memory allowed per module
+            if module.memory.memory.len() > 1 {
+                return Err(RuntimeError::MemoryError(format!(
+                    "WebAssembly 1.0 only supports one memory per module, found {}",
+                    module.memory.memory.len()
+                )));
+            }
+
+            let mem_def = &module.memory.memory[0];
+            match Memory::new(mem_def.limits.min, mem_def.limits.max) {
+                Ok(memory) => vec![Arc::new(Mutex::new(memory))],
+                Err(e) => return Err(e),
+            }
+        };
+
+        // Initialise tables from module definition
+        let mut tables: Vec<SharedTable> = Vec::new();
+
+        // First, initialise imported tables (they come first in the index space)
+        for import in &module.imports.imports {
+            if let ExternalKind::Table(table_type) = &import.external_kind {
+                // Create default table for import
+                let table = Table::new(table_type.ref_type, table_type.limits)?;
+                tables.push(Arc::new(Mutex::new(table)));
+            }
+        }
+
+        // Then, add locally defined tables
+        for table_type in &module.table.tables {
+            let table = Table::new(table_type.ref_type, table_type.limits)?;
+            tables.push(Arc::new(Mutex::new(table)));
+        }
+
+        Ok((memories, tables))
+    }
+
     /// Initialise module globals with their init expressions
     ///
     /// This must be called after function_addresses have been linked, as global init
@@ -291,12 +315,18 @@ impl<'a> Executor<'a> {
                     };
 
                     // Check table exists
-                    if (*table_index as usize) >= self.tables.len() {
-                        return Err(RuntimeError::TableIndexOutOfBounds(*table_index));
-                    }
+                    let table = self
+                        .tables
+                        .get(*table_index as usize)
+                        .ok_or(RuntimeError::TableIndexOutOfBounds(*table_index))?;
 
                     // Initialize table with element values
-                    self.tables[*table_index as usize].init(start_idx, &values, 0, values.len() as u32)?;
+                    {
+                        let mut table_guard = table
+                            .lock()
+                            .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                        table_guard.init(start_idx, &values, 0, values.len() as u32)?;
+                    }
 
                     // Store segment for potential table.init usage later
                     self.element_segments.push(values);
@@ -326,11 +356,9 @@ impl<'a> Executor<'a> {
                     }
 
                     // Check we have a memory
-                    if self.memories.is_empty() {
-                        return Err(RuntimeError::MemoryError(
-                            "Data segment requires memory but none exists".to_string(),
-                        ));
-                    }
+                    let memory = self.memories.first().ok_or_else(|| {
+                        RuntimeError::MemoryError("Data segment requires memory but none exists".to_string())
+                    })?;
 
                     // Evaluate the offset expression to get the starting address
                     // The offset expression should be a constant expression
@@ -347,12 +375,14 @@ impl<'a> Executor<'a> {
                     };
 
                     // Write the data to memory
-                    let memory = &mut self.memories[0];
+                    let mut mem_guard = memory
+                        .lock()
+                        .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
                     let data = &data_segment.init;
 
                     // Check if the data fits in memory
                     let end_addr = offset_addr as usize + data.len();
-                    let memory_size_bytes = (memory.size() as usize) * 65536; // Convert pages to bytes
+                    let memory_size_bytes = (mem_guard.size() as usize) * 65536; // Convert pages to bytes
                     if end_addr > memory_size_bytes {
                         return Err(RuntimeError::MemoryError(format!(
                             "Data segment at offset {} with length {} exceeds memory size {} bytes",
@@ -363,7 +393,7 @@ impl<'a> Executor<'a> {
                     }
 
                     // Copy the data into memory using the shared helper
-                    ops::memory::copy_to_memory(memory, offset_addr, data)?;
+                    ops::memory::copy_to_memory(&mut mem_guard, offset_addr, data)?;
                 }
                 DataMode::Passive => {
                     // Passive data segments are not automatically initialised
@@ -968,14 +998,17 @@ impl<'a> Executor<'a> {
                     // Pop table element index from stack
                     let table_elem_idx = self.stack.pop_i32()? as u32;
 
-                    // Get table
+                    // Get table and lock it
                     let table = self
                         .tables
                         .get(*table_idx as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+                    let table_guard = table
+                        .lock()
+                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
 
                     // Get function reference from table
-                    let func_ref = table.get(table_elem_idx)?;
+                    let func_ref = table_guard.get(table_elem_idx)?;
 
                     // Extract function address from reference
                     let func_addr = match func_ref {
@@ -1187,42 +1220,50 @@ impl<'a> Executor<'a> {
     fn execute_plain_instruction(&mut self, inst: &Instruction) -> Result<BlockEnd, RuntimeError> {
         use InstructionKind::*;
 
-        // Helper macro for memory operations
+        // Helper macro for memory operations with mutex locking
         macro_rules! with_memory {
             (load $op:ident($memarg:expr)) => {{
-                if self.memories.is_empty() {
-                    return Err(RuntimeError::MemoryError(
-                        "No memory instance available".to_string(),
-                    ));
-                }
-                ops::memory::$op(&mut self.stack, &self.memories[0], $memarg)?;
+                let memory = self
+                    .memories
+                    .first()
+                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                let mem_guard = memory
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                ops::memory::$op(&mut self.stack, &mem_guard, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
             (store $op:ident($memarg:expr)) => {{
-                if self.memories.is_empty() {
-                    return Err(RuntimeError::MemoryError(
-                        "No memory instance available".to_string(),
-                    ));
-                }
-                ops::memory::$op(&mut self.stack, &mut self.memories[0], $memarg)?;
+                let memory = self
+                    .memories
+                    .first()
+                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                let mut mem_guard = memory
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                ops::memory::$op(&mut self.stack, &mut mem_guard, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
             (size $op:ident()) => {{
-                if self.memories.is_empty() {
-                    return Err(RuntimeError::MemoryError(
-                        "No memory instance available".to_string(),
-                    ));
-                }
-                ops::memory::$op(&mut self.stack, &self.memories[0])?;
+                let memory = self
+                    .memories
+                    .first()
+                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                let mem_guard = memory
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                ops::memory::$op(&mut self.stack, &mem_guard)?;
                 Ok(BlockEnd::Normal)
             }};
             (grow $op:ident()) => {{
-                if self.memories.is_empty() {
-                    return Err(RuntimeError::MemoryError(
-                        "No memory instance available".to_string(),
-                    ));
-                }
-                ops::memory::$op(&mut self.stack, &mut self.memories[0])?;
+                let memory = self
+                    .memories
+                    .first()
+                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                let mut mem_guard = memory
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                ops::memory::$op(&mut self.stack, &mut mem_guard)?;
                 Ok(BlockEnd::Normal)
             }};
         }
@@ -1573,11 +1614,14 @@ impl<'a> Executor<'a> {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, src_offset, length]
             MemoryInit { data_idx } => {
-                if let Some(memory) = &mut self.memories.first_mut() {
-                    ops::memory::memory_init(&mut self.stack, memory, *data_idx, &self.module.data.data)?;
-                } else {
-                    return Err(RuntimeError::MemoryError("No memory available".to_string()));
-                }
+                let memory = self
+                    .memories
+                    .first()
+                    .ok_or_else(|| RuntimeError::MemoryError("No memory available".to_string()))?;
+                let mut mem_guard = memory
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                ops::memory::memory_init(&mut self.stack, &mut mem_guard, *data_idx, &self.module.data.data)?;
                 Ok(BlockEnd::Normal)
             }
 
@@ -1585,11 +1629,14 @@ impl<'a> Executor<'a> {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, src_addr, length]
             MemoryCopy => {
-                if let Some(memory) = &mut self.memories.first_mut() {
-                    ops::memory::memory_copy(&mut self.stack, memory)?;
-                } else {
-                    return Err(RuntimeError::MemoryError("No memory available".to_string()));
-                }
+                let memory = self
+                    .memories
+                    .first()
+                    .ok_or_else(|| RuntimeError::MemoryError("No memory available".to_string()))?;
+                let mut mem_guard = memory
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                ops::memory::memory_copy(&mut self.stack, &mut mem_guard)?;
                 Ok(BlockEnd::Normal)
             }
 
@@ -1597,11 +1644,14 @@ impl<'a> Executor<'a> {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, value, length]
             MemoryFill => {
-                if let Some(memory) = &mut self.memories.first_mut() {
-                    ops::memory::memory_fill(&mut self.stack, memory)?;
-                } else {
-                    return Err(RuntimeError::MemoryError("No memory available".to_string()));
-                }
+                let memory = self
+                    .memories
+                    .first()
+                    .ok_or_else(|| RuntimeError::MemoryError("No memory available".to_string()))?;
+                let mut mem_guard = memory
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                ops::memory::memory_fill(&mut self.stack, &mut mem_guard)?;
                 Ok(BlockEnd::Normal)
             }
 
@@ -2287,8 +2337,11 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+                let table_guard = table
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
 
-                let value = table.get(idx as u32)?;
+                let value = table_guard.get(idx as u32)?;
 
                 self.stack.push(value);
                 Ok(BlockEnd::Normal)
@@ -2299,10 +2352,13 @@ impl<'a> Executor<'a> {
 
                 let table = self
                     .tables
-                    .get_mut(*table_idx as usize)
+                    .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+                let mut table_guard = table
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
 
-                table.set(idx as u32, Some(value))?;
+                table_guard.set(idx as u32, Some(value))?;
                 Ok(BlockEnd::Normal)
             }
             TableSize { table_idx } => {
@@ -2310,7 +2366,10 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                self.stack.push(Value::I32(table.size() as i32));
+                let table_guard = table
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                self.stack.push(Value::I32(table_guard.size() as i32));
                 Ok(BlockEnd::Normal)
             }
             TableGrow { table_idx } => {
@@ -2319,10 +2378,13 @@ impl<'a> Executor<'a> {
 
                 let table = self
                     .tables
-                    .get_mut(*table_idx as usize)
+                    .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+                let mut table_guard = table
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
 
-                let result = table.grow(delta as u32, Some(init_value))?;
+                let result = table_guard.grow(delta as u32, Some(init_value))?;
                 self.stack.push(Value::I32(result as i32));
                 Ok(BlockEnd::Normal)
             }
@@ -2338,10 +2400,13 @@ impl<'a> Executor<'a> {
 
                 let table = self
                     .tables
-                    .get_mut(*table_idx as usize)
+                    .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+                let mut table_guard = table
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
 
-                table.init(dst_idx, src_segment, src_idx, count)?;
+                table_guard.init(dst_idx, src_segment, src_idx, count)?;
                 Ok(BlockEnd::Normal)
             }
             TableCopy { dst_table, src_table } => {
@@ -2353,27 +2418,32 @@ impl<'a> Executor<'a> {
                     // Same table - use copy_within
                     let table = self
                         .tables
-                        .get_mut(*dst_table as usize)
+                        .get(*dst_table as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?;
-                    table.copy_within(dst_idx, src_idx, count)?;
+                    let mut table_guard = table
+                        .lock()
+                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                    table_guard.copy_within(dst_idx, src_idx, count)?;
                 } else {
-                    // Different tables - use optimised bulk copy
-                    // Validate table indices first
-                    if (*src_table as usize) >= self.tables.len() || (*dst_table as usize) >= self.tables.len() {
-                        return Err(RuntimeError::TableIndexOutOfBounds((*src_table).max(*dst_table)));
-                    }
+                    // Different tables - with Arc<Mutex<>> we can lock both independently
+                    let src_table_arc = self
+                        .tables
+                        .get(*src_table as usize)
+                        .ok_or(RuntimeError::TableIndexOutOfBounds(*src_table))?;
+                    let dst_table_arc = self
+                        .tables
+                        .get(*dst_table as usize)
+                        .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?;
 
-                    // Borrow source and destination separately using split_at_mut
-                    // This avoids the need for element-by-element copying
-                    let (src_ref, dst_ref) = if src_table < dst_table {
-                        let (left, right) = self.tables.split_at_mut(*dst_table as usize);
-                        (&left[*src_table as usize], &mut right[0])
-                    } else {
-                        let (left, right) = self.tables.split_at_mut(*src_table as usize);
-                        (&right[0], &mut left[*dst_table as usize])
-                    };
+                    // Lock both tables (source is read-only, dest is mutable)
+                    let src_guard = src_table_arc
+                        .lock()
+                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                    let mut dst_guard = dst_table_arc
+                        .lock()
+                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
 
-                    dst_ref.copy_from(dst_idx, src_ref, src_idx, count)?;
+                    dst_guard.copy_from(dst_idx, &src_guard, src_idx, count)?;
                 }
 
                 Ok(BlockEnd::Normal)
@@ -2385,10 +2455,13 @@ impl<'a> Executor<'a> {
 
                 let table = self
                     .tables
-                    .get_mut(*table_idx as usize)
+                    .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
+                let mut table_guard = table
+                    .lock()
+                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
 
-                table.fill(start, count, Some(value))?;
+                table_guard.fill(start, count, Some(value))?;
                 Ok(BlockEnd::Normal)
             }
             ElemDrop { elem_idx } => {

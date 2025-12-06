@@ -450,6 +450,18 @@ mod tests {
                                     spectest_imports.add_function(&registered_name, &export.name, func_addr);
                                 }
                             }
+                            // Extract memory exports and add their MemoryAddr to imports
+                            if let kasm::parser::module::ExportIndex::Memory(_) = export.index {
+                                if let Ok(mem_addr) = instance.get_memory_addr(&export.name) {
+                                    spectest_imports.add_memory(&registered_name, &export.name, mem_addr);
+                                }
+                            }
+                            // Extract table exports and add their TableAddr to imports
+                            if let kasm::parser::module::ExportIndex::Table(_) = export.index {
+                                if let Ok(table_addr) = instance.get_table_addr(&export.name) {
+                                    spectest_imports.add_table(&registered_name, &export.name, table_addr);
+                                }
+                            }
                         }
                     } else {
                         panic!("No module to register for command: {}", cmd.r#as);
@@ -857,6 +869,17 @@ mod tests {
             },
         });
         imports.add_function("spectest", "print_f64_f64", print_f64_f64_addr);
+
+        // Add spectest memory: 1 page min, 2 pages max
+        let spectest_memory = kasm::runtime::Memory::new(1, Some(2)).unwrap();
+        let mem_addr = store.allocate_memory(spectest_memory);
+        imports.add_memory("spectest", "memory", mem_addr);
+
+        // Add spectest table: 10 min, 20 max, funcref
+        use kasm::parser::module::{Limits, RefType};
+        let spectest_table = kasm::runtime::Table::new(RefType::FuncRef, Limits { min: 10, max: Some(20) }).unwrap();
+        let table_addr = store.allocate_table(spectest_table);
+        imports.add_table("spectest", "table", table_addr);
 
         imports
     }

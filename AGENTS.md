@@ -17,7 +17,7 @@ src/runtime/        # Interpreter
   store.rs          # Store-based execution, cross-module function calls
   executor.rs       # State machine execution (no recursion)
   instance.rs       # Module instantiation
-  imports.rs        # Import resolution (globals, functions)
+  imports.rs        # Import resolution (globals, functions, memories, tables)
   table.rs          # Table instances for indirect calls
   ops/              # Instruction implementations (numeric, memory, control, etc.)
   memory.rs         # Linear memory (64KB pages, 4GB max)
@@ -27,12 +27,11 @@ src/runtime/        # Interpreter
 
 ## Status
 - 191+ instructions implemented (see src/runtime/implemented.rs)
-- 86/86 core spec tests pass (tests/spec/*.json)
-- Function imports: supported via Store and FuncAddr
-- Global imports: supported via ImportObject
+- 86/86 core spec tests pass (21,303 assertions)
+- All import types supported: functions, globals, memories, tables
 - Tables and call_indirect: fully implemented
-- Cross-module function calls: supported via Store-based architecture
-- Missing: memory/table imports, SIMD
+- Cross-module linking: supported via Store-based architecture
+- Missing: SIMD (v128 type and vector operations)
 
 ## Development Workflow
 ```bash
@@ -65,10 +64,10 @@ cargo run --bin test-coverage  # See which instructions enable most tests
 ```
 
 ## Key Files
-- src/runtime/store.rs - Store, FuncAddr, cross-module execution
+- src/runtime/store.rs - Store, FuncAddr, MemoryAddr, TableAddr, cross-module execution
 - src/runtime/executor.rs - State machine interpreter
 - src/runtime/instance.rs - Module instantiation
-- src/runtime/imports.rs - Import resolution (globals, functions)
+- src/runtime/imports.rs - Import resolution (globals, functions, memories, tables)
 - src/runtime/table.rs - Table instances
 - src/runtime/ops/*.rs - Instruction implementations by category
 - src/runtime/implemented.rs - Registry of implemented instructions

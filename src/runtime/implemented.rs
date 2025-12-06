@@ -274,14 +274,6 @@ pub fn is_instruction_implemented(inst: &InstructionKind) -> bool {
 }
 
 /// Tests that should be skipped due to missing features or debug mode limitations
-pub fn should_skip_test(test_name: &str) -> bool {
-    match test_name {
-        // Skip imports.json - requires module linking/import support which we don't implement
-        "imports.json" => true,
-        // Skip call.json in debug mode - causes stack overflow due to deep recursion
-        // (test passes fine in release mode, it's just a debug build limitation)
-        #[cfg(debug_assertions)]
-        "call.json" => true,
-        _ => false,
-    }
+pub fn should_skip_test(_test_name: &str) -> bool {
+    false
 }

@@ -3,7 +3,7 @@
 //! This module provides import resolution for WebAssembly modules, supporting
 //! global and function imports.
 
-use super::{FuncAddr, RuntimeError, Value};
+use super::{FuncAddr, MemoryAddr, RuntimeError, TableAddr, Value};
 use crate::parser::module::{ExternalKind, Module, ValueType};
 use std::collections::HashMap;
 
@@ -14,6 +14,10 @@ pub struct ImportObject {
     pub globals: HashMap<(String, String), Value>,
     /// Imported functions mapped by (module_name, field_name)
     pub functions: HashMap<(String, String), FuncAddr>,
+    /// Imported memories mapped by (module_name, field_name)
+    pub memories: HashMap<(String, String), MemoryAddr>,
+    /// Imported tables mapped by (module_name, field_name)
+    pub tables: HashMap<(String, String), TableAddr>,
 }
 
 impl ImportObject {
@@ -22,6 +26,8 @@ impl ImportObject {
         Self {
             globals: HashMap::new(),
             functions: HashMap::new(),
+            memories: HashMap::new(),
+            tables: HashMap::new(),
         }
     }
 
@@ -49,6 +55,38 @@ impl ImportObject {
     /// Get a global import
     pub fn get_global(&self, module: &str, name: &str) -> Option<&Value> {
         self.globals.get(&(module.to_string(), name.to_string()))
+    }
+
+    /// Add a memory import
+    pub fn add_memory(&mut self, module: impl Into<String>, name: impl Into<String>, addr: MemoryAddr) {
+        self.memories.insert((module.into(), name.into()), addr);
+    }
+
+    /// Get a memory import
+    ///
+    /// # Errors
+    /// Returns `UnknownExport` error if the import doesn't exist
+    pub fn get_memory(&self, module: &str, name: &str) -> Result<MemoryAddr, RuntimeError> {
+        self.memories
+            .get(&(module.to_string(), name.to_string()))
+            .copied()
+            .ok_or_else(|| RuntimeError::UnknownExport(format!("{}.{}", module, name)))
+    }
+
+    /// Add a table import
+    pub fn add_table(&mut self, module: impl Into<String>, name: impl Into<String>, addr: TableAddr) {
+        self.tables.insert((module.into(), name.into()), addr);
+    }
+
+    /// Get a table import
+    ///
+    /// # Errors
+    /// Returns `UnknownExport` error if the import doesn't exist
+    pub fn get_table(&self, module: &str, name: &str) -> Result<TableAddr, RuntimeError> {
+        self.tables
+            .get(&(module.to_string(), name.to_string()))
+            .copied()
+            .ok_or_else(|| RuntimeError::UnknownExport(format!("{}.{}", module, name)))
     }
 
     /// Get an imported global value with type validation, or return a default value for the type

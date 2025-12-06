@@ -10,13 +10,14 @@ An experimental & educational WebAssembly runtime implementation in Rust that pr
 
 - Complete WebAssembly binary parser with full section support
 - Disassembler compatible with WABT wasm-objdump format
-- State machine interpreter supporting WebAssembly 1.0 instructions (aside from SIMD, WIP)
+- State machine interpreter supporting WebAssembly 1.0 instructions (aside from SIMD)
 - Structured control flow execution following WebAssembly design intent
 - Linear memory with bounds checking and page-based growth
 - Tables with indirect function calls (call_indirect)
-- Cross-module function calls via Store-based architecture
+- Cross-module linking via Store-based architecture
+- Function, memory, table, and global imports
 - Stack-based execution with runtime type checking
-- Passes most core WebAssembly specification tests (WIP)
+- Passes 86/86 core WebAssembly specification tests (21,303 assertions)
 
 ## Usage
 
@@ -39,7 +40,6 @@ cargo test
 
 ## Current Limitations
 
-- No memory/table imports between modules
 - No SIMD instructions (v128)
 
 ## License
