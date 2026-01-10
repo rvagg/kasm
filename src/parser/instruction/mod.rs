@@ -8,7 +8,7 @@ pub mod encode;
 pub mod streaming_decode;
 
 pub use decode::{DecodeError, InstructionIterator, ParseType};
-pub use streaming_decode::{decode_function, decode_with_processor, VecCollector};
+pub use streaming_decode::{VecCollector, decode_function, decode_with_processor};
 
 use super::module::ValueType;
 use fhex::ToHex;

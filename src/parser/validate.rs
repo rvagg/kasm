@@ -1,7 +1,7 @@
 use super::module::{ElementMode, FunctionType, GlobalType, ValueType, ValueType::*};
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
-use thiserror::Error;
 use MaybeValue::{Unknown, Val};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ValidationError {
@@ -121,8 +121,8 @@ impl ConstantExpressionValidator<'_> {
         // constant expressions can only reference imported globals
         self.imports
             .get_global_import(global_index)
-            .map(|global_type| match global_type.external_kind {
-                super::module::ExternalKind::Global(ref global_type) => {
+            .map(|import| match &import.external_kind {
+                super::module::ExternalKind::Global(global_type) => {
                     if global_type.mutable {
                         Err(ValidationError::ConstantExpressionRequired)
                     } else {
@@ -184,10 +184,10 @@ impl Validator for ConstantExpressionValidator<'_> {
                     return Err(ValidationError::TypeMismatch);
                 }
                 // Then check if the function index is valid
-                if let Some(total) = self.total_functions {
-                    if *func_idx >= total {
-                        return Err(ValidationError::UnknownFunction(*func_idx));
-                    }
+                if let Some(total) = self.total_functions
+                    && *func_idx >= total
+                {
+                    return Err(ValidationError::UnknownFunction(*func_idx));
                 }
                 Ok(())
             }
@@ -441,7 +441,7 @@ impl<'a> CodeValidator<'a> {
                 .imports
                 .get_global_import(global_index)
                 .and_then(|import| match &import.external_kind {
-                    super::module::ExternalKind::Global(ref global_type) => Some(global_type),
+                    super::module::ExternalKind::Global(global_type) => Some(global_type),
                     _ => None,
                 })
         } else {
@@ -639,11 +639,11 @@ impl Validator for CodeValidator<'_> {
                 Ok(())
             }
 
-            I32Load { ref memarg }
-            | I32Load8S { ref memarg }
-            | I32Load8U { ref memarg }
-            | I32Load16S { ref memarg }
-            | I32Load16U { ref memarg } => {
+            I32Load { memarg }
+            | I32Load8S { memarg }
+            | I32Load8U { memarg }
+            | I32Load16S { memarg }
+            | I32Load16U { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
@@ -657,13 +657,13 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(memarg, align_exp)
             }
 
-            I64Load { ref memarg }
-            | I64Load8S { ref memarg }
-            | I64Load8U { ref memarg }
-            | I64Load16S { ref memarg }
-            | I64Load16U { ref memarg }
-            | I64Load32S { ref memarg }
-            | I64Load32U { ref memarg } => {
+            I64Load { memarg }
+            | I64Load8S { memarg }
+            | I64Load8U { memarg }
+            | I64Load16S { memarg }
+            | I64Load16U { memarg }
+            | I64Load32S { memarg }
+            | I64Load32U { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
@@ -678,7 +678,7 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(memarg, align_exp)
             }
 
-            F32Load { ref memarg } => {
+            F32Load { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
@@ -686,7 +686,7 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(memarg, 2 /* 4 bytes = 2^2 */)
             }
 
-            F64Load { ref memarg } => {
+            F64Load { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
@@ -694,7 +694,7 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(memarg, 3 /* 8 bytes = 2^3 */)
             }
 
-            I32Store { ref memarg } | I32Store8 { ref memarg } | I32Store16 { ref memarg } => {
+            I32Store { memarg } | I32Store8 { memarg } | I32Store16 { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
@@ -708,10 +708,7 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(memarg, align_exp)
             }
 
-            I64Store { ref memarg }
-            | I64Store8 { ref memarg }
-            | I64Store16 { ref memarg }
-            | I64Store32 { ref memarg } => {
+            I64Store { memarg } | I64Store8 { memarg } | I64Store16 { memarg } | I64Store32 { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(I64)).ok_or(ValidationError::TypeMismatch)?;
@@ -726,7 +723,7 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(memarg, align_exp)
             }
 
-            F32Store { ref memarg } => {
+            F32Store { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(F32)).ok_or(ValidationError::TypeMismatch)?;
@@ -734,7 +731,7 @@ impl Validator for CodeValidator<'_> {
                 check_alignment(memarg, 2 /* 4 bytes = 2^2 */)
             }
 
-            F64Store { ref memarg } => {
+            F64Store { memarg } => {
                 // Check that memory exists (imported or declared)
                 self.validate_memory_exists()?;
                 self.pop_expected(Val(F64)).ok_or(ValidationError::TypeMismatch)?;
@@ -869,7 +866,7 @@ impl Validator for CodeValidator<'_> {
                 }
             }
 
-            Block { ref block_type } | Loop { ref block_type } | If { ref block_type } => {
+            Block { block_type } | Loop { block_type } | If { block_type } => {
                 // special case for If we need to pop an i32
                 if matches!(kind, If { .. }) {
                     self.pop_expected(Val(I32)).ok_or(ValidationError::TypeMismatch)?;
@@ -1284,10 +1281,10 @@ impl Validator for CodeValidator<'_> {
 
         // Check that the types match
         for (i, expected_type) in self.function_type.return_types.iter().enumerate() {
-            if let Some(Val(actual_type)) = self.vals.get(i) {
-                if actual_type != expected_type {
-                    return Err(ValidationError::TypeMismatch);
-                }
+            if let Some(Val(actual_type)) = self.vals.get(i)
+                && actual_type != expected_type
+            {
+                return Err(ValidationError::TypeMismatch);
             }
         }
 

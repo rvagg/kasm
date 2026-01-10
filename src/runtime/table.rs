@@ -126,10 +126,10 @@ impl Table {
         };
 
         // Check against max limit if present
-        if let Some(max) = self.limits.max {
-            if new_size > max {
-                return Ok(u32::MAX); // Exceeds max: return -1
-            }
+        if let Some(max) = self.limits.max
+            && new_size > max
+        {
+            return Ok(u32::MAX); // Exceeds max: return -1
         }
 
         // Validate init value type

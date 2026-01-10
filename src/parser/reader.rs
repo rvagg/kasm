@@ -45,6 +45,10 @@ impl Reader {
         self.bytes.len() - self.pos >= count
     }
 
+    pub fn remaining(&self) -> usize {
+        self.bytes.len() - self.pos
+    }
+
     pub fn skip(&mut self, len: usize) {
         self.pos += len;
     }
@@ -159,15 +163,14 @@ impl Reader {
 
     pub fn read_u8vec(&mut self) -> Result<Vec<u8>, io::Error> {
         let len = self.read_vu64()?;
-        /*
-        if !self.has_at_least(len as usize) {
+        // Validate length against remaining bytes to prevent OOM attacks
+        if len > self.remaining() as u64 {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "length out of bounds",
+                io::ErrorKind::UnexpectedEof,
+                "unexpected end of section or function",
             ));
         }
-        */
-        let mut vec: Vec<u8> = vec![];
+        let mut vec: Vec<u8> = Vec::with_capacity(len as usize);
         for _ in 0..len {
             vec.push(self.read_u8()?);
         }
@@ -440,7 +443,7 @@ fn test_rt_vu64() {
     // Add random values
     let mut rng = rand::thread_rng();
     for _ in 0..100 {
-        test_values.push(rng.gen::<u64>());
+        test_values.push(rng.r#gen::<u64>());
     }
 
     // Add sequential numbers
@@ -535,7 +538,7 @@ fn test_rt_vu32() {
     // Add random values
     let mut rng = rand::thread_rng();
     for _ in 0..100 {
-        test_values.push(rng.gen::<u32>());
+        test_values.push(rng.r#gen::<u32>());
     }
 
     // Add sequential numbers
@@ -765,7 +768,7 @@ fn test_rt_vs64() {
     // Add random values
     let mut rng = rand::thread_rng();
     for _ in 0..100 {
-        test_values.push(rng.gen::<i64>());
+        test_values.push(rng.r#gen::<i64>());
     }
 
     // Add sequential numbers
@@ -872,7 +875,7 @@ fn test_rt_vs32() {
     // Add random values
     let mut rng = rand::thread_rng();
     for _ in 0..100 {
-        test_values.push(rng.gen::<i32>());
+        test_values.push(rng.r#gen::<i32>());
     }
 
     // Add sequential numbers
@@ -1060,4 +1063,29 @@ fn assert_err_with_diag<T: std::fmt::Debug + std::cmp::PartialEq>(actual: std::i
             "Actual error: {e}, Expected error: {expected_err}"
         ),
     }
+}
+
+#[test]
+fn test_read_u8vec() {
+    // Valid reads
+    let mut reader = Reader::new(vec![0x03, 0xaa, 0xbb, 0xcc]); // length 3, then 3 bytes
+    assert_eq!(reader.read_u8vec().unwrap(), vec![0xaa, 0xbb, 0xcc]);
+
+    let mut reader = Reader::new(vec![0x00]); // length 0
+    assert_eq!(reader.read_u8vec().unwrap(), vec![]);
+}
+
+#[test]
+fn test_read_u8vec_length_exceeds_remaining() {
+    // Length claims 10 bytes but only 3 remain
+    let mut reader = Reader::new(vec![0x0a, 0xaa, 0xbb, 0xcc]);
+    assert_err_with_diag(reader.read_u8vec(), "unexpected end of section or function");
+}
+
+#[test]
+fn test_read_u8vec_large_length_oom_prevention() {
+    // Malicious LEB128-encoded large length (similar to fuzzer crash)
+    // 0xff 0xff 0xff 0xff 0x0f = 4294967295 (max u32) as LEB128
+    let mut reader = Reader::new(vec![0xff, 0xff, 0xff, 0xff, 0x0f, 0xaa, 0xbb]);
+    assert_err_with_diag(reader.read_u8vec(), "unexpected end of section or function");
 }

@@ -13,6 +13,35 @@ use std::io;
 
 use self::module::Positional;
 
+/// Validates that a count value is reasonable given the remaining bytes in the section.
+/// This prevents OOM attacks where a malformed count causes huge allocations.
+///
+/// Only rejects clearly malicious counts (e.g., claiming millions of items with only
+/// a few bytes remaining). Normal parse errors (like count=1 with 0 bytes) are allowed
+/// to proceed and fail naturally with the proper "unexpected end" error message.
+///
+/// # Arguments
+/// * `count` - The count value read from the binary
+/// * `remaining_bytes` - Bytes remaining in the current section
+fn validate_count(count: u32, remaining_bytes: usize) -> Result<(), io::Error> {
+    // If no remaining bytes, let normal parsing fail with proper error message
+    if remaining_bytes == 0 {
+        return Ok(());
+    }
+
+    // Reject if count is wildly disproportionate to remaining data
+    // Each item needs at least 1 byte, so count > remaining_bytes is suspicious
+    // Allow some slack for LEB128 encoding overhead, but catch extreme cases
+    let max_reasonable = remaining_bytes.saturating_mul(2);
+    if count as usize > max_reasonable {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "unexpected end of section or function",
+        ));
+    }
+    Ok(())
+}
+
 pub fn parse(
     module_registry: &HashMap<String, module::Module>,
     name: &str,
@@ -267,6 +296,9 @@ fn read_value_types_list(bytes: &mut reader::Reader) -> Result<Vec<module::Value
 fn read_section_type(bytes: &mut reader::Reader, types: &mut module::TypeSection) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
 
+    // Validate count - each type needs at least 3 bytes (0x60 + params len + returns len)
+    validate_count(count, bytes.remaining())?;
+
     for _ in 0..count {
         if bytes.read_byte()? != 0x60 {
             return Err(io::Error::new(
@@ -298,6 +330,10 @@ fn read_section_import(
     tables: &module::TableSection,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
+
+    // Validate count - each import needs at least 4 bytes (2 string lengths + 1 kind + 1 index)
+    validate_count(count, bytes.remaining())?;
+
     let mut memory_import_count = 0;
 
     for _ in 0..count {
@@ -352,6 +388,9 @@ fn read_section_function(
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
 
+    // Validate count - each function needs at least 1 byte for type index
+    validate_count(count, bytes.remaining())?;
+
     for _ in 0..count {
         let ftype_index = bytes.read_vu32()?;
         if ftype_index >= types.len() as u32 {
@@ -377,6 +416,9 @@ fn read_section_memory(
     imports: &module::ImportSection,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
+
+    // Validate count - each memory needs at least 1 byte for limits flag
+    validate_count(count, bytes.remaining())?;
 
     // Check if we already have imported memories
     let imported_memory_count = imports
@@ -408,6 +450,9 @@ fn read_section_export(
     memory: &module::MemorySection,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
+
+    // Validate count - each export needs at least 3 bytes (name len + type + index)
+    validate_count(count, bytes.remaining())?;
 
     for _ in 0..count {
         let name = bytes.read_string()?;
@@ -464,6 +509,9 @@ fn read_section_export(
 
 fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
+
+    // Validate count - each code entry needs at least 2 bytes (size + locals count)
+    validate_count(count, bytes.remaining())?;
 
     // TODO: this check is duplicated after the section read loop
     if count != module.functions.functions.len() as u32 {
@@ -587,14 +635,18 @@ fn read_section_data(
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
-    if let Some(expected_count) = data_count {
-        if expected_count != count {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "data count and data section have inconsistent lengths",
-            )
-            .into());
-        }
+    // Validate count against section length to prevent OOM from malformed input
+    // Each data entry needs at least 1 byte for the mode
+    validate_count(count, bytes.remaining())?;
+
+    if let Some(expected_count) = data_count
+        && expected_count != count
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "data count and data section have inconsistent lengths",
+        )
+        .into());
     }
 
     for _ in 0..count {
@@ -708,6 +760,9 @@ fn read_section_global(
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
 
+    // Validate count - each global needs at least 3 bytes (type + mutability + init expr)
+    validate_count(count, bytes.remaining())?;
+
     for _ in 0..count {
         let data = module::Global::decode(bytes, imports, total_functions)?;
         globals.globals.push(data);
@@ -733,14 +788,14 @@ impl module::Limits {
         let min = bytes.read_vu32()?;
         let max = if has_max { Some(bytes.read_vu32()?) } else { None };
 
-        if let Some(max_val) = max {
-            if min > max_val {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "size minimum must not be greater than maximum",
-                )
-                .into());
-            }
+        if let Some(max_val) = max
+            && min > max_val
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "size minimum must not be greater than maximum",
+            )
+            .into());
         }
 
         Ok(module::Limits { min, max })
@@ -764,14 +819,14 @@ impl module::Limits {
             None
         };
 
-        if let Some(max_val) = max {
-            if min > max_val {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "size minimum must not be greater than maximum",
-                )
-                .into());
-            }
+        if let Some(max_val) = max
+            && min > max_val
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "size minimum must not be greater than maximum",
+            )
+            .into());
         }
 
         // Check 65536 page limit (4GiB) for memory min
@@ -801,6 +856,9 @@ fn read_section_table(
     table: &mut module::TableSection,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
+
+    // Validate count - each table needs at least 2 bytes (ref type + limits flag)
+    validate_count(count, bytes.remaining())?;
 
     for _ in 0..count {
         let table_type = module::TableType::decode(bytes)?;
@@ -847,6 +905,7 @@ impl module::Element {
                          return_type: module::ValueType|
          -> Result<Vec<Vec<instruction::Instruction>>, instruction::DecodeError> {
             let count = bytes.read_vu32()?;
+            validate_count(count, bytes.remaining())?;
             let mut init: Vec<Vec<instruction::Instruction>> = vec![];
             for _ in 0..count {
                 init.push(instruction::decode_constant_expression(bytes, imports, return_type)?);
@@ -855,6 +914,7 @@ impl module::Element {
         };
         let read_func_indexes = |bytes: &mut reader::Reader| -> Result<Vec<u32>, io::Error> {
             let count = bytes.read_vu32()?;
+            validate_count(count, bytes.remaining())?;
             let mut func_indexes: Vec<u32> = vec![];
             for _ in 0..count {
                 let func_index = bytes.read_vu32()?;
@@ -992,10 +1052,10 @@ impl module::Element {
             } else {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown table {table_index}")).into());
             };
-            if let Some(ref_type) = ref_type {
-                if element.ref_type != ref_type.ref_type {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "element type mismatch").into());
-                }
+            if let Some(ref_type) = ref_type
+                && element.ref_type != ref_type.ref_type
+            {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "element type mismatch").into());
             }
         };
         Ok(element)
@@ -1010,6 +1070,9 @@ fn read_section_elements(
     function_count: u32,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
+
+    // Validate count - each element needs at least 2 bytes (flags + init)
+    validate_count(count, bytes.remaining())?;
 
     for _ in 0..count {
         let element = module::Element::decode(bytes, imports, table, function_count)?;

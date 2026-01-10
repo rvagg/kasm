@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::{Engine as _, engine::general_purpose};
     use kasm::parser::module;
-    use kasm::runtime::{implemented::is_instruction_implemented, FunctionInstance, ImportObject, Store, Value};
+    use kasm::runtime::{FunctionInstance, ImportObject, Store, Value, implemented::is_instruction_implemented};
     use rstest::rstest;
 
-    use serde::de::{self, Deserializer};
     use serde::Deserialize;
+    use serde::de::{self, Deserializer};
     use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
@@ -540,7 +540,8 @@ mod tests {
                             // Both error messages are valid per WebAssembly specification.
                             if icab.command.filename == "select.2.wasm" && icab.command.text == "invalid result arity" {
                                 assert!(
-                                    e.to_string().contains("type mismatch") || e.to_string().contains(&icab.command.text),
+                                    e.to_string().contains("type mismatch")
+                                        || e.to_string().contains(&icab.command.text),
                                     "Error message does not match expected. Error message = '{}', expected text = '{}' or 'type mismatch', filename = {}, line in source is {}",
                                     e,
                                     &icab.command.text,
@@ -550,7 +551,8 @@ mod tests {
                             } else if icab.command.text == "malformed UTF-8 encoding" {
                                 // Accept both "malformed UTF-8 encoding" and "invalid utf-8 sequence"
                                 assert!(
-                                    e.to_string().contains("malformed UTF-8") || e.to_string().contains("invalid utf-8"),
+                                    e.to_string().contains("malformed UTF-8")
+                                        || e.to_string().contains("invalid utf-8"),
                                     "Error message does not match UTF-8 error. Error message = '{}', expected text = '{}' or 'invalid utf-8 sequence', filename = {}, line in source is {}",
                                     e,
                                     &icab.command.text,

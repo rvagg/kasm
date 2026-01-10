@@ -140,7 +140,7 @@ pub fn default_value_for_type(value_type: ValueType) -> Result<Value, RuntimeErr
         ValueType::V128 => {
             return Err(RuntimeError::UnimplementedInstruction(
                 "V128 type not yet supported".to_string(),
-            ))
+            ));
         }
     })
 }

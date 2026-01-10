@@ -2,7 +2,7 @@
 name = "kasm"
 version = "0.0.1"
 authors = [ "Rod Vagg <r@va.gg>" ]
-edition = "2018"
+edition = "2024"
 
 [dependencies]
 byteorder = "1.5"

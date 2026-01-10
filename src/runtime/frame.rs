@@ -2,7 +2,7 @@
 //!
 //! Represents the call frame for function execution, containing locals and control flow state
 
-use super::{control::Label, Value};
+use super::{Value, control::Label};
 
 /// Call frame for managing function calls
 #[derive(Debug)]

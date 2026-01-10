@@ -3,7 +3,7 @@
 //! This tool analyses which spec tests would be enabled by implementing
 //! specific instructions, helping prioritise development efforts.
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use kasm::parser::{self, module::Module};
 use kasm::runtime::implemented::get_implemented_instructions;
 use serde::Deserialize;
@@ -69,12 +69,12 @@ fn analyse_test_file(
     for cmd in &test_data.spec.commands {
         match cmd {
             TestCommand::Module { r#type, filename, .. } if r#type == "module" => {
-                if let Some(encoded) = test_data.bin.get(filename) {
-                    if let Ok(wasm_data) = general_purpose::STANDARD.decode(encoded) {
-                        let mut reader = parser::reader::Reader::new(wasm_data);
-                        if let Ok(module) = parser::parse(&HashMap::new(), filename, &mut reader) {
-                            parsed_modules.insert(filename.clone(), module);
-                        }
+                if let Some(encoded) = test_data.bin.get(filename)
+                    && let Ok(wasm_data) = general_purpose::STANDARD.decode(encoded)
+                {
+                    let mut reader = parser::reader::Reader::new(wasm_data);
+                    if let Ok(module) = parser::parse(&HashMap::new(), filename, &mut reader) {
+                        parsed_modules.insert(filename.clone(), module);
                     }
                 }
             }
@@ -120,14 +120,13 @@ fn get_function_instructions(module: &Module, func_name: &str) -> Vec<String> {
 
     // Find the function index
     for export in &module.exports.exports {
-        if export.name == func_name {
-            if let parser::module::ExportIndex::Function(idx) = export.index {
-                if let Some(body) = module.code.code.get(idx as usize) {
-                    let flat_instructions = body.body.flatten();
-                    for inst in &flat_instructions {
-                        instructions.push(inst.kind.mnemonic().to_string());
-                    }
-                }
+        if export.name == func_name
+            && let parser::module::ExportIndex::Function(idx) = export.index
+            && let Some(body) = module.code.code.get(idx as usize)
+        {
+            let flat_instructions = body.body.flatten();
+            for inst in &flat_instructions {
+                instructions.push(inst.kind.mnemonic().to_string());
             }
         }
     }
@@ -184,18 +183,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for entry in fs::read_dir(test_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Ok(analysis) = analyse_test_file(&path, &implemented) {
-                total_runnable += analysis.runnable_tests;
-                total_tests += analysis.total_tests;
+        if path.extension().and_then(|s| s.to_str()) == Some("json")
+            && let Ok(analysis) = analyse_test_file(&path, &implemented)
+        {
+            total_runnable += analysis.runnable_tests;
+            total_tests += analysis.total_tests;
 
-                // Track impact of each missing instruction
-                for (inst, count) in &analysis.blocked_tests {
-                    *instruction_impact.entry(inst.clone()).or_insert(0) += count;
-                }
-
-                results.push(analysis);
+            // Track impact of each missing instruction
+            for (inst, count) in &analysis.blocked_tests {
+                *instruction_impact.entry(inst.clone()).or_insert(0) += count;
             }
+
+            results.push(analysis);
         }
     }
 
@@ -266,16 +265,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for entry in fs::read_dir(test_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                if let Ok(base_analysis) = analyse_test_file(&path, &base_implemented) {
-                    if let Ok(new_analysis) = analyse_test_file(&path, &implemented) {
-                        if new_analysis.runnable_tests > base_analysis.runnable_tests {
-                            let delta = new_analysis.runnable_tests - base_analysis.runnable_tests;
-                            new_runnable += delta;
-                            println!("  {:<30} +{} tests", new_analysis.filename, delta);
-                        }
-                    }
-                }
+            if path.extension().and_then(|s| s.to_str()) == Some("json")
+                && let Ok(base_analysis) = analyse_test_file(&path, &base_implemented)
+                && let Ok(new_analysis) = analyse_test_file(&path, &implemented)
+                && new_analysis.runnable_tests > base_analysis.runnable_tests
+            {
+                let delta = new_analysis.runnable_tests - base_analysis.runnable_tests;
+                new_runnable += delta;
+                println!("  {:<30} +{} tests", new_analysis.filename, delta);
             }
         }
         println!("\nTotal new tests enabled: +{new_runnable}");

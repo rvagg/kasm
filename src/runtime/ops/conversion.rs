@@ -672,8 +672,8 @@ pub fn i64_trunc_sat_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
 mod tests {
     use crate::parser::instruction::InstructionKind;
     use crate::parser::module::ValueType;
-    use crate::runtime::test_utils::test::ExecutorTest;
     use crate::runtime::Value;
+    use crate::runtime::test_utils::test::ExecutorTest;
 
     // ============================================================================
     // Integer Width Conversion Tests

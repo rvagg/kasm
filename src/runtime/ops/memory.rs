@@ -648,7 +648,7 @@ mod tests {
     use crate::parser::structure_builder::StructureBuilder;
     use crate::runtime::executor::Executor;
     use crate::runtime::memory::PAGE_SIZE;
-    use crate::runtime::test_utils::test::{make_instruction, ExecutorTest};
+    use crate::runtime::test_utils::test::{ExecutorTest, make_instruction};
     use crate::runtime::{ExecutionOutcome, RuntimeError, Value};
     use InstructionKind::*; // Allow shorthand names
 

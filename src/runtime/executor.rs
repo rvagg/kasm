@@ -1,15 +1,15 @@
 //! WebAssembly instruction executor
 
 use super::{
+    ExecutionOutcome, ExternalCallRequest, RuntimeError, Value,
     control::{Label, LabelStack, LabelType},
     frame::CallFrame,
-    imports::{default_value_for_type, is_global_mutable, ImportObject},
+    imports::{ImportObject, default_value_for_type, is_global_mutable},
     memory::Memory,
     ops,
     stack::Stack,
     store::{SharedMemory, SharedTable},
     table::Table,
-    ExecutionOutcome, ExternalCallRequest, RuntimeError, Value,
 };
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
 use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
@@ -370,7 +370,7 @@ impl<'a> Executor<'a> {
                         _ => {
                             return Err(RuntimeError::MemoryError(
                                 "Data segment offset must be an i32".to_string(),
-                            ))
+                            ));
                         }
                     };
 
@@ -553,7 +553,7 @@ impl<'a> Executor<'a> {
                     _ => {
                         return Err(RuntimeError::UnimplementedInstruction(format!(
                             "Local type {local_type:?} not supported"
-                        )))
+                        )));
                     }
                 };
                 locals.push(zero_value);
@@ -708,7 +708,7 @@ impl<'a> Executor<'a> {
                         _ => {
                             return Err(RuntimeError::UnimplementedInstruction(format!(
                                 "Local type {local_type:?} not supported"
-                            )))
+                            )));
                         }
                     };
                     locals.push(zero_value);
@@ -1332,7 +1332,7 @@ impl<'a> Executor<'a> {
                         return Err(RuntimeError::InvalidConversion(format!(
                             "Invalid reference type for ref.null: {:?}",
                             ref_type
-                        )))
+                        )));
                     }
                 }
                 Ok(BlockEnd::Normal)
@@ -1358,7 +1358,7 @@ impl<'a> Executor<'a> {
                         return Err(RuntimeError::TypeMismatch {
                             expected: "reference type".to_string(),
                             actual: format!("{:?}", value.typ()),
-                        })
+                        });
                     }
                 };
                 self.stack.push(Value::I32(is_null));
@@ -2486,8 +2486,8 @@ mod tests {
     use crate::parser::instruction::{BlockType, InstructionKind};
     use crate::parser::module::{Module, ValueType};
     use crate::parser::structure_builder::StructureBuilder;
-    use crate::runtime::test_utils::test::{make_instruction, ExecutorTest};
     use crate::runtime::Value;
+    use crate::runtime::test_utils::test::{ExecutorTest, make_instruction};
 
     // ============================================================================
     // Simple Control Instruction Tests

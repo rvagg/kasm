@@ -1,8 +1,8 @@
 //! WebAssembly module instance
 
 use super::{
-    executor::Executor, imports::ImportObject, store::SharedMemory, store::SharedTable, ExecutionOutcome, FuncAddr,
-    MemoryAddr, RuntimeError, TableAddr, Value,
+    ExecutionOutcome, FuncAddr, MemoryAddr, RuntimeError, TableAddr, Value, executor::Executor, imports::ImportObject,
+    store::SharedMemory, store::SharedTable,
 };
 use crate::parser::module::{ExportIndex, Module, Positional};
 use std::collections::HashMap;

@@ -34,11 +34,7 @@ fn format_function_name(name: &str) -> String {
 /// The control sequence "\x00\x01\x02...\x0F" is shown as an empty string "",
 /// while all other strings are returned as-is.
 fn get_export_string_display(name: &str) -> &str {
-    if is_wabt_empty_control_sequence(name) {
-        ""
-    } else {
-        name
-    }
+    if is_wabt_empty_control_sequence(name) { "" } else { name }
 }
 
 #[derive(Debug)]
@@ -900,10 +896,10 @@ impl SectionToString for ExportSection {
                     // Find the last export for this function
                     let mut last_export_name = "";
                     for exp in &self.exports {
-                        if let ExportIndex::Function(f_idx) = exp.index {
-                            if f_idx == func_idx {
-                                last_export_name = &exp.name;
-                            }
+                        if let ExportIndex::Function(f_idx) = exp.index
+                            && f_idx == func_idx
+                        {
+                            last_export_name = &exp.name;
                         }
                     }
 
@@ -1270,8 +1266,8 @@ impl CodeSection {
             let mut pos = function_body.position.start as usize;
             result.push_str(&format!("{pos:06x} func[{fi}]{exp}:\n"));
             pos += 1; // TODO: do we need more bytes to represent a function start?
-                      // for each instruction, ignoring the opcodes for now
-                      //  00011f: 20 00                      | local.get 0
+            // for each instruction, ignoring the opcodes for now
+            //  00011f: 20 00                      | local.get 0
 
             let mut offset = ftype.parameters.len() as u32;
             function_body.locals.iter().for_each(|(count, value_type)| {
@@ -1794,10 +1790,7 @@ impl fmt::Display for ElementMode {
         match self {
             ElementMode::Passive => write!(f, "Passive"),
             ElementMode::Declarative => write!(f, "Declarative"),
-            ElementMode::Active {
-                table_index,
-                ref offset,
-            } => {
+            ElementMode::Active { table_index, offset } => {
                 write!(f, "Active {{ table_index = {table_index}, offset =").unwrap();
                 for instruction in offset {
                     write!(f, "{instruction} ")?;
@@ -1851,10 +1844,7 @@ impl fmt::Display for DataMode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             DataMode::Passive => write!(f, "Passive"),
-            DataMode::Active {
-                memory_index,
-                ref offset,
-            } => {
+            DataMode::Active { memory_index, offset } => {
                 write!(f, "Active {{ memory_index = {memory_index}, offset =").unwrap();
                 for instruction in offset {
                     write!(f, "{instruction} ")?;

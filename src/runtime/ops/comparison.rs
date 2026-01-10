@@ -335,8 +335,8 @@ pub fn f64_ge(stack: &mut Stack) -> Result<(), RuntimeError> {
 mod tests {
     use crate::parser::instruction::InstructionKind;
     use crate::parser::module::ValueType;
-    use crate::runtime::test_utils::test::ExecutorTest;
     use crate::runtime::Value;
+    use crate::runtime::test_utils::test::ExecutorTest;
 
     // ============================================================================
     // i32 Test Operations

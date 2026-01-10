@@ -8,8 +8,8 @@ pub mod test {
     use crate::parser::instruction::{ByteRange, Instruction, InstructionKind};
     use crate::parser::module::{Global, GlobalSection, GlobalType, Module, ValueType};
     use crate::parser::structure_builder::StructureBuilder;
-    use crate::runtime::executor::Executor;
     use crate::runtime::Value;
+    use crate::runtime::executor::Executor;
 
     /// Test builder for creating executor tests fluently
     pub struct ExecutorTest {

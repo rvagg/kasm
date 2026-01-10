@@ -137,8 +137,8 @@ pub fn unreachable() -> Result<BlockEnd, RuntimeError> {
 mod tests {
     use crate::parser::instruction::{BlockType, InstructionKind};
     use crate::parser::module::ValueType;
-    use crate::runtime::test_utils::test::ExecutorTest;
     use crate::runtime::Value;
+    use crate::runtime::test_utils::test::ExecutorTest;
 
     // ============================================================================
     // Block and Control Flow Tests

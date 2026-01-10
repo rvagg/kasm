@@ -1,0 +1,37 @@
+[package]
+name = "kasm-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.kasm]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "parse_module"
+path = "fuzz_targets/parse_module.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "execute_module"
+path = "fuzz_targets/execute_module.rs"
+test = false
+doc = false
+bench = false

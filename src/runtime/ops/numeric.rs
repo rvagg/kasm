@@ -627,11 +627,7 @@ pub fn f32_min(stack: &mut Stack) -> Result<(), RuntimeError> {
         f32::NAN
     } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
         // -0.0 is less than +0.0
-        if c1.is_sign_negative() {
-            c1
-        } else {
-            c2
-        }
+        if c1.is_sign_negative() { c1 } else { c2 }
     } else {
         c1.min(c2)
     };
@@ -651,11 +647,7 @@ pub fn f32_max(stack: &mut Stack) -> Result<(), RuntimeError> {
         f32::NAN
     } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
         // +0.0 is greater than -0.0
-        if c1.is_sign_negative() {
-            c2
-        } else {
-            c1
-        }
+        if c1.is_sign_negative() { c2 } else { c1 }
     } else {
         c1.max(c2)
     };
@@ -741,11 +733,7 @@ pub fn f64_min(stack: &mut Stack) -> Result<(), RuntimeError> {
         f64::NAN
     } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
         // -0.0 is less than +0.0
-        if c1.is_sign_negative() {
-            c1
-        } else {
-            c2
-        }
+        if c1.is_sign_negative() { c1 } else { c2 }
     } else {
         c1.min(c2)
     };
@@ -765,11 +753,7 @@ pub fn f64_max(stack: &mut Stack) -> Result<(), RuntimeError> {
         f64::NAN
     } else if c1 == 0.0 && c2 == 0.0 && c1.is_sign_negative() != c2.is_sign_negative() {
         // +0.0 is greater than -0.0
-        if c1.is_sign_negative() {
-            c2
-        } else {
-            c1
-        }
+        if c1.is_sign_negative() { c2 } else { c1 }
     } else {
         c1.max(c2)
     };
@@ -828,8 +812,8 @@ pub fn i64_popcnt(stack: &mut Stack) -> Result<(), RuntimeError> {
 mod tests {
     use crate::parser::instruction::InstructionKind;
     use crate::parser::module::ValueType;
-    use crate::runtime::test_utils::test::ExecutorTest;
     use crate::runtime::Value;
+    use crate::runtime::test_utils::test::ExecutorTest;
 
     mod constants {
         use super::*;

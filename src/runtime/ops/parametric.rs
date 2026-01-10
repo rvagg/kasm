@@ -64,8 +64,8 @@ pub fn select_typed(stack: &mut Stack, _val_types: &[ValueType]) -> Result<(), R
 mod tests {
     use crate::parser::instruction::InstructionKind;
     use crate::parser::module::ValueType;
-    use crate::runtime::test_utils::test::ExecutorTest;
     use crate::runtime::Value;
+    use crate::runtime::test_utils::test::ExecutorTest;
 
     #[test]
     fn drop_single_value() {
