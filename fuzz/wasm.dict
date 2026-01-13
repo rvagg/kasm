@@ -1,0 +1,316 @@
+# WebAssembly dictionary for libFuzzer
+# This helps the fuzzer understand WebAssembly binary format structure
+
+# Magic number and version
+"\x00asm"
+"\x01\x00\x00\x00"
+"\x00asm\x01\x00\x00\x00"
+
+# Section IDs (single byte)
+sec_custom="\x00"
+sec_type="\x01"
+sec_import="\x02"
+sec_function="\x03"
+sec_table="\x04"
+sec_memory="\x05"
+sec_global="\x06"
+sec_export="\x07"
+sec_start="\x08"
+sec_element="\x09"
+sec_code="\x0a"
+sec_data="\x0b"
+sec_datacount="\x0c"
+
+# Value types
+type_i32="\x7f"
+type_i64="\x7e"
+type_f32="\x7d"
+type_f64="\x7c"
+type_funcref="\x70"
+type_externref="\x6f"
+
+# Function signature marker
+func_marker="\x60"
+
+# Block types
+block_void="\x40"
+
+# Limits flags
+limits_min="\x00"
+limits_minmax="\x01"
+
+# Import/export kinds
+kind_func="\x00"
+kind_table="\x01"
+kind_mem="\x02"
+kind_global="\x03"
+
+# Global mutability
+mut_const="\x00"
+mut_var="\x01"
+
+# Control flow opcodes
+op_unreachable="\x00"
+op_nop="\x01"
+op_block="\x02"
+op_loop="\x03"
+op_if="\x04"
+op_else="\x05"
+op_end="\x0b"
+op_br="\x0c"
+op_br_if="\x0d"
+op_br_table="\x0e"
+op_return="\x0f"
+op_call="\x10"
+op_call_indirect="\x11"
+
+# Reference opcodes
+op_drop="\x1a"
+op_select="\x1b"
+op_select_typed="\x1c"
+op_ref_null="\xd0"
+op_ref_is_null="\xd1"
+op_ref_func="\xd2"
+
+# Variable opcodes
+op_local_get="\x20"
+op_local_set="\x21"
+op_local_tee="\x22"
+op_global_get="\x23"
+op_global_set="\x24"
+
+# Table opcodes (0xFC prefix)
+op_table_init="\xfc\x0c"
+op_elem_drop="\xfc\x0d"
+op_table_copy="\xfc\x0e"
+op_table_grow="\xfc\x0f"
+op_table_size="\xfc\x10"
+op_table_fill="\xfc\x11"
+
+# Memory load opcodes
+op_i32_load="\x28"
+op_i64_load="\x29"
+op_f32_load="\x2a"
+op_f64_load="\x2b"
+op_i32_load8_s="\x2c"
+op_i32_load8_u="\x2d"
+op_i32_load16_s="\x2e"
+op_i32_load16_u="\x2f"
+op_i64_load8_s="\x30"
+op_i64_load8_u="\x31"
+op_i64_load16_s="\x32"
+op_i64_load16_u="\x33"
+op_i64_load32_s="\x34"
+op_i64_load32_u="\x35"
+
+# Memory store opcodes
+op_i32_store="\x36"
+op_i64_store="\x37"
+op_f32_store="\x38"
+op_f64_store="\x39"
+op_i32_store8="\x3a"
+op_i32_store16="\x3b"
+op_i64_store8="\x3c"
+op_i64_store16="\x3d"
+op_i64_store32="\x3e"
+op_memory_size="\x3f\x00"
+op_memory_grow="\x40\x00"
+
+# Memory bulk operations (0xFC prefix)
+op_memory_init="\xfc\x08"
+op_data_drop="\xfc\x09"
+op_memory_copy="\xfc\x0a"
+op_memory_fill="\xfc\x0b"
+
+# Numeric constants
+op_i32_const="\x41"
+op_i64_const="\x42"
+op_f32_const="\x43"
+op_f64_const="\x44"
+
+# i32 comparison
+op_i32_eqz="\x45"
+op_i32_eq="\x46"
+op_i32_ne="\x47"
+op_i32_lt_s="\x48"
+op_i32_lt_u="\x49"
+op_i32_gt_s="\x4a"
+op_i32_gt_u="\x4b"
+op_i32_le_s="\x4c"
+op_i32_le_u="\x4d"
+op_i32_ge_s="\x4e"
+op_i32_ge_u="\x4f"
+
+# i64 comparison
+op_i64_eqz="\x50"
+op_i64_eq="\x51"
+op_i64_ne="\x52"
+op_i64_lt_s="\x53"
+op_i64_lt_u="\x54"
+op_i64_gt_s="\x55"
+op_i64_gt_u="\x56"
+op_i64_le_s="\x57"
+op_i64_le_u="\x58"
+op_i64_ge_s="\x59"
+op_i64_ge_u="\x5a"
+
+# f32 comparison
+op_f32_eq="\x5b"
+op_f32_ne="\x5c"
+op_f32_lt="\x5d"
+op_f32_gt="\x5e"
+op_f32_le="\x5f"
+op_f32_ge="\x60"
+
+# f64 comparison
+op_f64_eq="\x61"
+op_f64_ne="\x62"
+op_f64_lt="\x63"
+op_f64_gt="\x64"
+op_f64_le="\x65"
+op_f64_ge="\x66"
+
+# i32 operations
+op_i32_clz="\x67"
+op_i32_ctz="\x68"
+op_i32_popcnt="\x69"
+op_i32_add="\x6a"
+op_i32_sub="\x6b"
+op_i32_mul="\x6c"
+op_i32_div_s="\x6d"
+op_i32_div_u="\x6e"
+op_i32_rem_s="\x6f"
+op_i32_rem_u="\x70"
+op_i32_and="\x71"
+op_i32_or="\x72"
+op_i32_xor="\x73"
+op_i32_shl="\x74"
+op_i32_shr_s="\x75"
+op_i32_shr_u="\x76"
+op_i32_rotl="\x77"
+op_i32_rotr="\x78"
+
+# i64 operations
+op_i64_clz="\x79"
+op_i64_ctz="\x7a"
+op_i64_popcnt="\x7b"
+op_i64_add="\x7c"
+op_i64_sub="\x7d"
+op_i64_mul="\x7e"
+op_i64_div_s="\x7f"
+op_i64_div_u="\x80"
+op_i64_rem_s="\x81"
+op_i64_rem_u="\x82"
+op_i64_and="\x83"
+op_i64_or="\x84"
+op_i64_xor="\x85"
+op_i64_shl="\x86"
+op_i64_shr_s="\x87"
+op_i64_shr_u="\x88"
+op_i64_rotl="\x89"
+op_i64_rotr="\x8a"
+
+# f32 operations
+op_f32_abs="\x8b"
+op_f32_neg="\x8c"
+op_f32_ceil="\x8d"
+op_f32_floor="\x8e"
+op_f32_trunc="\x8f"
+op_f32_nearest="\x90"
+op_f32_sqrt="\x91"
+op_f32_add="\x92"
+op_f32_sub="\x93"
+op_f32_mul="\x94"
+op_f32_div="\x95"
+op_f32_min="\x96"
+op_f32_max="\x97"
+op_f32_copysign="\x98"
+
+# f64 operations
+op_f64_abs="\x99"
+op_f64_neg="\x9a"
+op_f64_ceil="\x9b"
+op_f64_floor="\x9c"
+op_f64_trunc="\x9d"
+op_f64_nearest="\x9e"
+op_f64_sqrt="\x9f"
+op_f64_add="\xa0"
+op_f64_sub="\xa1"
+op_f64_mul="\xa2"
+op_f64_div="\xa3"
+op_f64_min="\xa4"
+op_f64_max="\xa5"
+op_f64_copysign="\xa6"
+
+# Conversions
+op_i32_wrap_i64="\xa7"
+op_i32_trunc_f32_s="\xa8"
+op_i32_trunc_f32_u="\xa9"
+op_i32_trunc_f64_s="\xaa"
+op_i32_trunc_f64_u="\xab"
+op_i64_extend_i32_s="\xac"
+op_i64_extend_i32_u="\xad"
+op_i64_trunc_f32_s="\xae"
+op_i64_trunc_f32_u="\xaf"
+op_i64_trunc_f64_s="\xb0"
+op_i64_trunc_f64_u="\xb1"
+op_f32_convert_i32_s="\xb2"
+op_f32_convert_i32_u="\xb3"
+op_f32_convert_i64_s="\xb4"
+op_f32_convert_i64_u="\xb5"
+op_f32_demote_f64="\xb6"
+op_f64_convert_i32_s="\xb7"
+op_f64_convert_i32_u="\xb8"
+op_f64_convert_i64_s="\xb9"
+op_f64_convert_i64_u="\xba"
+op_f64_promote_f32="\xbb"
+op_i32_reinterpret_f32="\xbc"
+op_i64_reinterpret_f64="\xbd"
+op_f32_reinterpret_i32="\xbe"
+op_f64_reinterpret_i64="\xbf"
+
+# Sign extension
+op_i32_extend8_s="\xc0"
+op_i32_extend16_s="\xc1"
+op_i64_extend8_s="\xc2"
+op_i64_extend16_s="\xc3"
+op_i64_extend32_s="\xc4"
+
+# Saturating truncation (0xFC prefix)
+op_i32_trunc_sat_f32_s="\xfc\x00"
+op_i32_trunc_sat_f32_u="\xfc\x01"
+op_i32_trunc_sat_f64_s="\xfc\x02"
+op_i32_trunc_sat_f64_u="\xfc\x03"
+op_i64_trunc_sat_f32_s="\xfc\x04"
+op_i64_trunc_sat_f32_u="\xfc\x05"
+op_i64_trunc_sat_f64_s="\xfc\x06"
+op_i64_trunc_sat_f64_u="\xfc\x07"
+
+# Common LEB128 values
+leb_0="\x00"
+leb_1="\x01"
+leb_2="\x02"
+leb_3="\x03"
+leb_4="\x04"
+leb_127="\x7f"
+leb_128="\x80\x01"
+leb_255="\xff\x01"
+leb_256="\x80\x02"
+leb_16383="\xff\x7f"
+leb_65536="\x80\x80\x04"
+
+# Common alignment values for memory ops
+align_0_offset_0="\x00\x00"
+align_1_offset_0="\x01\x00"
+align_2_offset_0="\x02\x00"
+align_3_offset_0="\x03\x00"
+
+# Minimal valid function body
+func_body_empty="\x00\x0b"
+
+# Common export names
+name_main="main"
+name_start="_start"
+name_memory="memory"
+name_heap_base="__heap_base"
+name_data_end="__data_end"

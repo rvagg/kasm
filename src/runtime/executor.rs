@@ -94,6 +94,8 @@ pub struct Executor<'a> {
     saved_contexts: Option<Vec<ExecutionContext>>,
     /// Expected return types when resuming from external call
     saved_return_types: Vec<ValueType>,
+    /// Optional instruction budget - execution stops when exhausted
+    instruction_budget: Option<u64>,
 }
 
 impl<'a> Executor<'a> {
@@ -196,6 +198,7 @@ impl<'a> Executor<'a> {
             module_globals,                 // Store for later initialisation
             saved_contexts: None,           // For resumable execution
             saved_return_types: Vec::new(), // For resumable execution
+            instruction_budget: None,       // No budget limit by default
         };
 
         // Note: Globals and element segments are NOT initialised here because their init
@@ -670,6 +673,15 @@ impl<'a> Executor<'a> {
         Ok(())
     }
 
+    /// Set an instruction budget limit for execution
+    ///
+    /// When set, the executor will count instructions and return
+    /// `RuntimeError::InstructionBudgetExhausted` when the budget is exhausted.
+    /// Pass `None` to disable the limit.
+    pub fn set_instruction_budget(&mut self, budget: Option<u64>) {
+        self.instruction_budget = budget;
+    }
+
     /// Execute a function
     pub fn execute_function(
         &mut self,
@@ -789,6 +801,14 @@ impl<'a> Executor<'a> {
                     }
                 }
                 continue 'execution;
+            }
+
+            // Check instruction budget before executing
+            if let Some(ref mut remaining) = self.instruction_budget {
+                if *remaining == 0 {
+                    return Err(RuntimeError::InstructionBudgetExhausted);
+                }
+                *remaining -= 1;
             }
 
             // Execute current instruction
@@ -2794,7 +2814,7 @@ mod tests {
                 .create_instance(&module, Some(&imports))
                 .expect("Instance creation should succeed");
             let result = store
-                .invoke_export(instance_id, "main", vec![])
+                .invoke_export(instance_id, "main", vec![], None)
                 .expect("Function call should succeed");
 
             assert_eq!(result, vec![Value::I32(42)], "Main should call helper and return 42");
@@ -2854,13 +2874,13 @@ mod tests {
 
             // Test factorial(5) = 120
             let result = store
-                .invoke_export(instance_id, "factorial", vec![Value::I32(5)])
+                .invoke_export(instance_id, "factorial", vec![Value::I32(5)], None)
                 .expect("Factorial should succeed");
             assert_eq!(result, vec![Value::I32(120)]);
 
             // Test factorial(0) = 1
             let result = store
-                .invoke_export(instance_id, "factorial", vec![Value::I32(0)])
+                .invoke_export(instance_id, "factorial", vec![Value::I32(0)], None)
                 .expect("Factorial should succeed");
             assert_eq!(result, vec![Value::I32(1)]);
         }

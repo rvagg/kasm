@@ -369,7 +369,7 @@ mod tests {
                     }
 
                     // Invoke the function through Store (handles cross-module calls)
-                    match store.invoke_export(instance_id, &cmd.action.field, args) {
+                    match store.invoke_export(instance_id, &cmd.action.field, args, None) {
                         Ok(results) => {
                             // Compare results
                             if results.len() != cmd.expected.len() {

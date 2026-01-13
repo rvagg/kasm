@@ -335,4 +335,12 @@ impl<'a> Instance<'a> {
             Err(RuntimeError::UnknownExport(format!("{} is not a table export", name)))
         }
     }
+
+    /// Set an instruction budget limit for execution
+    ///
+    /// When set, execution will stop with `RuntimeError::InstructionBudgetExhausted`
+    /// when the budget is exhausted. Pass `None` to disable the limit.
+    pub fn set_instruction_budget(&mut self, budget: Option<u64>) {
+        self.executor.set_instruction_budget(budget);
+    }
 }

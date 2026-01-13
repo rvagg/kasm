@@ -52,21 +52,41 @@ Fuzzing infrastructure is in `fuzz/` using cargo-fuzz (libFuzzer).
 # Install cargo-fuzz (requires nightly)
 cargo install cargo-fuzz
 
-# Run parser fuzzer
-cargo +nightly fuzz run parse_module
+# Seed corpus from spec tests and .wasm files
+./fuzz/seed_corpus.sh
+
+# Run parser fuzzer with dictionary
+cargo +nightly fuzz run parse_module -- -dict=fuzz/wasm.dict
 
 # Run with time limit
-cargo +nightly fuzz run parse_module -- -max_total_time=60
+cargo +nightly fuzz run parse_module -- -max_total_time=60 -dict=fuzz/wasm.dict
+
+# Run execution fuzzer (provides typed arguments)
+cargo +nightly fuzz run execute_module -- -max_total_time=60 -dict=fuzz/wasm.dict
+
+# Run structure-aware fuzzer (generates valid modules)
+cargo +nightly fuzz run generate_module -- -max_total_time=60
 
 # Minimise a crash
 cargo fuzz tmin parse_module fuzz/artifacts/parse_module/<crash-file>
+
+# Via check.sh (runs after tests pass)
+./check.sh -f                    # Default: parse_module for 60s
+./check.sh -f 300                # 5 minutes
+./check.sh -f 60 -t execute_module   # Different target
+./check.sh -f 60 -t generate_module  # Structure-aware fuzzing
 ```
 
 **Fuzz targets:**
-- `parse_module` - Tests the binary parser with random/malformed input
-- `execute_module` - Tests parser + execution
+- `parse_module` - Byte mutation fuzzing of the binary parser
+- `execute_module` - Parser + execution with correctly typed function arguments
+- `generate_module` - Structure-aware fuzzing: generates syntactically valid modules using `arbitrary` crate
 
-**Files to commit:** `fuzz/Cargo.toml`, `fuzz/fuzz_targets/*.rs`, `fuzz/.gitignore`
+**Fuzzing resources:**
+- `fuzz/wasm.dict` - Dictionary with WebAssembly byte sequences (opcodes, section IDs, etc.)
+- `fuzz/seed_corpus.sh` - Seeds corpus from .wasm files and spec test JSON
+
+**Files to commit:** `fuzz/Cargo.toml`, `fuzz/fuzz_targets/*.rs`, `fuzz/.gitignore`, `fuzz/wasm.dict`, `fuzz/seed_corpus.sh`
 **Files to ignore:** `fuzz/target/`, `fuzz/corpus/`, `fuzz/artifacts/`
 
 ## Adding Instructions

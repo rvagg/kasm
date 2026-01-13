@@ -35,3 +35,10 @@ path = "fuzz_targets/execute_module.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "generate_module"
+path = "fuzz_targets/generate_module.rs"
+test = false
+doc = false
+bench = false

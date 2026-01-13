@@ -461,19 +461,36 @@ impl<'a> Store<'a> {
     /// Invoke an exported function by name on a specific instance
     ///
     /// This is the recommended way to invoke functions when cross-module calls may occur.
+    ///
+    /// If `instruction_budget` is `Some(n)`, execution will stop with
+    /// `RuntimeError::InstructionBudgetExhausted` after `n` instructions.
     pub fn invoke_export(
         &mut self,
         instance_id: usize,
         name: &str,
         args: Vec<Value>,
+        instruction_budget: Option<u64>,
     ) -> Result<Vec<Value>, RuntimeError> {
+        // Set instruction budget on the instance if specified
+        if let Some(instance) = self.get_instance_mut(instance_id) {
+            instance.set_instruction_budget(instruction_budget);
+        }
+
         let func_addr = {
             let instance = self
                 .get_instance(instance_id)
                 .ok_or(RuntimeError::FunctionIndexOutOfBounds(0))?;
             instance.get_function_addr(name)?
         };
-        self.execute(func_addr, args)
+
+        let result = self.execute(func_addr, args);
+
+        // Clear the budget after execution
+        if let Some(instance) = self.get_instance_mut(instance_id) {
+            instance.set_instruction_budget(None);
+        }
+
+        result
     }
 }
 
@@ -824,7 +841,7 @@ mod tests {
             .expect("Instance creation should succeed");
 
         let result = store
-            .invoke_export(instance_id, "call_host", vec![])
+            .invoke_export(instance_id, "call_host", vec![], None)
             .expect("Execution should succeed");
 
         assert_eq!(result, vec![Value::I32(42)]);
@@ -859,7 +876,7 @@ mod tests {
             .expect("Module A creation should succeed");
 
         let result = store
-            .invoke_export(instance_a, "call_b", vec![])
+            .invoke_export(instance_a, "call_b", vec![], None)
             .expect("Execution should succeed");
 
         assert_eq!(result, vec![Value::I32(100)]);
@@ -905,7 +922,7 @@ mod tests {
 
         // This is the critical test - A → B → C chain
         let result = store
-            .invoke_export(instance_a, "call_chain", vec![])
+            .invoke_export(instance_a, "call_chain", vec![], None)
             .expect("Three-module chain should succeed");
 
         assert_eq!(result, vec![Value::I32(999)]);
@@ -1015,7 +1032,7 @@ mod tests {
         // A → B → C chain with computation at each level
         // Expected: 10 + 100 + 1000 = 1110
         let result = store
-            .invoke_export(instance_a, "call_chain", vec![])
+            .invoke_export(instance_a, "call_chain", vec![], None)
             .expect("Chain should succeed");
 
         assert_eq!(
@@ -1065,7 +1082,7 @@ mod tests {
 
         // A → B → Host chain
         let result = store
-            .invoke_export(instance_a, "start_chain", vec![])
+            .invoke_export(instance_a, "start_chain", vec![], None)
             .expect("Wasm-Host-Wasm chain should succeed");
 
         assert_eq!(result, vec![Value::I32(777)]);

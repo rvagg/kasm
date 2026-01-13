@@ -101,4 +101,6 @@ pub enum RuntimeError {
         expected: String,
         actual: String,
     },
+    #[error("Instruction budget exhausted")]
+    InstructionBudgetExhausted,
 }
