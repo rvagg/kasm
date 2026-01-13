@@ -49,6 +49,32 @@ impl Reader {
         self.bytes.len() - self.pos
     }
 
+    /// Validates that a count of items is reasonable given the remaining bytes.
+    /// Each item needs at least 1 byte, so count cannot exceed remaining bytes.
+    /// This prevents OOM attacks where a malformed count causes huge allocations.
+    pub fn validate_item_count(&self, count: u32) -> Result<(), io::Error> {
+        if count as usize > self.remaining() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected end of section or function",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validates that a count of items is reasonable given a section boundary.
+    /// Each item needs at least 1 byte, so count cannot exceed remaining section bytes.
+    pub fn validate_item_count_in_section(&self, count: u32, section_end: usize) -> Result<(), io::Error> {
+        let section_remaining = section_end.saturating_sub(self.pos);
+        if count as usize > section_remaining {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected end of section or function",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn skip(&mut self, len: usize) {
         self.pos += len;
     }
@@ -145,8 +171,16 @@ impl Reader {
     }
 
     pub fn read_string(&mut self) -> Result<String, io::Error> {
+        self.read_string_bounded(self.bytes.len())
+    }
+
+    /// Read a length-prefixed UTF-8 string, validating against a section bound.
+    /// This prevents OOM attacks where a malformed length exceeds section bounds
+    /// but not file bounds, causing large allocations before the error is detected.
+    pub fn read_string_bounded(&mut self, section_end: usize) -> Result<String, io::Error> {
         let len = self.read_vu32()?;
-        if !self.has_at_least(len as usize) {
+        let section_remaining = section_end.saturating_sub(self.pos);
+        if len as usize > section_remaining {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "length out of bounds"));
         }
         let mut v: Vec<u8> = Vec::with_capacity(len as usize);
@@ -162,9 +196,17 @@ impl Reader {
     }
 
     pub fn read_u8vec(&mut self) -> Result<Vec<u8>, io::Error> {
+        self.read_u8vec_bounded(self.bytes.len())
+    }
+
+    /// Read a length-prefixed byte vector, validating against a section bound.
+    /// This prevents OOM attacks where a malformed length exceeds section bounds
+    /// but not file bounds, causing large allocations before the error is detected.
+    pub fn read_u8vec_bounded(&mut self, section_end: usize) -> Result<Vec<u8>, io::Error> {
         let len = self.read_vu64()?;
-        // Validate length against remaining bytes to prevent OOM attacks
-        if len > self.remaining() as u64 {
+        // Validate length against section remaining bytes to prevent OOM attacks
+        let section_remaining = section_end.saturating_sub(self.pos) as u64;
+        if len > section_remaining {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "unexpected end of section or function",

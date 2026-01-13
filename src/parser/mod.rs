@@ -1,4 +1,5 @@
 pub mod instruction;
+pub mod limits;
 pub mod module;
 pub mod reader;
 pub mod structure_builder;
@@ -12,35 +13,6 @@ use std::collections::HashMap;
 use std::io;
 
 use self::module::Positional;
-
-/// Validates that a count value is reasonable given the remaining bytes in the section.
-/// This prevents OOM attacks where a malformed count causes huge allocations.
-///
-/// Only rejects clearly malicious counts (e.g., claiming millions of items with only
-/// a few bytes remaining). Normal parse errors (like count=1 with 0 bytes) are allowed
-/// to proceed and fail naturally with the proper "unexpected end" error message.
-///
-/// # Arguments
-/// * `count` - The count value read from the binary
-/// * `remaining_bytes` - Bytes remaining in the current section
-fn validate_count(count: u32, remaining_bytes: usize) -> Result<(), io::Error> {
-    // If no remaining bytes, let normal parsing fail with proper error message
-    if remaining_bytes == 0 {
-        return Ok(());
-    }
-
-    // Reject if count is wildly disproportionate to remaining data
-    // Each item needs at least 1 byte, so count > remaining_bytes is suspicious
-    // Allow some slack for LEB128 encoding overhead, but catch extreme cases
-    let max_reasonable = remaining_bytes.saturating_mul(2);
-    if count as usize > max_reasonable {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "unexpected end of section or function",
-        ));
-    }
-    Ok(())
-}
 
 pub fn parse(
     module_registry: &HashMap<String, module::Module>,
@@ -161,9 +133,10 @@ fn read_sections(
     section_len: u32,
 ) -> Result<(), instruction::DecodeError> {
     let start_pos: usize = bytes.pos();
+    let section_end = start_pos + section_len as usize;
     let positional: &mut dyn module::Positional = match sec_id {
         1 => {
-            read_section_type(bytes, &mut unit.types)?;
+            read_section_type(bytes, &mut unit.types, section_end)?;
             &mut unit.types as &mut dyn module::Positional
         }
         2 => {
@@ -174,19 +147,20 @@ fn read_sections(
                 &unit.types,
                 &unit.memory,
                 &unit.table,
+                section_end,
             )?;
             &mut unit.imports as &mut dyn module::Positional
         }
         3 => {
-            read_section_function(bytes, &mut unit.functions, &unit.types)?;
+            read_section_function(bytes, &mut unit.functions, &unit.types, section_end)?;
             &mut unit.functions as &mut dyn module::Positional
         }
         4 => {
-            read_section_table(bytes, &mut unit.table)?;
+            read_section_table(bytes, &mut unit.table, section_end)?;
             &mut unit.table as &mut dyn module::Positional
         }
         5 => {
-            read_section_memory(bytes, &mut unit.memory, &unit.imports)?;
+            read_section_memory(bytes, &mut unit.memory, &unit.imports, section_end)?;
             &mut unit.memory as &mut dyn module::Positional
         }
         6 => {
@@ -195,6 +169,7 @@ fn read_sections(
                 &mut unit.globals,
                 &unit.imports,
                 (unit.imports.function_count() + unit.functions.functions.len()) as u32,
+                section_end,
             )?;
             &mut unit.globals as &mut dyn module::Positional
         }
@@ -207,6 +182,7 @@ fn read_sections(
                 &unit.globals,
                 &unit.table,
                 &unit.memory,
+                section_end,
             )?;
             &mut unit.exports as &mut dyn module::Positional
         }
@@ -221,11 +197,12 @@ fn read_sections(
                 &unit.table,
                 &mut unit.elements,
                 (unit.imports.function_count() + unit.functions.functions.len()) as u32,
+                section_end,
             )?;
             &mut unit.elements as &mut dyn module::Positional
         }
         10 => {
-            read_section_code(bytes, unit)?;
+            read_section_code(bytes, unit, section_end)?;
             &mut unit.code as &mut dyn module::Positional
         }
         11 => {
@@ -239,6 +216,7 @@ fn read_sections(
                     None
                 },
                 unit.memory.memory.len() as u32,
+                section_end,
             )?;
             &mut unit.data as &mut dyn module::Positional
         }
@@ -283,9 +261,16 @@ fn read_header(bytes: &mut reader::Reader, magic: &mut u32, version: &mut u32) -
 
 /* SECTION READERS ************************************************/
 
-fn read_value_types_list(bytes: &mut reader::Reader) -> Result<Vec<module::ValueType>, io::Error> {
+fn read_value_types_list(bytes: &mut reader::Reader, max_count: u32) -> Result<Vec<module::ValueType>, io::Error> {
     let mut rt: Vec<module::ValueType> = vec![];
     let count = bytes.read_vu32()?;
+    if count > max_count {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "function type count exceeds implementation limit",
+        ));
+    }
+    bytes.validate_item_count(count)?;
     for _ in 0..count {
         let value = module::ValueType::decode(bytes.read_byte()?).map_err(std::io::Error::other)?;
         rt.push(value);
@@ -293,11 +278,19 @@ fn read_value_types_list(bytes: &mut reader::Reader) -> Result<Vec<module::Value
     Ok(rt)
 }
 
-fn read_section_type(bytes: &mut reader::Reader, types: &mut module::TypeSection) -> Result<(), io::Error> {
+fn read_section_type(
+    bytes: &mut reader::Reader,
+    types: &mut module::TypeSection,
+    section_end: usize,
+) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each type needs at least 3 bytes (0x60 + params len + returns len)
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_TYPES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "type count exceeds implementation limit",
+        ));
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     for _ in 0..count {
         if bytes.read_byte()? != 0x60 {
@@ -309,8 +302,8 @@ fn read_section_type(bytes: &mut reader::Reader, types: &mut module::TypeSection
                 // "expected 0x60 to lead function type, got 0x{:02x} for func #{} / #{}", byt, ii, count
             ));
         }
-        let parameters = read_value_types_list(bytes)?;
-        let return_types = read_value_types_list(bytes)?;
+        let parameters = read_value_types_list(bytes, limits::MAX_FUNCTION_PARAMS)?;
+        let return_types = read_value_types_list(bytes, limits::MAX_FUNCTION_RETURNS)?;
 
         types.push(module::FunctionType {
             parameters,
@@ -328,16 +321,18 @@ fn read_section_import(
     types: &module::TypeSection,
     memory: &module::MemorySection,
     tables: &module::TableSection,
+    section_end: usize,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each import needs at least 4 bytes (2 string lengths + 1 kind + 1 index)
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_IMPORTS {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "import count exceeds implementation limit").into());
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     let mut memory_import_count = 0;
 
     for _ in 0..count {
-        let import = module::Import::decode(bytes, module_registry, types, memory, tables)?;
+        let import = module::Import::decode(bytes, module_registry, types, memory, tables, section_end)?;
 
         // Validate that we don't have multiple memory imports
         if matches!(import.external_kind, module::ExternalKind::Memory(_)) {
@@ -360,9 +355,10 @@ impl module::Import {
         types: &module::TypeSection,
         _memory: &module::MemorySection,
         _tables: &module::TableSection,
+        section_end: usize,
     ) -> Result<module::Import, instruction::DecodeError> {
-        let module = reader.read_string()?;
-        let name = reader.read_string()?;
+        let module = reader.read_string_bounded(section_end)?;
+        let name = reader.read_string_bounded(section_end)?;
         let external_kind = match module::ExternalKind::decode(reader, types.len() as u32) {
             Ok(kind) => kind,
             Err(e) => {
@@ -385,11 +381,16 @@ fn read_section_function(
     bytes: &mut reader::Reader,
     functions: &mut module::FunctionSection,
     types: &module::TypeSection,
+    section_end: usize,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each function needs at least 1 byte for type index
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_FUNCTIONS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "function count exceeds implementation limit",
+        ));
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     for _ in 0..count {
         let ftype_index = bytes.read_vu32()?;
@@ -414,11 +415,10 @@ fn read_section_memory(
     bytes: &mut reader::Reader,
     memory: &mut module::MemorySection,
     imports: &module::ImportSection,
+    section_end: usize,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each memory needs at least 1 byte for limits flag
-    validate_count(count, bytes.remaining())?;
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     // Check if we already have imported memories
     let imported_memory_count = imports
@@ -440,6 +440,7 @@ fn read_section_memory(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn read_section_export(
     bytes: &mut reader::Reader,
     exports: &mut module::ExportSection,
@@ -448,14 +449,19 @@ fn read_section_export(
     globals: &module::GlobalSection,
     tables: &module::TableSection,
     memory: &module::MemorySection,
+    section_end: usize,
 ) -> Result<(), io::Error> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each export needs at least 3 bytes (name len + type + index)
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_EXPORTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "export count exceeds implementation limit",
+        ));
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     for _ in 0..count {
-        let name = bytes.read_string()?;
+        let name = bytes.read_string_bounded(section_end)?;
         if exports.exports.iter().any(|e| e.name == name) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -507,11 +513,13 @@ fn read_section_export(
     Ok(())
 }
 
-fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) -> Result<(), instruction::DecodeError> {
+fn read_section_code(
+    bytes: &mut reader::Reader,
+    module: &mut module::Module,
+    section_end: usize,
+) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each code entry needs at least 2 bytes (size + locals count)
-    validate_count(count, bytes.remaining())?;
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     // TODO: this check is duplicated after the section read loop
     if count != module.functions.functions.len() as u32 {
@@ -523,10 +531,19 @@ fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) ->
     }
 
     for ii in 0..count {
-        let size = bytes.read_vu32()? as usize;
+        let size = bytes.read_vu32()?;
+        if size > limits::MAX_FUNCTION_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "function body size exceeds implementation limit",
+            )
+            .into());
+        }
+        let size = size as usize;
         let start_pos = bytes.pos();
         let end_pos = start_pos + size;
         let locals_count = bytes.read_vu32()?;
+        bytes.validate_item_count(locals_count)?;
 
         let mut nts = Vec::new();
         for _ in 0..locals_count {
@@ -537,7 +554,7 @@ fn read_section_code(bytes: &mut reader::Reader, module: &mut module::Module) ->
         }
 
         let locals = module::Locals::new(nts);
-        if locals.len() >= u64::from(u32::MAX) {
+        if locals.len() > u64::from(limits::MAX_FUNCTION_LOCALS) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "too many locals").into());
         }
 
@@ -578,6 +595,7 @@ impl module::Data {
         bytes: &mut reader::Reader,
         imports: &module::ImportSection,
         memory_count: u32,
+        section_end: usize,
     ) -> Result<Self, instruction::DecodeError> {
         let mut mode = module::DataMode::Passive;
         let typ = bytes.read_vu32()?;
@@ -620,7 +638,7 @@ impl module::Data {
         }
 
         Ok(module::Data {
-            init: bytes.read_u8vec()?, // TODO: this needs to trigger a 'unexpected end of section or function' rather than 'length out of bounds'
+            init: bytes.read_u8vec_bounded(section_end)?,
             mode,
         })
     }
@@ -632,12 +650,17 @@ fn read_section_data(
     datas: &mut module::DataSection,
     data_count: Option<u32>,
     memory_count: u32,
+    section_end: usize,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
-
-    // Validate count against section length to prevent OOM from malformed input
-    // Each data entry needs at least 1 byte for the mode
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_DATA_SEGMENTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "data segment count exceeds implementation limit",
+        )
+        .into());
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     if let Some(expected_count) = data_count
         && expected_count != count
@@ -650,7 +673,7 @@ fn read_section_data(
     }
 
     for _ in 0..count {
-        let data = module::Data::decode(bytes, imports, memory_count)?;
+        let data = module::Data::decode(bytes, imports, memory_count, section_end)?;
         datas.data.push(data);
     }
 
@@ -664,7 +687,8 @@ fn read_section_custom<'a>(
 ) -> Result<&'a mut module::CustomSection, instruction::DecodeError> {
     let mut custom = module::CustomSection::new();
     let start_pos = bytes.pos();
-    custom.name = bytes.read_string()?;
+    let section_end = start_pos + read_len as usize;
+    custom.name = bytes.read_string_bounded(section_end)?;
     if bytes.pos() >= start_pos && read_len as usize >= (bytes.pos() - start_pos) {
         custom.data = bytes.read_bytes(read_len as usize - (bytes.pos() - start_pos))?;
         customs.push(custom);
@@ -757,11 +781,13 @@ fn read_section_global(
     globals: &mut module::GlobalSection,
     imports: &module::ImportSection,
     total_functions: u32,
+    section_end: usize,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each global needs at least 3 bytes (type + mutability + init expr)
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_GLOBALS {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "global count exceeds implementation limit").into());
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     for _ in 0..count {
         let data = module::Global::decode(bytes, imports, total_functions)?;
@@ -807,7 +833,7 @@ impl module::Limits {
         let max = if has_max {
             let max_val = bytes.read_vu32()?;
             // Validate max when explicitly specified
-            if max_val > 65536 {
+            if max_val > limits::MAX_MEMORY_PAGES_32 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "memory size must be at most 65536 pages (4GiB)",
@@ -829,13 +855,38 @@ impl module::Limits {
             .into());
         }
 
-        // Check 65536 page limit (4GiB) for memory min
-        if min > 65536 {
+        // Check page limit (4GiB) for memory min
+        if min > limits::MAX_MEMORY_PAGES_32 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "memory size must be at most 65536 pages (4GiB)",
             )
             .into());
+        }
+
+        Ok(module::Limits { min, max })
+    }
+
+    pub fn decode_table_limits(bytes: &mut reader::Reader) -> Result<Self, instruction::DecodeError> {
+        let has_max = bytes.read_vu1()?;
+        let min = bytes.read_vu32()?;
+        let max = if has_max { Some(bytes.read_vu32()?) } else { None };
+
+        // Spec validation: min must not exceed max
+        if let Some(max_val) = max
+            && min > max_val
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "size minimum must not be greater than maximum",
+            )
+            .into());
+        }
+
+        // Implementation limit: check the initial (minimum) size.
+        // The declared maximum is just a limit and doesn't require allocation.
+        if min > limits::MAX_TABLE_SIZE {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "table size exceeds implementation limit").into());
         }
 
         Ok(module::Limits { min, max })
@@ -846,7 +897,7 @@ impl module::TableType {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, instruction::DecodeError> {
         // reftype then limits
         let ref_type = module::RefType::decode(bytes)?;
-        let limits = module::Limits::decode(bytes)?;
+        let limits = module::Limits::decode_table_limits(bytes)?;
         Ok(module::TableType { ref_type, limits })
     }
 }
@@ -854,11 +905,13 @@ impl module::TableType {
 fn read_section_table(
     bytes: &mut reader::Reader,
     table: &mut module::TableSection,
+    section_end: usize,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each table needs at least 2 bytes (ref type + limits flag)
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_TABLES {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "table count exceeds implementation limit").into());
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     for _ in 0..count {
         let table_type = module::TableType::decode(bytes)?;
@@ -905,7 +958,14 @@ impl module::Element {
                          return_type: module::ValueType|
          -> Result<Vec<Vec<instruction::Instruction>>, instruction::DecodeError> {
             let count = bytes.read_vu32()?;
-            validate_count(count, bytes.remaining())?;
+            if count > limits::MAX_TABLE_INIT_ENTRIES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "table init entries exceed implementation limit",
+                )
+                .into());
+            }
+            bytes.validate_item_count(count)?;
             let mut init: Vec<Vec<instruction::Instruction>> = vec![];
             for _ in 0..count {
                 init.push(instruction::decode_constant_expression(bytes, imports, return_type)?);
@@ -914,7 +974,13 @@ impl module::Element {
         };
         let read_func_indexes = |bytes: &mut reader::Reader| -> Result<Vec<u32>, io::Error> {
             let count = bytes.read_vu32()?;
-            validate_count(count, bytes.remaining())?;
+            if count > limits::MAX_TABLE_INIT_ENTRIES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "table init entries exceed implementation limit",
+                ));
+            }
+            bytes.validate_item_count(count)?;
             let mut func_indexes: Vec<u32> = vec![];
             for _ in 0..count {
                 let func_index = bytes.read_vu32()?;
@@ -1068,11 +1134,17 @@ fn read_section_elements(
     table: &module::TableSection,
     elements: &mut module::ElementSection,
     function_count: u32,
+    section_end: usize,
 ) -> Result<(), instruction::DecodeError> {
     let count = bytes.read_vu32()?;
-
-    // Validate count - each element needs at least 2 bytes (flags + init)
-    validate_count(count, bytes.remaining())?;
+    if count > limits::MAX_ELEMENT_SEGMENTS {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "element segment count exceeds implementation limit",
+        )
+        .into());
+    }
+    bytes.validate_item_count_in_section(count, section_end)?;
 
     for _ in 0..count {
         let element = module::Element::decode(bytes, imports, table, function_count)?;

@@ -1,5 +1,6 @@
 //! Instruction decoding from binary format
 
+use super::super::limits;
 use super::{BlockType, ByteRange, Instruction, InstructionKind, MemArg};
 use crate::parser::module::ValueType;
 use crate::parser::reader::Reader;
@@ -118,6 +119,13 @@ impl InstructionKind {
             0x0E => {
                 // BrTable
                 let count = reader.read_vu32()?;
+                if count > limits::MAX_BR_TABLE_LABELS {
+                    return Err(DecodeError::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "br_table label count exceeds implementation limit",
+                    )));
+                }
+                reader.validate_item_count(count)?;
                 let mut labels = Vec::with_capacity(count as usize);
                 for _ in 0..count {
                     labels.push(reader.read_vu32()?);
@@ -150,6 +158,13 @@ impl InstructionKind {
             0x1C => {
                 // SelectTyped
                 let count = reader.read_vu32()?;
+                if count > limits::MAX_SELECT_TYPED_VALUES {
+                    return Err(DecodeError::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "select typed value count exceeds implementation limit",
+                    )));
+                }
+                reader.validate_item_count(count)?;
                 let mut val_types = Vec::with_capacity(count as usize);
                 for _ in 0..count {
                     val_types.push(ValueType::decode(reader.read_byte()?)?);

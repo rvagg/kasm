@@ -40,7 +40,34 @@ cargo test                                             # Run all tests
 cargo test <pattern>                                   # Run specific tests
 cargo test -- --nocapture                              # Show println output
 ./check.sh                                             # Format, lint, test
+./check.sh -f                                          # Also run fuzzer (60s)
+./check.sh -f 300                                      # Fuzz for 5 minutes
+./check.sh -h                                          # Show help
 ```
+
+## Fuzzing
+Fuzzing infrastructure is in `fuzz/` using cargo-fuzz (libFuzzer).
+
+```bash
+# Install cargo-fuzz (requires nightly)
+cargo install cargo-fuzz
+
+# Run parser fuzzer
+cargo +nightly fuzz run parse_module
+
+# Run with time limit
+cargo +nightly fuzz run parse_module -- -max_total_time=60
+
+# Minimise a crash
+cargo fuzz tmin parse_module fuzz/artifacts/parse_module/<crash-file>
+```
+
+**Fuzz targets:**
+- `parse_module` - Tests the binary parser with random/malformed input
+- `execute_module` - Tests parser + execution
+
+**Files to commit:** `fuzz/Cargo.toml`, `fuzz/fuzz_targets/*.rs`, `fuzz/.gitignore`
+**Files to ignore:** `fuzz/target/`, `fuzz/corpus/`, `fuzz/artifacts/`
 
 ## Adding Instructions
 1. Add to `InstructionKind` enum (src/parser/instruction/mod.rs)
