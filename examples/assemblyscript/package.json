@@ -1,0 +1,15 @@
+{
+  "name": "kasm-assemblyscript-examples",
+  "version": "0.1.0",
+  "description": "AssemblyScript examples for the kasm WebAssembly runtime",
+  "scripts": {
+    "asbuild": "asc assembly/index.ts --target release",
+    "asbuild:debug": "asc assembly/index.ts --target debug",
+    "asbuild:echo": "asc assembly/echo.ts -o build/echo.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
+    "asbuild:grep": "asc assembly/grep.ts -o build/grep.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
+    "asbuild:all": "npm run asbuild && npm run asbuild:echo && npm run asbuild:grep"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.28.9"
+  }
+}

@@ -16,6 +16,7 @@ pub mod store;
 pub mod table;
 pub mod test_utils;
 pub mod value;
+pub mod wasi;
 
 pub use imports::ImportObject;
 pub use instance::Instance;

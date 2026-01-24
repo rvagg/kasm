@@ -5,6 +5,7 @@ authors = [ "Rod Vagg <r@va.gg>" ]
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.5", features = ["derive"] }
 byteorder = "1.5"
 hex = "0.4"
 once_cell = "1.18"
@@ -19,6 +20,7 @@ thiserror = "1.0.56"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+wat = "1"
 
 [[bench]]
 name = "validation"

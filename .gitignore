@@ -4,3 +4,6 @@ target/
 .claude
 wasm-spec/
 wasm-wabt/
+examples/assemblyscript/build/
+package-lock.json
+tests/wasi/hello.wasm

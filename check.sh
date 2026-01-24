@@ -40,6 +40,39 @@ while getopts "f:t:h" opt; do
     esac
 done
 
+# Build AssemblyScript examples if needed (Make-like behavior)
+AS_DIR="examples/assemblyscript"
+AS_BUILD="$AS_DIR/build/release.wasm"
+AS_SOURCES="$AS_DIR/assembly"
+
+needs_rebuild() {
+    # Rebuild if output doesn't exist
+    if [[ ! -f "$AS_BUILD" ]]; then
+        return 0
+    fi
+
+    # Rebuild if any source file is newer than output
+    if [[ -d "$AS_SOURCES" ]]; then
+        for src in "$AS_SOURCES"/*.ts; do
+            if [[ -f "$src" && "$src" -nt "$AS_BUILD" ]]; then
+                return 0
+            fi
+        done
+    fi
+
+    # No rebuild needed
+    return 1
+}
+
+if [[ -f "$AS_DIR/package.json" ]]; then
+    if needs_rebuild; then
+        echo "=== Building AssemblyScript examples ==="
+        (cd "$AS_DIR" && npm install --silent && npm run asbuild:all --silent)
+    else
+        echo "=== AssemblyScript examples up to date ==="
+    fi
+fi
+
 echo "=== Running cargo check ==="
 cargo check
 
