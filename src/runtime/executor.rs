@@ -14,19 +14,18 @@ use super::{
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
 use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 /// Maximum call stack depth to prevent stack overflow
 const MAX_CALL_DEPTH: usize = 1000;
 
 /// Execution state for the state machine executor
-#[derive(Debug, Clone)]
-enum ExecutionState {
+#[derive(Debug)]
+enum ExecutionState<'a> {
     /// Continue to next instruction
     Continue,
     /// Enter a nested instruction sequence (block/loop/if body)
-    EnterNested(Vec<StructuredInstruction>),
+    EnterNested(&'a [StructuredInstruction]),
     /// Call a local function (by local func_idx)
     CallFunction(u32),
     /// Call an external function (cross-module, by FuncAddr)
@@ -40,38 +39,19 @@ enum ExecutionState {
     BranchTo(u32),
 }
 
-/// Source of instructions for an execution context
-#[derive(Debug, Clone)]
-enum InstructionSource {
-    /// Function body (shared via Rc to avoid cloning)
-    Function(Rc<StructuredFunction>),
-    /// Nested block body (owned, typically small)
-    Nested(Vec<StructuredInstruction>),
-}
-
 /// Execution context representing a sequence of instructions being executed
-#[derive(Debug, Clone)]
-struct ExecutionContext {
-    /// Source of instructions (function or nested block)
-    source: InstructionSource,
+#[derive(Debug, Clone, Copy)]
+struct ExecutionContext<'a> {
+    /// Borrowed instruction slice (from module, never cloned)
+    instructions: &'a [StructuredInstruction],
     /// Current position in instruction sequence
     position: usize,
     /// What to do when this context completes
     on_complete: ContextCompletion,
 }
 
-impl ExecutionContext {
-    /// Get the instruction slice for this context
-    fn instructions(&self) -> &[StructuredInstruction] {
-        match &self.source {
-            InstructionSource::Function(f) => &f.body,
-            InstructionSource::Nested(v) => v,
-        }
-    }
-}
-
 /// What to do when an execution context completes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum ContextCompletion {
     /// Pop a label when done (for blocks/loops/ifs)
     PopLabel,
@@ -102,8 +82,8 @@ pub struct Executor<'a> {
     tables: Vec<SharedTable>,
     /// Element segments (for table.init)
     element_segments: Vec<Vec<Option<Value>>>,
-    /// Function bodies for quick access (Rc to avoid cloning on each call)
-    functions: Vec<Option<Rc<StructuredFunction>>>,
+    /// Number of imported functions (they have no local bodies)
+    num_imported_functions: usize,
     /// Function types for quick access
     function_types: Vec<FunctionType>,
     /// Maps local function index to global FuncAddr (empty until linked)
@@ -111,7 +91,7 @@ pub struct Executor<'a> {
     /// Module's global definitions (for initialisation after linking)
     module_globals: Vec<crate::parser::module::Global>,
     /// Saved execution contexts when paused for external call
-    saved_contexts: Option<Vec<ExecutionContext>>,
+    saved_contexts: Option<Vec<ExecutionContext<'a>>>,
     /// Expected return types when resuming from external call
     saved_return_types: Vec<ValueType>,
     /// Optional instruction budget - execution stops when exhausted
@@ -179,26 +159,13 @@ impl<'a> Executor<'a> {
             globals.push(default_value);
         }
 
-        // Build function registry - collect all function bodies
-        // First, count imported functions (they come first in the index space)
+        // Count imported functions (they come first in the index space, but have no local bodies)
         let num_imported_functions = module
             .imports
             .imports
             .iter()
             .filter(|import| matches!(import.external_kind, ExternalKind::Function(_)))
             .count();
-
-        let mut functions = Vec::new();
-
-        // Imported functions have no bodies
-        for _ in 0..num_imported_functions {
-            functions.push(None);
-        }
-
-        // Defined functions have bodies in the code section (wrapped in Rc for cheap cloning)
-        for body in &module.code.code {
-            functions.push(Some(Rc::new(body.body.clone())));
-        }
 
         // Collect function types for quick access
         let function_types = module.types.types.clone();
@@ -212,7 +179,7 @@ impl<'a> Executor<'a> {
             globals,
             tables,
             element_segments: Vec::new(), // Will be populated after linking
-            functions,
+            num_imported_functions,
             function_types,
             function_addresses: Vec::new(), // Will be populated when instance is linked
             module_globals,                 // Store for later initialisation
@@ -705,7 +672,7 @@ impl<'a> Executor<'a> {
     /// Execute a function
     pub fn execute_function(
         &mut self,
-        func: &StructuredFunction,
+        func: &'a StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
     ) -> Result<ExecutionOutcome, RuntimeError> {
@@ -718,7 +685,7 @@ impl<'a> Executor<'a> {
     /// `ExecutionOutcome::NeedsExternalCall` if a cross-module call is needed.
     pub fn execute_function_with_locals(
         &mut self,
-        func: &StructuredFunction,
+        func: &'a StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
         locals_info: Option<&Locals>,
@@ -762,9 +729,9 @@ impl<'a> Executor<'a> {
         let func_label = self.create_function_label(return_types);
         self.current_label_stack_mut()?.push(func_label);
 
-        // Create initial execution context (clone here since func is a borrow from outside)
+        // Create initial execution context (borrow from module, zero-copy)
         let contexts = vec![ExecutionContext {
-            source: InstructionSource::Nested(func.body.clone()),
+            instructions: &func.body,
             position: 0,
             on_complete: ContextCompletion::ReturnFunction,
         }];
@@ -792,7 +759,7 @@ impl<'a> Executor<'a> {
     /// Main execution loop shared by execute_function_with_locals and resume_with_results
     fn run_execution_loop(
         &mut self,
-        mut contexts: Vec<ExecutionContext>,
+        mut contexts: Vec<ExecutionContext<'a>>,
         return_types: Vec<ValueType>,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         'execution: loop {
@@ -803,8 +770,8 @@ impl<'a> Executor<'a> {
             };
 
             // Check if we've reached end of current context
-            if context.position >= context.instructions().len() {
-                let completion = context.on_complete.clone();
+            if context.position >= context.instructions.len() {
+                let completion = context.on_complete;
                 contexts.pop();
 
                 match completion {
@@ -832,7 +799,7 @@ impl<'a> Executor<'a> {
             }
 
             // Execute current instruction
-            let instruction = &context.instructions()[context.position];
+            let instruction = &context.instructions[context.position];
             let state = self.execute_instruction_state_machine(instruction)?;
 
             match state {
@@ -843,7 +810,7 @@ impl<'a> Executor<'a> {
                 ExecutionState::EnterNested(instructions) => {
                     context.position += 1;
                     contexts.push(ExecutionContext {
-                        source: InstructionSource::Nested(instructions),
+                        instructions,
                         position: 0,
                         on_complete: ContextCompletion::PopLabel,
                     });
@@ -906,12 +873,10 @@ impl<'a> Executor<'a> {
     fn handle_call_function(
         &mut self,
         func_idx: u32,
-        contexts: &mut Vec<ExecutionContext>,
+        contexts: &mut Vec<ExecutionContext<'a>>,
     ) -> Result<CallHandled, RuntimeError> {
-        let num_imported_functions = self.module.imports.function_count();
-
         // Check if this is an imported function (needs external call)
-        if (func_idx as usize) < num_imported_functions {
+        if (func_idx as usize) < self.num_imported_functions {
             let import = &self.module.imports.imports[func_idx as usize];
             let type_idx = match &import.external_kind {
                 ExternalKind::Function(idx) => *idx,
@@ -939,12 +904,12 @@ impl<'a> Executor<'a> {
             }));
         }
 
-        // Local function call
-        let func_decl_idx = func_idx as usize - num_imported_functions;
+        // Local function call - get body directly from module (no cloning)
+        let local_func_idx = func_idx as usize - self.num_imported_functions;
         let func = self
             .module
             .functions
-            .get(func_decl_idx as u32)
+            .get(local_func_idx as u32)
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_type = self
@@ -960,25 +925,19 @@ impl<'a> Executor<'a> {
         let args = self.pop_args_for_call(&func_type)?;
         self.push_call_frame(func_idx, args, func_type.return_types.len())?;
 
-        let function_rc = self
-            .functions
-            .get(func_idx as usize)
-            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?
-            .as_ref()
-            .ok_or_else(|| {
-                RuntimeError::UnimplementedInstruction(format!(
-                    "Function body not found for local function at index {func_idx}"
-                ))
-            })?;
-
-        // Rc::clone is cheap (just increments reference count)
-        let function_rc = Rc::clone(function_rc);
+        // Borrow function body directly from module (zero-copy)
+        let function_body = self
+            .module
+            .code
+            .code
+            .get(local_func_idx)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_label = self.create_function_label(&func_type.return_types);
         self.current_label_stack_mut()?.push(func_label);
 
         contexts.push(ExecutionContext {
-            source: InstructionSource::Function(function_rc),
+            instructions: &function_body.body.body,
             position: 0,
             on_complete: ContextCompletion::ReturnFunction,
         });
@@ -998,7 +957,7 @@ impl<'a> Executor<'a> {
     }
 
     /// Handle return from function, returns true if execution should end
-    fn handle_return_from_function(&mut self, contexts: &mut Vec<ExecutionContext>) -> Result<bool, RuntimeError> {
+    fn handle_return_from_function(&mut self, contexts: &mut Vec<ExecutionContext<'a>>) -> Result<bool, RuntimeError> {
         let mut found_function_boundary = false;
 
         while !contexts.is_empty() {
@@ -1023,8 +982,8 @@ impl<'a> Executor<'a> {
     /// Execute a single instruction and return execution state (for state machine)
     fn execute_instruction_state_machine(
         &mut self,
-        instruction: &StructuredInstruction,
-    ) -> Result<ExecutionState, RuntimeError> {
+        instruction: &'a StructuredInstruction,
+    ) -> Result<ExecutionState<'a>, RuntimeError> {
         match instruction {
             StructuredInstruction::Plain(inst) => {
                 // Special handling for Call instruction
@@ -1110,16 +1069,16 @@ impl<'a> Executor<'a> {
                 // Setup block label and parameters
                 self.setup_block_structure(LabelType::Block, *block_type)?;
 
-                // Return state to enter block body
-                Ok(ExecutionState::EnterNested(body.clone()))
+                // Return state to enter block body (borrow, no clone)
+                Ok(ExecutionState::EnterNested(body))
             }
 
             StructuredInstruction::Loop { block_type, body, .. } => {
                 // Setup loop label
                 self.setup_block_structure(LabelType::Loop, *block_type)?;
 
-                // Return state to enter loop body
-                Ok(ExecutionState::EnterNested(body.clone()))
+                // Return state to enter loop body (borrow, no clone)
+                Ok(ExecutionState::EnterNested(body))
             }
 
             StructuredInstruction::If {
@@ -1138,11 +1097,14 @@ impl<'a> Executor<'a> {
                 // Setup if label
                 self.setup_block_structure(LabelType::Block, *block_type)?;
 
-                // Choose branch
-                let body = if condition != 0 {
-                    then_branch.clone()
+                // Choose branch (borrow, no clone)
+                let body: &'a [StructuredInstruction] = if condition != 0 {
+                    then_branch
                 } else {
-                    else_branch.clone().unwrap_or_default()
+                    match else_branch {
+                        Some(v) => v,
+                        None => &[],
+                    }
                 };
 
                 Ok(ExecutionState::EnterNested(body))
@@ -1151,7 +1113,7 @@ impl<'a> Executor<'a> {
     }
 
     /// Handle branching by unwinding contexts (for state machine)
-    fn handle_branch(&mut self, contexts: &mut Vec<ExecutionContext>, depth: u32) -> Result<(), RuntimeError> {
+    fn handle_branch(&mut self, contexts: &mut Vec<ExecutionContext<'a>>, depth: u32) -> Result<(), RuntimeError> {
         let mut labels_to_pop = depth as usize;
 
         // Pop contexts and labels until we reach the target

@@ -126,9 +126,9 @@ cargo bench --bench validation          # Parser/validation benchmarks
 **Baseline metrics (release build):**
 | Metric | Value |
 |--------|-------|
-| Instruction dispatch | ~240 ns |
-| Function call | ~0.48 µs |
-| Memory load+store (per byte) | ~490 ns |
+| Instruction dispatch | ~237 ns |
+| Function call | ~0.34 µs |
+| Memory load+store (per byte) | ~474 ns |
 
 Results saved to `target/criterion/` with HTML reports.
 
