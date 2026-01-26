@@ -107,7 +107,7 @@ impl ImportObject {
                     actual: format!("{:?}", value),
                 });
             }
-            return Ok(value.clone());
+            return Ok(*value);
         }
 
         // Import not found - return default for type

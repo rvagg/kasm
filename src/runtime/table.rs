@@ -80,7 +80,7 @@ impl Table {
 
         // Return the value or appropriate null based on table type
         Ok(match elem {
-            Some(val) => val.clone(),
+            Some(val) => *val,
             None => match self.ref_type {
                 RefType::FuncRef => Value::FuncRef(None),
                 RefType::ExternRef => Value::ExternRef(None),
@@ -163,7 +163,7 @@ impl Table {
         }
 
         for i in start..end {
-            self.elements[i as usize] = value.clone();
+            self.elements[i as usize] = value;
         }
         Ok(())
     }
@@ -189,7 +189,7 @@ impl Table {
             if let Some(val) = src_val {
                 self.validate_element(val)?;
             }
-            self.elements[(dst_idx + i) as usize] = src_val.clone();
+            self.elements[(dst_idx + i) as usize] = *src_val;
         }
         Ok(())
     }

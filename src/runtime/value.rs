@@ -6,7 +6,7 @@ use fhex::ToHex;
 use std::fmt;
 
 /// Runtime representation of WebAssembly values
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
     I32(i32),
     I64(i64),

@@ -14,6 +14,7 @@ use super::{
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
 use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 /// Maximum call stack depth to prevent stack overflow
@@ -39,15 +40,34 @@ enum ExecutionState {
     BranchTo(u32),
 }
 
+/// Source of instructions for an execution context
+#[derive(Debug, Clone)]
+enum InstructionSource {
+    /// Function body (shared via Rc to avoid cloning)
+    Function(Rc<StructuredFunction>),
+    /// Nested block body (owned, typically small)
+    Nested(Vec<StructuredInstruction>),
+}
+
 /// Execution context representing a sequence of instructions being executed
 #[derive(Debug, Clone)]
 struct ExecutionContext {
-    /// Instructions in this context
-    instructions: Vec<StructuredInstruction>,
+    /// Source of instructions (function or nested block)
+    source: InstructionSource,
     /// Current position in instruction sequence
     position: usize,
     /// What to do when this context completes
     on_complete: ContextCompletion,
+}
+
+impl ExecutionContext {
+    /// Get the instruction slice for this context
+    fn instructions(&self) -> &[StructuredInstruction] {
+        match &self.source {
+            InstructionSource::Function(f) => &f.body,
+            InstructionSource::Nested(v) => v,
+        }
+    }
 }
 
 /// What to do when an execution context completes
@@ -82,8 +102,8 @@ pub struct Executor<'a> {
     tables: Vec<SharedTable>,
     /// Element segments (for table.init)
     element_segments: Vec<Vec<Option<Value>>>,
-    /// Function bodies for quick access
-    functions: Vec<Option<StructuredFunction>>,
+    /// Function bodies for quick access (Rc to avoid cloning on each call)
+    functions: Vec<Option<Rc<StructuredFunction>>>,
     /// Function types for quick access
     function_types: Vec<FunctionType>,
     /// Maps local function index to global FuncAddr (empty until linked)
@@ -175,9 +195,9 @@ impl<'a> Executor<'a> {
             functions.push(None);
         }
 
-        // Defined functions have bodies in the code section
+        // Defined functions have bodies in the code section (wrapped in Rc for cheap cloning)
         for body in &module.code.code {
-            functions.push(Some(body.body.clone()));
+            functions.push(Some(Rc::new(body.body.clone())));
         }
 
         // Collect function types for quick access
@@ -439,7 +459,7 @@ impl<'a> Executor<'a> {
                     if (*global_idx as usize) >= self.globals.len() {
                         return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
                     }
-                    Ok(self.globals[*global_idx as usize].clone())
+                    Ok(self.globals[*global_idx as usize])
                 }
                 InstructionKind::RefNull { ref_type } => match ref_type {
                     ValueType::FuncRef => Ok(Value::FuncRef(None)),
@@ -742,9 +762,9 @@ impl<'a> Executor<'a> {
         let func_label = self.create_function_label(return_types);
         self.current_label_stack_mut()?.push(func_label);
 
-        // Create initial execution context
+        // Create initial execution context (clone here since func is a borrow from outside)
         let contexts = vec![ExecutionContext {
-            instructions: func.body.clone(),
+            source: InstructionSource::Nested(func.body.clone()),
             position: 0,
             on_complete: ContextCompletion::ReturnFunction,
         }];
@@ -783,7 +803,7 @@ impl<'a> Executor<'a> {
             };
 
             // Check if we've reached end of current context
-            if context.position >= context.instructions.len() {
+            if context.position >= context.instructions().len() {
                 let completion = context.on_complete.clone();
                 contexts.pop();
 
@@ -812,8 +832,8 @@ impl<'a> Executor<'a> {
             }
 
             // Execute current instruction
-            let instruction = context.instructions[context.position].clone();
-            let state = self.execute_instruction_state_machine(&instruction)?;
+            let instruction = &context.instructions()[context.position];
+            let state = self.execute_instruction_state_machine(instruction)?;
 
             match state {
                 ExecutionState::Continue => {
@@ -823,7 +843,7 @@ impl<'a> Executor<'a> {
                 ExecutionState::EnterNested(instructions) => {
                     context.position += 1;
                     contexts.push(ExecutionContext {
-                        instructions,
+                        source: InstructionSource::Nested(instructions),
                         position: 0,
                         on_complete: ContextCompletion::PopLabel,
                     });
@@ -940,25 +960,25 @@ impl<'a> Executor<'a> {
         let args = self.pop_args_for_call(&func_type)?;
         self.push_call_frame(func_idx, args, func_type.return_types.len())?;
 
-        let function_opt = self
+        let function_rc = self
             .functions
             .get(func_idx as usize)
-            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
-
-        let body = match function_opt {
-            Some(body) => body.clone(),
-            None => {
-                return Err(RuntimeError::UnimplementedInstruction(format!(
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?
+            .as_ref()
+            .ok_or_else(|| {
+                RuntimeError::UnimplementedInstruction(format!(
                     "Function body not found for local function at index {func_idx}"
-                )));
-            }
-        };
+                ))
+            })?;
+
+        // Rc::clone is cheap (just increments reference count)
+        let function_rc = Rc::clone(function_rc);
 
         let func_label = self.create_function_label(&func_type.return_types);
         self.current_label_stack_mut()?.push(func_label);
 
         contexts.push(ExecutionContext {
-            instructions: body.body.clone(),
+            source: InstructionSource::Function(function_rc),
             position: 0,
             on_complete: ContextCompletion::ReturnFunction,
         });
@@ -1440,10 +1460,9 @@ impl<'a> Executor<'a> {
             // 4. Push the value val to the stack.
             LocalGet { local_idx } => {
                 let locals = self.current_locals()?;
-                let value = locals
+                let value = *locals
                     .get(*local_idx as usize)
-                    .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))?
-                    .clone();
+                    .ok_or(RuntimeError::LocalIndexOutOfBounds(*local_idx))?;
                 self.stack.push(value);
                 Ok(BlockEnd::Normal)
             }
@@ -1478,7 +1497,7 @@ impl<'a> Executor<'a> {
             //
             // Note: This is equivalent to duplicating the top of stack, then doing local.set
             LocalTee { local_idx } => {
-                let value = self.stack.peek().ok_or(RuntimeError::StackUnderflow)?.clone();
+                let value = *self.stack.peek().ok_or(RuntimeError::StackUnderflow)?;
                 let locals = self.current_locals_mut()?;
                 *locals
                     .get_mut(*local_idx as usize)
@@ -1495,11 +1514,10 @@ impl<'a> Executor<'a> {
             // 3. Let val be the value F.module.globals[x].val.
             // 4. Push the value val to the stack.
             GlobalGet { global_idx } => {
-                let value = self
+                let value = *self
                     .globals
                     .get(*global_idx as usize)
-                    .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?
-                    .clone();
+                    .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
                 self.stack.push(value);
                 Ok(BlockEnd::Normal)
             }

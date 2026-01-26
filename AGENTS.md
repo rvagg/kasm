@@ -1,7 +1,7 @@
 # WebAssembly Runtime (Rust)
 
 ## Critical Rules
-- Run `./check.sh` after changes (fmt, clippy, tests)
+- Run `./check.sh` after changes (fmt, clippy, tests, builds AssemblyScript)
 - Never run git commit/push
 - Use Australian English (initialise, analyse, behaviour)
 - Follow existing code patterns
@@ -23,26 +23,43 @@ src/runtime/        # Interpreter
   memory.rs         # Linear memory (64KB pages, 4GB max)
   stack.rs          # Operand stack
   value.rs          # i32/i64/f32/f64/funcref/externref
+  wasi/             # WASI preview1 implementation
+    mod.rs          # WASI imports (fd_read, fd_write, args_*, environ_*, proc_exit)
+    context.rs      # WasiContext with lazy memory binding
+    types.rs        # WASI errno codes
+    assemblyscript.rs  # AssemblyScript env.abort support
+
+examples/assemblyscript/  # AssemblyScript WASI examples
+  assembly/         # Source files (index.ts, echo.ts, grep.ts, env.ts, std.ts)
+  build/            # Compiled .wasm output (gitignored, built by check.sh)
+
+benches/                # Criterion benchmarks
+  modules/          # WAT modules for benchmarking
 ```
 
 ## Status
 - 191+ instructions implemented (see src/runtime/implemented.rs)
 - 86/86 core spec tests pass (21,303 assertions)
-- All import types supported: functions, globals, memories, tables
-- Tables and call_indirect: fully implemented
-- Cross-module linking: supported via Store-based architecture
-- Missing: SIMD (v128 type and vector operations)
+- WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
+- AssemblyScript support: env.abort with UTF-16 string extraction
+- Missing: SIMD (v128), filesystem operations
+
+## CLI
+```bash
+kasm run <file.wasm> [-- args...]   # Execute WASI module
+kasm dump <file.wasm>               # Show module details
+kasm dump <file.wasm> --header      # Show only header
+kasm dump <file.wasm> -d            # Disassemble
+```
 
 ## Development Workflow
 ```bash
-cargo run --bin kasm -- file.wasm --dump-disassemble  # Parse and disassemble
-cargo test                                             # Run all tests
-cargo test <pattern>                                   # Run specific tests
-cargo test -- --nocapture                              # Show println output
-./check.sh                                             # Format, lint, test
-./check.sh -f                                          # Also run fuzzer (60s)
-./check.sh -f 300                                      # Fuzz for 5 minutes
-./check.sh -h                                          # Show help
+./check.sh                           # Format, lint, test (+ builds AssemblyScript)
+./check.sh -f                        # Also run fuzzer (60s)
+./check.sh -f 300                    # Fuzz for 5 minutes
+cargo test                           # Run all tests
+cargo test <pattern>                 # Run specific tests
+cargo test -- --nocapture            # Show println output
 ```
 
 ## Fuzzing
@@ -89,6 +106,32 @@ cargo fuzz tmin parse_module fuzz/artifacts/parse_module/<crash-file>
 **Files to commit:** `fuzz/Cargo.toml`, `fuzz/fuzz_targets/*.rs`, `fuzz/.gitignore`, `fuzz/wasm.dict`, `fuzz/seed_corpus.sh`
 **Files to ignore:** `fuzz/target/`, `fuzz/corpus/`, `fuzz/artifacts/`
 
+## Benchmarking
+Criterion benchmarks in `benches/` with WAT modules in `benches/modules/`.
+
+```bash
+cargo bench --bench execution           # Full execution benchmarks
+cargo bench --bench execution -- noop   # Filter by name
+cargo bench --bench execution -- --test # Verify correctness only
+cargo bench --bench validation          # Parser/validation benchmarks
+```
+
+**Benchmark modules:**
+- `noop_loop.wat` - Pure dispatch overhead (loop + branch)
+- `fib_iterative.wat` - CPU-bound compute (locals, arithmetic)
+- `fib_recursive.wat` - Function call overhead (exponential calls)
+- `memcpy.wat` - Memory load/store throughput
+- `primes.wat` - Mixed compute + memory (Sieve of Eratosthenes)
+
+**Baseline metrics (release build):**
+| Metric | Value |
+|--------|-------|
+| Instruction dispatch | ~240 ns |
+| Function call | ~0.48 µs |
+| Memory load+store (per byte) | ~490 ns |
+
+Results saved to `target/criterion/` with HTML reports.
+
 ## Adding Instructions
 1. Add to `InstructionKind` enum (src/parser/instruction/mod.rs)
 2. Add decoding in `decode_instruction()` (src/parser/instruction/decode.rs)
@@ -111,15 +154,15 @@ cargo run --bin test-coverage  # See which instructions enable most tests
 ```
 
 ## Key Files
+- src/main.rs - CLI with `run` and `dump` subcommands
 - src/runtime/store.rs - Store, FuncAddr, MemoryAddr, TableAddr, cross-module execution
 - src/runtime/executor.rs - State machine interpreter
-- src/runtime/instance.rs - Module instantiation
-- src/runtime/imports.rs - Import resolution (globals, functions, memories, tables)
-- src/runtime/table.rs - Table instances
+- src/runtime/wasi/mod.rs - WASI imports and create_wasi_instance helper
+- src/runtime/wasi/context.rs - WasiContext (memory, fds, args, env)
 - src/runtime/ops/*.rs - Instruction implementations by category
 - src/runtime/implemented.rs - Registry of implemented instructions
 - tests/parser_tests.rs - Spec test harness with spectest imports
-- src/bin/test_coverage.rs - Shows which instructions to prioritise
+- tests/wasi_tests.rs - WASI integration tests (inline WAT)
 
 ## Error Types
 - `DecodeError` - Parser errors with byte positions
@@ -133,6 +176,9 @@ cargo run --bin test-coverage  # See which instructions enable most tests
 - Use `RUST_BACKTRACE=1` for debugging
 
 ## Performance Notes
-- Structured execution: O(1) branches but slower startup
-- Debug builds much slower than release
+- Interpreter is ~6,500x slower than native (see docs/PERFORMANCE.md for bottleneck analysis)
+- Main bottleneck: Mutex lock per memory operation (~510 ns per load+store)
+- Function calls use Rc-based body sharing (~0.5 µs/call)
+- Debug builds much slower than release - always benchmark with `--release`
 - State machine executor: unlimited call depth, no Rust stack overflow
+- Run `cargo bench --bench execution` to measure current performance
