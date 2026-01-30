@@ -170,6 +170,23 @@ pub enum WasiErrno {
     NotCapable = 76,
 }
 
+/// WASI file types
+///
+/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#filetype>
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WasiFileType {
+    /// The type of the file descriptor or file is unknown or is different from any of the other
+    /// types specified.
+    Unknown = 0,
+    /// The file descriptor or file refers to a character device inode.
+    CharacterDevice = 2,
+    /// The file descriptor or file refers to a directory inode.
+    Directory = 3,
+    /// The file descriptor or file refers to a regular file inode.
+    RegularFile = 4,
+}
+
 impl WasiErrno {
     /// Convert to u32 for WASI return values
     pub fn as_u32(self) -> u32 {

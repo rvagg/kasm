@@ -23,6 +23,10 @@ enum Commands {
         /// Path to the WebAssembly module
         file: String,
 
+        /// Preopen a directory for filesystem access
+        #[arg(long = "dir", value_name = "PATH")]
+        dirs: Vec<String>,
+
         /// Arguments to pass to the module (after --)
         #[arg(last = true)]
         args: Vec<String>,
@@ -47,7 +51,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { file, args } => run_wasi_module(&file, args),
+        Commands::Run { file, dirs, args } => run_wasi_module(&file, dirs, args),
         Commands::Dump {
             file,
             header,
@@ -86,7 +90,7 @@ fn dump_module(file: &str, header: bool, disassemble: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_wasi_module(file: &str, module_args: Vec<String>) -> ExitCode {
+fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> ExitCode {
     // Read the module file
     let bytes = match fs::read(file) {
         Ok(b) => b,
@@ -110,18 +114,26 @@ fn run_wasi_module(file: &str, module_args: Vec<String>) -> ExitCode {
     let mut args = vec![file.to_string()];
     args.extend(module_args);
 
-    // Create WASI context with real stdio
+    // Create WASI context with real stdio and preopened directories
     // Note: WasiContext uses RefCell internally which isn't Sync, but we don't
     // share it across threads, so Arc is fine here.
+    let mut builder = WasiContext::builder()
+        .args(args)
+        .stdin(Box::new(stdin()))
+        .stdout(Box::new(stdout()))
+        .stderr(Box::new(stderr()));
+
+    for dir in &dirs {
+        let path = std::path::Path::new(dir);
+        if !path.is_dir() {
+            eprintln!("Error: --dir path is not a directory: {}", dir);
+            return ExitCode::FAILURE;
+        }
+        builder = builder.preopen_dir(dir, dir);
+    }
+
     #[allow(clippy::arc_with_non_send_sync)]
-    let ctx = Arc::new(
-        WasiContext::builder()
-            .args(args)
-            .stdin(Box::new(stdin()))
-            .stdout(Box::new(stdout()))
-            .stderr(Box::new(stderr()))
-            .build(),
-    );
+    let ctx = Arc::new(builder.build());
 
     // Create store and WASI instance (with AssemblyScript support)
     let mut store = Store::new();

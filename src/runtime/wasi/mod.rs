@@ -108,6 +108,17 @@ fn extract_i32(args: &[Value], index: usize) -> Result<i32, RuntimeError> {
     }
 }
 
+/// Extract an i64 value from a WASI function argument at the given index.
+fn extract_i64(args: &[Value], index: usize) -> Result<i64, RuntimeError> {
+    match args.get(index) {
+        Some(Value::I64(v)) => Ok(*v),
+        other => Err(RuntimeError::TypeMismatch {
+            expected: "i64".to_string(),
+            actual: format!("{:?}", other),
+        }),
+    }
+}
+
 /// Create WASI import functions and register them in the store
 ///
 /// Returns an ImportObject with all WASI functions registered.
@@ -199,33 +210,25 @@ pub fn create_wasi_imports(store: &mut Store<'_>, ctx: Arc<WasiContext>) -> Impo
     imports.add_function("wasi_snapshot_preview1", "environ_get", environ_get_addr);
 
     // fd_prestat_get: (fd, buf_ptr) -> errno
-    // Return preopen directory info for a given fd.
-    // See: https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_get
     let fd_prestat_get_type = FunctionType {
         parameters: vec![ValueType::I32, ValueType::I32],
         return_types: vec![ValueType::I32],
     };
+    let ctx_prestat_get = ctx.clone();
     let fd_prestat_get_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |_args| {
-            // Return EBADF - no preopened file descriptors
-            Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)])
-        }),
+        func: Box::new(move |args| wasi_fd_prestat_get(&ctx_prestat_get, args)),
         func_type: fd_prestat_get_type,
     });
     imports.add_function("wasi_snapshot_preview1", "fd_prestat_get", fd_prestat_get_addr);
 
     // fd_prestat_dir_name: (fd, path_ptr, path_len) -> errno
-    // Return the path for a preopened fd.
-    // See: https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_dir_name
     let fd_prestat_dir_name_type = FunctionType {
         parameters: vec![ValueType::I32, ValueType::I32, ValueType::I32],
         return_types: vec![ValueType::I32],
     };
+    let ctx_prestat_dir_name = ctx.clone();
     let fd_prestat_dir_name_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |_args| {
-            // Return EBADF - no preopened file descriptors
-            Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)])
-        }),
+        func: Box::new(move |args| wasi_fd_prestat_dir_name(&ctx_prestat_dir_name, args)),
         func_type: fd_prestat_dir_name_type,
     });
     imports.add_function(
@@ -233,6 +236,52 @@ pub fn create_wasi_imports(store: &mut Store<'_>, ctx: Arc<WasiContext>) -> Impo
         "fd_prestat_dir_name",
         fd_prestat_dir_name_addr,
     );
+
+    // path_open: (fd, dirflags, path_ptr, path_len, oflags, rights_base, rights_inheriting, fdflags, opened_fd_ptr) -> errno
+    let path_open_type = FunctionType {
+        parameters: vec![
+            ValueType::I32,
+            ValueType::I32,
+            ValueType::I32,
+            ValueType::I32,
+            ValueType::I32,
+            ValueType::I64,
+            ValueType::I64,
+            ValueType::I32,
+            ValueType::I32,
+        ],
+        return_types: vec![ValueType::I32],
+    };
+    let ctx_path_open = ctx.clone();
+    let path_open_addr = store.allocate_function(FunctionInstance::Host {
+        func: Box::new(move |args| wasi_path_open(&ctx_path_open, args)),
+        func_type: path_open_type,
+    });
+    imports.add_function("wasi_snapshot_preview1", "path_open", path_open_addr);
+
+    // fd_fdstat_get: (fd, buf_ptr) -> errno
+    let fd_fdstat_get_type = FunctionType {
+        parameters: vec![ValueType::I32, ValueType::I32],
+        return_types: vec![ValueType::I32],
+    };
+    let ctx_fdstat_get = ctx.clone();
+    let fd_fdstat_get_addr = store.allocate_function(FunctionInstance::Host {
+        func: Box::new(move |args| wasi_fd_fdstat_get(&ctx_fdstat_get, args)),
+        func_type: fd_fdstat_get_type,
+    });
+    imports.add_function("wasi_snapshot_preview1", "fd_fdstat_get", fd_fdstat_get_addr);
+
+    // fd_seek: (fd, offset, whence, newoffset_ptr) -> errno
+    let fd_seek_type = FunctionType {
+        parameters: vec![ValueType::I32, ValueType::I64, ValueType::I32, ValueType::I32],
+        return_types: vec![ValueType::I32],
+    };
+    let ctx_fd_seek = ctx.clone();
+    let fd_seek_addr = store.allocate_function(FunctionInstance::Host {
+        func: Box::new(move |args| wasi_fd_seek(&ctx_fd_seek, args)),
+        func_type: fd_seek_type,
+    });
+    imports.add_function("wasi_snapshot_preview1", "fd_seek", fd_seek_addr);
 
     // proc_exit: (code) -> !
     let proc_exit_type = FunctionType {
@@ -290,14 +339,12 @@ fn wasi_fd_read(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, Runti
 /// fd_close: Close a file descriptor.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_close>
-fn wasi_fd_close(_ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn wasi_fd_close(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let fd = extract_i32(&args, 0)? as u32;
 
-    // For now, just return success for stdin/stdout/stderr, BADF for others
-    if fd <= 2 {
-        Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-    } else {
-        Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)])
+    match ctx.close_fd(fd) {
+        Ok(()) => Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)]),
+        Err(errno) => Ok(vec![Value::I32(errno.as_u32() as i32)]),
     }
 }
 
@@ -382,6 +429,173 @@ fn wasi_environ_get(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, R
     Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
 }
 
+/// fd_prestat_get: Return preopen directory info for a given fd.
+///
+/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_get>
+fn wasi_fd_prestat_get(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    let fd = extract_i32(&args, 0)? as u32;
+    let buf_ptr = extract_i32(&args, 1)? as u32;
+
+    match ctx.get_preopen(fd) {
+        Some(path) => {
+            let path_len = path.len() as u32;
+            // prestat struct: u8 tag (0 = dir) + 3 bytes padding + u32 name_len
+            ctx.write_u32(buf_ptr, 0)?; // tag = __WASI_PREOPENTYPE_DIR (0)
+            ctx.write_u32(buf_ptr + 4, path_len)?;
+            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
+        }
+        None => Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)]),
+    }
+}
+
+/// fd_prestat_dir_name: Return the path for a preopened fd.
+///
+/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_dir_name>
+fn wasi_fd_prestat_dir_name(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    let fd = extract_i32(&args, 0)? as u32;
+    let path_ptr = extract_i32(&args, 1)? as u32;
+    let path_len = extract_i32(&args, 2)? as u32;
+
+    match ctx.get_preopen(fd) {
+        Some(path) => {
+            let bytes = path.as_bytes();
+            if bytes.len() > path_len as usize {
+                return Ok(vec![Value::I32(WasiErrno::Overflow.as_u32() as i32)]);
+            }
+            ctx.write_bytes(path_ptr, bytes)?;
+            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
+        }
+        None => Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)]),
+    }
+}
+
+/// path_open: Open a file or directory.
+///
+/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#path_open>
+fn wasi_path_open(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    let dir_fd = extract_i32(&args, 0)? as u32;
+    let _dirflags = extract_i32(&args, 1)?;
+    let path_ptr = extract_i32(&args, 2)? as u32;
+    let path_len = extract_i32(&args, 3)? as u32;
+    let oflags = extract_i32(&args, 4)?;
+    let _rights_base = extract_i64(&args, 5)?;
+    let _rights_inheriting = extract_i64(&args, 6)?;
+    let fdflags = extract_i32(&args, 7)?;
+    let opened_fd_ptr = extract_i32(&args, 8)? as u32;
+
+    // Read path from memory
+    let path_bytes = ctx
+        .read_bytes(path_ptr, path_len as usize)
+        .map_err(|_| RuntimeError::MemoryError("Failed to read path".to_string()))?;
+    let path =
+        std::str::from_utf8(&path_bytes).map_err(|_| RuntimeError::MemoryError("Invalid UTF-8 path".to_string()))?;
+
+    // Resolve path relative to preopen dir
+    let resolved = match ctx.resolve_path(dir_fd, path) {
+        Ok(p) => p,
+        Err(errno) => return Ok(vec![Value::I32(errno.as_u32() as i32)]),
+    };
+
+    // Build open options from oflags and fdflags
+    let o_creat = (oflags & 1) != 0;
+    let o_excl = (oflags & 4) != 0;
+    let o_trunc = (oflags & 8) != 0;
+    let append = (fdflags & 1) != 0;
+
+    let mut open_opts = std::fs::OpenOptions::new();
+
+    // Determine read/write from rights (be permissive)
+    open_opts.read(true);
+    if o_creat || o_trunc || append {
+        open_opts.write(true);
+    }
+    if o_creat {
+        open_opts.create(true);
+    }
+    if o_excl {
+        open_opts.create_new(true);
+    }
+    if o_trunc {
+        open_opts.truncate(true);
+    }
+    if append {
+        open_opts.append(true);
+    }
+
+    let file = match open_opts.open(&resolved) {
+        Ok(f) => f,
+        Err(e) => {
+            let errno = match e.kind() {
+                std::io::ErrorKind::NotFound => WasiErrno::NoEnt,
+                std::io::ErrorKind::PermissionDenied => WasiErrno::Access,
+                std::io::ErrorKind::AlreadyExists => WasiErrno::Exist,
+                _ => WasiErrno::Io,
+            };
+            return Ok(vec![Value::I32(errno.as_u32() as i32)]);
+        }
+    };
+
+    let writable = o_creat || o_trunc || append;
+    let fd = match context::FileDescriptor::new_file(file, true, writable) {
+        Ok(fd) => fd,
+        Err(_) => return Ok(vec![Value::I32(WasiErrno::Io.as_u32() as i32)]),
+    };
+
+    let new_fd_num = ctx.allocate_fd(fd);
+    ctx.write_u32(opened_fd_ptr, new_fd_num)?;
+
+    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
+}
+
+/// fd_fdstat_get: Get the attributes of a file descriptor.
+///
+/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_fdstat_get>
+fn wasi_fd_fdstat_get(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    let fd = extract_i32(&args, 0)? as u32;
+    let buf_ptr = extract_i32(&args, 1)? as u32;
+
+    let fds = ctx.fds_ref();
+    let fd_entry = match fds.get(fd as usize) {
+        Some(Some(entry)) => entry,
+        _ => return Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)]),
+    };
+
+    let filetype = fd_entry.file_type as u8;
+
+    // fdstat struct: u8 filetype, u8 pad, u16 fdflags, u32 pad, u64 rights_base, u64 rights_inheriting
+    // Total: 24 bytes
+    let mut buf = [0u8; 24];
+    buf[0] = filetype;
+    // fdflags = 0, padding = 0
+    // rights: be permissive, set all bits
+    let all_rights: u64 = 0x1fff_ffff; // all defined rights
+    buf[8..16].copy_from_slice(&all_rights.to_le_bytes());
+    buf[16..24].copy_from_slice(&all_rights.to_le_bytes());
+
+    drop(fds);
+    ctx.write_bytes(buf_ptr, &buf)?;
+
+    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
+}
+
+/// fd_seek: Move the offset of a file descriptor.
+///
+/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_seek>
+fn wasi_fd_seek(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+    let fd = extract_i32(&args, 0)? as u32;
+    let offset = extract_i64(&args, 1)?;
+    let whence = extract_i32(&args, 2)? as u32;
+    let newoffset_ptr = extract_i32(&args, 3)? as u32;
+
+    match ctx.fd_seek(fd, offset, whence) {
+        Ok(new_offset) => {
+            ctx.write_u64(newoffset_ptr, new_offset)?;
+            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
+        }
+        Err(errno) => Ok(vec![Value::I32(errno.as_u32() as i32)]),
+    }
+}
+
 /// proc_exit: Terminate the process normally with the given exit code.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#proc_exit>
@@ -425,6 +639,9 @@ mod tests {
                 .get_function("wasi_snapshot_preview1", "fd_prestat_dir_name")
                 .is_ok()
         );
+        assert!(imports.get_function("wasi_snapshot_preview1", "path_open").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_fdstat_get").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_seek").is_ok());
         assert!(imports.get_function("wasi_snapshot_preview1", "proc_exit").is_ok());
 
         // env.abort should NOT be included in pure WASI imports

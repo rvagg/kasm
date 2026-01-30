@@ -800,6 +800,7 @@ impl<'a> Executor<'a> {
 
             // Execute current instruction
             let instruction = &context.instructions[context.position];
+
             let state = self.execute_instruction_state_machine(instruction)?;
 
             match state {
@@ -969,6 +970,13 @@ impl<'a> Executor<'a> {
                 found_function_boundary = true;
                 if !self.current_label_stack()?.is_empty() {
                     self.current_label_stack_mut()?.pop();
+                }
+                // Pop the call frame when returning from a function
+                if self.call_stack.len() > 1 {
+                    self.call_stack.pop();
+                } else {
+                    // This is the top-level function, execution should end
+                    return Ok(true);
                 }
                 break;
             } else if !self.current_label_stack()?.is_empty() {
@@ -2863,6 +2871,99 @@ mod tests {
                 .invoke_export(instance_id, "factorial", vec![Value::I32(0)], None)
                 .expect("Factorial should succeed");
             assert_eq!(result, vec![Value::I32(1)]);
+        }
+
+        #[test]
+        fn test_return_from_nested_block_preserves_caller_locals() {
+            // This tests the fix for a bug where returning from within a nested block
+            // did not properly pop the call frame, causing the caller's locals to be
+            // corrupted by the callee's execution context.
+            //
+            // Scenario:
+            // - Caller: stores 100 in local 0, calls helper, returns local 0
+            // - Helper: has a block, returns 42 from within the block
+            // - Expected: caller should return 100 (its local 0, not corrupted)
+
+            let mut module = Module::new("test");
+
+            // Type section: helper returns i32, caller returns i32
+            module.types.types.push(FunctionType {
+                parameters: vec![],
+                return_types: vec![ValueType::I32],
+            }); // Type 0: () -> i32
+
+            // Function section
+            module.functions.functions.push(Function {
+                ftype_index: 0, // helper
+            });
+            module.functions.functions.push(Function {
+                ftype_index: 0, // caller
+            });
+
+            // Helper function (func 0): block { return 42 }
+            // This tests that returning from within a block properly cleans up
+            let helper_instructions = vec![
+                make_instruction(InstructionKind::Block {
+                    block_type: BlockType::Empty,
+                }),
+                make_instruction(InstructionKind::Block {
+                    block_type: BlockType::Empty,
+                }),
+                make_instruction(InstructionKind::I32Const { value: 42 }),
+                make_instruction(InstructionKind::Return),
+                make_instruction(InstructionKind::End),
+                make_instruction(InstructionKind::End),
+                make_instruction(InstructionKind::I32Const { value: 0 }), // unreachable
+            ];
+            let helper_body = StructureBuilder::build_function(&helper_instructions, 0, vec![ValueType::I32])
+                .expect("Failed to build helper function");
+            module.code.code.push(FunctionBody {
+                locals: Locals::empty(),
+                body: helper_body,
+                position: SectionPosition::new(0, 0),
+            });
+
+            // Caller function (func 1): local 0 = 100; call helper; return local 0
+            // The caller has a local variable. After calling helper, local 0 should
+            // still be 100, not corrupted by helper's execution.
+            let caller_instructions = vec![
+                make_instruction(InstructionKind::I32Const { value: 100 }),
+                make_instruction(InstructionKind::LocalSet { local_idx: 0 }),
+                make_instruction(InstructionKind::Call { func_idx: 0 }), // call helper
+                make_instruction(InstructionKind::Drop),                 // drop helper's return value
+                make_instruction(InstructionKind::LocalGet { local_idx: 0 }), // return our local
+            ];
+            let caller_body = StructureBuilder::build_function(&caller_instructions, 1, vec![ValueType::I32])
+                .expect("Failed to build caller function");
+            module.code.code.push(FunctionBody {
+                locals: Locals::new(vec![(1, ValueType::I32)]), // one i32 local
+                body: caller_body,
+                position: SectionPosition::new(0, 0),
+            });
+
+            module.exports.exports.push(Export {
+                name: "main".to_string(),
+                index: ExportIndex::Function(1), // export caller
+            });
+
+            // Create store and instance
+            let mut store = Store::new();
+            let instance_id = store
+                .create_instance(&module, None)
+                .expect("Instance creation should succeed");
+
+            // Call main - should return 100 (caller's local 0)
+            // Before the fix, this would fail because the return from within helper's
+            // nested blocks didn't pop the call frame, causing execution to continue
+            // with corrupted state.
+            let result = store
+                .invoke_export(instance_id, "main", vec![], None)
+                .expect("Main should succeed");
+            assert_eq!(
+                result,
+                vec![Value::I32(100)],
+                "Caller's local should be preserved after callee returns from nested block"
+            );
         }
     }
 

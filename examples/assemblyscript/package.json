@@ -7,7 +7,9 @@
     "asbuild:debug": "asc assembly/index.ts --target debug",
     "asbuild:echo": "asc assembly/echo.ts -o build/echo.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
     "asbuild:grep": "asc assembly/grep.ts -o build/grep.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
-    "asbuild:all": "npm run asbuild && npm run asbuild:echo && npm run asbuild:grep"
+    "asbuild:cat": "asc assembly/cat.ts -o build/cat.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
+    "asbuild:wc": "asc assembly/wc.ts -o build/wc.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
+    "asbuild:all": "npm run asbuild && npm run asbuild:echo && npm run asbuild:grep && npm run asbuild:cat && npm run asbuild:wc"
   },
   "devDependencies": {
     "assemblyscript": "^0.28.9"

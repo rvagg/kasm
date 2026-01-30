@@ -31,6 +31,19 @@ export declare function fd_prestat_get(fd: i32, buf: i32): i32;
 @external("wasi_snapshot_preview1", "fd_prestat_dir_name")
 export declare function fd_prestat_dir_name(fd: i32, path: i32, path_len: i32): i32;
 
+@external("wasi_snapshot_preview1", "path_open")
+export declare function path_open(
+  fd: i32, dirflags: i32, path: i32, path_len: i32,
+  oflags: i32, rights_base: i64, rights_inheriting: i64,
+  fdflags: i32, opened_fd: i32
+): i32;
+
+@external("wasi_snapshot_preview1", "fd_fdstat_get")
+export declare function fd_fdstat_get(fd: i32, buf: i32): i32;
+
+@external("wasi_snapshot_preview1", "fd_seek")
+export declare function fd_seek(fd: i32, offset: i64, whence: i32, newoffset: i32): i32;
+
 // File descriptor constants
 export const STDIN: i32 = 0;
 export const STDOUT: i32 = 1;

@@ -3,10 +3,11 @@
 //! This module provides the `WasiContext` which holds all WASI-related state
 //! including file descriptors, arguments, and environment variables.
 
-use super::types::WasiErrno;
+use super::types::{WasiErrno, WasiFileType};
 use crate::runtime::{RuntimeError, SharedMemory};
 use std::cell::RefCell;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 
 /// A file descriptor entry for WASI
 pub struct FileDescriptor {
@@ -14,30 +15,75 @@ pub struct FileDescriptor {
     reader: Option<Box<dyn Read + Send>>,
     /// The underlying writer (if writable)
     writer: Option<Box<dyn Write + Send>>,
+    /// The underlying seeker (if seekable)
+    seeker: Option<Box<dyn Seek + Send>>,
     /// Whether this fd is readable
     pub readable: bool,
     /// Whether this fd is writable
     pub writable: bool,
+    /// The WASI file type
+    pub file_type: WasiFileType,
 }
 
 impl FileDescriptor {
-    /// Create a new readable file descriptor
+    /// Create a new readable file descriptor (character device, e.g. stdin)
     pub fn new_reader(reader: Box<dyn Read + Send>) -> Self {
         Self {
             reader: Some(reader),
             writer: None,
+            seeker: None,
             readable: true,
             writable: false,
+            file_type: WasiFileType::CharacterDevice,
         }
     }
 
-    /// Create a new writable file descriptor
+    /// Create a new writable file descriptor (character device, e.g. stdout/stderr)
     pub fn new_writer(writer: Box<dyn Write + Send>) -> Self {
         Self {
             reader: None,
             writer: Some(writer),
+            seeker: None,
             readable: false,
             writable: true,
+            file_type: WasiFileType::CharacterDevice,
+        }
+    }
+
+    /// Create a file descriptor backed by a real file
+    ///
+    /// Uses `try_clone()` to obtain separate handles for reading, writing, and seeking.
+    pub fn new_file(file: std::fs::File, readable: bool, writable: bool) -> std::io::Result<Self> {
+        let reader = if readable {
+            Some(Box::new(file.try_clone()?) as Box<dyn Read + Send>)
+        } else {
+            None
+        };
+        let writer = if writable {
+            Some(Box::new(file.try_clone()?) as Box<dyn Write + Send>)
+        } else {
+            None
+        };
+        let seeker = Some(Box::new(file) as Box<dyn Seek + Send>);
+        Ok(Self {
+            reader,
+            writer,
+            seeker,
+            readable,
+            writable,
+            file_type: WasiFileType::RegularFile,
+        })
+    }
+
+    /// Create a directory file descriptor (for preopens)
+    pub fn new_directory() -> Self {
+        Self {
+            reader: None,
+            writer: None,
+            seeker: None,
+            readable: false,
+            writable: false,
+            file_type: WasiFileType::Directory,
         }
     }
 
@@ -70,6 +116,17 @@ impl FileDescriptor {
             None => Ok(()),
         }
     }
+
+    /// Seek within this file descriptor
+    pub fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        match &mut self.seeker {
+            Some(seeker) => seeker.seek(pos),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "fd is not seekable",
+            )),
+        }
+    }
 }
 
 impl std::fmt::Debug for FileDescriptor {
@@ -77,6 +134,7 @@ impl std::fmt::Debug for FileDescriptor {
         f.debug_struct("FileDescriptor")
             .field("readable", &self.readable)
             .field("writable", &self.writable)
+            .field("file_type", &self.file_type)
             .finish()
     }
 }
@@ -88,8 +146,10 @@ impl std::fmt::Debug for FileDescriptor {
 pub struct WasiContext {
     /// The WebAssembly linear memory (bound after instantiation)
     memory: RefCell<Option<SharedMemory>>,
-    /// File descriptors (0=stdin, 1=stdout, 2=stderr)
+    /// File descriptors (0=stdin, 1=stdout, 2=stderr, 3+=preopens/files)
     fds: RefCell<Vec<Option<FileDescriptor>>>,
+    /// Preopened directories: (fd number, guest path, host path)
+    preopens: Vec<(u32, String, PathBuf)>,
     /// Command line arguments
     args: Vec<String>,
     /// Environment variables (name=value pairs)
@@ -135,6 +195,11 @@ impl WasiContext {
     /// Get a reference to the environment variables
     pub fn env(&self) -> &[String] {
         &self.env
+    }
+
+    /// Borrow the file descriptors for reading
+    pub fn fds_ref(&self) -> std::cell::Ref<'_, Vec<Option<FileDescriptor>>> {
+        self.fds.borrow()
     }
 
     // === Memory helper methods ===
@@ -187,7 +252,117 @@ impl WasiContext {
         memory.write_bytes(addr, bytes)
     }
 
-    // === File descriptor methods ===
+    /// Write a u64 to linear memory (little-endian)
+    pub fn write_u64(&self, addr: u32, value: u64) -> Result<(), RuntimeError> {
+        self.write_bytes(addr, &value.to_le_bytes())
+    }
+
+    // === Preopen methods ===
+
+    /// Get the guest path for a preopened fd
+    pub fn get_preopen(&self, fd: u32) -> Option<&str> {
+        self.preopens
+            .iter()
+            .find(|(preopen_fd, _, _)| *preopen_fd == fd)
+            .map(|(_, path, _)| path.as_str())
+    }
+
+    /// Get the list of preopens as (fd, guest_path) pairs
+    pub fn preopens(&self) -> Vec<(u32, &str)> {
+        self.preopens
+            .iter()
+            .map(|(fd, guest, _)| (*fd, guest.as_str()))
+            .collect()
+    }
+
+    /// Resolve a path relative to a preopened directory
+    ///
+    /// Verifies the resolved path does not escape the preopen directory.
+    pub fn resolve_path(&self, dir_fd: u32, path: &str) -> Result<PathBuf, WasiErrno> {
+        let (_, _, host_dir) = self
+            .preopens
+            .iter()
+            .find(|(fd, _, _)| *fd == dir_fd)
+            .ok_or(WasiErrno::BadF)?;
+
+        let resolved = host_dir.join(path);
+
+        // Canonicalise the parent directory to check for traversal
+        // (the file itself may not exist yet for O_CREAT)
+        let canonical_dir = host_dir.canonicalize().map_err(|_| WasiErrno::NoEnt)?;
+
+        let check_path = if resolved.exists() {
+            resolved.canonicalize().map_err(|_| WasiErrno::NoEnt)?
+        } else {
+            // For non-existent files, canonicalise the parent
+            let parent = resolved.parent().ok_or(WasiErrno::NoEnt)?;
+            let canonical_parent = parent.canonicalize().map_err(|_| WasiErrno::NoEnt)?;
+            let filename = resolved.file_name().ok_or(WasiErrno::Inval)?;
+            canonical_parent.join(filename)
+        };
+
+        if !check_path.starts_with(&canonical_dir) {
+            return Err(WasiErrno::Access);
+        }
+
+        Ok(resolved)
+    }
+
+    // === File descriptor management ===
+
+    /// Allocate a new file descriptor, returning its number.
+    ///
+    /// Reuses closed (None) slots before appending to avoid unbounded growth.
+    pub fn allocate_fd(&self, fd: FileDescriptor) -> u32 {
+        let mut fds = self.fds.borrow_mut();
+        // Reuse a closed slot if available (skip stdin/stdout/stderr)
+        for (i, slot) in fds.iter_mut().enumerate().skip(3) {
+            if slot.is_none() {
+                *slot = Some(fd);
+                return i as u32;
+            }
+        }
+        let idx = fds.len();
+        fds.push(Some(fd));
+        idx as u32
+    }
+
+    /// Close a file descriptor
+    pub fn close_fd(&self, fd: u32) -> Result<(), WasiErrno> {
+        let mut fds = self.fds.borrow_mut();
+        let entry = fds.get_mut(fd as usize).ok_or(WasiErrno::BadF)?;
+        if entry.is_none() {
+            return Err(WasiErrno::BadF);
+        }
+        *entry = None;
+        Ok(())
+    }
+
+    /// Seek within a file descriptor
+    pub fn fd_seek(&self, fd: u32, offset: i64, whence: u32) -> Result<u64, WasiErrno> {
+        let seek_from = match whence {
+            0 => {
+                if offset < 0 {
+                    return Err(WasiErrno::Inval);
+                }
+                SeekFrom::Start(offset as u64)
+            }
+            1 => SeekFrom::Current(offset),
+            2 => SeekFrom::End(offset),
+            _ => return Err(WasiErrno::Inval),
+        };
+
+        let mut fds = self.fds.borrow_mut();
+        let fd_entry = fds
+            .get_mut(fd as usize)
+            .ok_or(WasiErrno::BadF)?
+            .as_mut()
+            .ok_or(WasiErrno::BadF)?;
+
+        fd_entry.seek(seek_from).map_err(|_| WasiErrno::Spipe)
+    }
+
+    // === File descriptor I/O methods ===
 
     /// Read from a file descriptor into memory
     ///
@@ -317,6 +492,7 @@ pub struct WasiContextBuilder {
     stdin: Option<Box<dyn Read + Send>>,
     stdout: Option<Box<dyn Write + Send>>,
     stderr: Option<Box<dyn Write + Send>>,
+    preopens: Vec<(String, String)>,
 }
 
 impl WasiContextBuilder {
@@ -328,6 +504,7 @@ impl WasiContextBuilder {
             stdin: None,
             stdout: None,
             stderr: None,
+            preopens: Vec::new(),
         }
     }
 
@@ -361,9 +538,18 @@ impl WasiContextBuilder {
         self
     }
 
+    /// Add a preopened directory
+    ///
+    /// `host_path` is the path on the host filesystem.
+    /// `guest_path` is the path the WASI program sees.
+    pub fn preopen_dir(mut self, host_path: impl Into<String>, guest_path: impl Into<String>) -> Self {
+        self.preopens.push((host_path.into(), guest_path.into()));
+        self
+    }
+
     /// Build the WasiContext
     pub fn build(self) -> WasiContext {
-        let fds: Vec<Option<FileDescriptor>> = vec![
+        let mut fds: Vec<Option<FileDescriptor>> = vec![
             // fd 0 = stdin
             self.stdin.map(FileDescriptor::new_reader),
             // fd 1 = stdout
@@ -372,9 +558,20 @@ impl WasiContextBuilder {
             self.stderr.map(FileDescriptor::new_writer),
         ];
 
+        let mut preopens = Vec::new();
+        for (host_path, guest_path) in &self.preopens {
+            let path = PathBuf::from(host_path);
+            if path.is_dir() {
+                let fd_num = fds.len() as u32;
+                fds.push(Some(FileDescriptor::new_directory()));
+                preopens.push((fd_num, guest_path.clone(), path));
+            }
+        }
+
         WasiContext {
             memory: RefCell::new(None),
             fds: RefCell::new(fds),
+            preopens,
             args: self.args,
             env: self.env,
             exit_code: RefCell::new(None),
