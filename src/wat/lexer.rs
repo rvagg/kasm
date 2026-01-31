@@ -18,6 +18,7 @@
 use super::cursor::{Cursor, Position};
 use super::error::LexError;
 use super::token::{FloatLit, SignedValue, Token, TokenKind};
+use fhex::FromHex;
 
 // ============================================================================
 // Lexer
@@ -462,8 +463,9 @@ impl<'a> Lexer<'a> {
 
         let text = self.cursor.slice_from(&start);
         let text_clean: String = text.chars().filter(|&c| c != '_').collect();
+        let hex_str = format!("0x{text_clean}");
 
-        let value = parse_hex_float(&text_clean).ok_or_else(|| self.error("invalid hex float literal", start))?;
+        let value = f64::from_hex(&hex_str).ok_or_else(|| self.error("invalid hex float literal", start))?;
 
         let value = if negative { -value } else { value };
         Ok(TokenKind::Float(FloatLit::Value(value)))
@@ -544,49 +546,6 @@ fn parse_special_float(text: &str, negative: bool) -> Option<FloatLit> {
     } else {
         None
     }
-}
-
-/// Parse a hexadecimal float string like "1.8p+3" (without 0x prefix).
-///
-/// Returns `None` for malformed input. Per the WAT spec, a hex float requires
-/// at least one hex digit either before or after the decimal point.
-fn parse_hex_float(s: &str) -> Option<f64> {
-    // Split into mantissa and exponent
-    let (mantissa_str, exp_str) = if let Some(p_pos) = s.find(['p', 'P']) {
-        (&s[..p_pos], &s[p_pos + 1..])
-    } else {
-        (s, "0")
-    };
-
-    // Parse mantissa (integer and fractional parts)
-    let (int_str, frac_str) = if let Some(dot_pos) = mantissa_str.find('.') {
-        (&mantissa_str[..dot_pos], &mantissa_str[dot_pos + 1..])
-    } else {
-        (mantissa_str, "")
-    };
-
-    // WAT spec requires at least one hex digit in the mantissa
-    if int_str.is_empty() && frac_str.is_empty() {
-        return None;
-    }
-
-    let int_val = if int_str.is_empty() {
-        0u64
-    } else {
-        u64::from_str_radix(int_str, 16).ok()?
-    };
-
-    let mut mantissa = int_val as f64;
-
-    // Add fractional part
-    for (i, c) in frac_str.chars().enumerate() {
-        let digit = c.to_digit(16)? as f64;
-        mantissa += digit / 16f64.powi(i as i32 + 1);
-    }
-
-    // Parse and apply exponent
-    let exp: i32 = exp_str.parse().ok()?;
-    Some(mantissa * 2f64.powi(exp))
 }
 
 // ============================================================================

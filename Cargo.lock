@@ -294,9 +294,9 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fhex"
-version = "1.0.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab38b859c87b0261390060978076394bd66921e93344f2c5b73938cc7c49477d"
+checksum = "589f0cc671f570233df52775c22d199c64858d419cd28c1ff9d156a676690236"
 
 [[package]]
 name = "fnv"
