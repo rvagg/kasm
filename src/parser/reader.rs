@@ -483,9 +483,9 @@ fn test_rt_vu64() {
     }
 
     // Add random values
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..100 {
-        test_values.push(rng.r#gen::<u64>());
+        test_values.push(rng.random::<u64>());
     }
 
     // Add sequential numbers
@@ -578,9 +578,9 @@ fn test_rt_vu32() {
     }
 
     // Add random values
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..100 {
-        test_values.push(rng.r#gen::<u32>());
+        test_values.push(rng.random::<u32>());
     }
 
     // Add sequential numbers
@@ -808,9 +808,9 @@ fn test_rt_vs64() {
     }
 
     // Add random values
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..100 {
-        test_values.push(rng.r#gen::<i64>());
+        test_values.push(rng.random::<i64>());
     }
 
     // Add sequential numbers
@@ -915,9 +915,9 @@ fn test_rt_vs32() {
     }
 
     // Add random values
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 0..100 {
-        test_values.push(rng.r#gen::<i32>());
+        test_values.push(rng.random::<i32>());
     }
 
     // Add sequential numbers

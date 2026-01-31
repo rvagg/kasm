@@ -1,0 +1,148 @@
+# WAT (WebAssembly Text Format) dictionary for libFuzzer
+# Helps the fuzzer discover interesting token patterns
+
+# Structure keywords
+"(module"
+"(func"
+"(param"
+"(result"
+"(local"
+"(global"
+"(memory"
+"(table"
+"(type"
+"(import"
+"(export"
+"(start"
+"(elem"
+"(data"
+"(block"
+"(loop"
+"(if"
+"(then"
+"(else"
+
+# Closing parens
+")"
+"))"
+")))"
+
+# Value types
+"i32"
+"i64"
+"f32"
+"f64"
+"funcref"
+"externref"
+
+# Common instructions
+"local.get"
+"local.set"
+"local.tee"
+"global.get"
+"global.set"
+"i32.const"
+"i64.const"
+"f32.const"
+"f64.const"
+"i32.add"
+"i32.sub"
+"i32.mul"
+"i32.load"
+"i32.store"
+"call"
+"return"
+"drop"
+"select"
+"br"
+"br_if"
+"br_table"
+"unreachable"
+"nop"
+"end"
+
+# Identifiers
+"$"
+"$0"
+"$foo"
+"$_"
+"$a.b"
+
+# Comments
+";;"
+"(;"
+";)"
+";; comment"
+"(; block ;)"
+
+# String literals
+"\""
+"\"\""
+"\"hello\""
+"\"\\n\""
+"\"\\t\""
+"\"\\r\""
+"\"\\00\""
+"\"\\ff\""
+"\"\\u{0}\""
+"\"\\u{1F600}\""
+
+# Numbers - decimal
+"0"
+"1"
+"42"
+"123"
+"-1"
+"+42"
+"-0"
+"1_000"
+"1_000_000"
+
+# Numbers - hex
+"0x0"
+"0x1"
+"0xff"
+"0xFF"
+"0xDEAD"
+"0xdeadbeef"
+"-0x10"
+"0xFF_FF"
+
+# Floats - decimal
+"0.0"
+"1.0"
+"3.14"
+"1e10"
+"1.5e-3"
+"1E+10"
+
+# Floats - hex
+"0x1p0"
+"0x1.0p0"
+"0x1.8p1"
+"0x1.fffffep+127"
+
+# Special floats
+"inf"
+"-inf"
+"+inf"
+"nan"
+"-nan"
+"nan:0x1"
+"nan:0x7ff8000000000001"
+
+# Whitespace variations
+" "
+"\t"
+"\n"
+"\r\n"
+"  "
+
+# Edge cases
+"_"
+"__"
+"0x"
+"0x."
+"0x_"
+"1_"
+"_1"

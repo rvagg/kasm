@@ -13,6 +13,12 @@ src/parser/         # Binary parser, validation
   module.rs         # Module representation
   structured.rs     # Control flow tree builder
 
+src/wat/            # WAT (text format) frontend
+  lexer.rs          # Tokeniser with iterator API
+  token.rs          # Token types (keywords, integers, floats, strings, ids)
+  cursor.rs         # Character-level cursor with position tracking
+  error.rs          # LexError with span information
+
 src/runtime/        # Interpreter
   store.rs          # Store-based execution, cross-module function calls
   executor.rs       # State machine execution (no recursion)
@@ -42,7 +48,8 @@ benches/                # Criterion benchmarks
 - 86/86 core spec tests pass (21,303 assertions)
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
 - AssemblyScript support: env.abort with UTF-16 string extraction
-- Missing: SIMD (v128), filesystem operations
+- WAT lexer: complete tokeniser for WebAssembly text format
+- Missing: WAT parser, SIMD (v128), filesystem operations
 
 ## CLI
 ```bash
@@ -84,6 +91,9 @@ cargo +nightly fuzz run execute_module -- -max_total_time=60 -dict=fuzz/wasm.dic
 # Run structure-aware fuzzer (generates valid modules)
 cargo +nightly fuzz run generate_module -- -max_total_time=60
 
+# Run WAT lexer fuzzer
+cargo +nightly fuzz run lex_wat -- -max_total_time=60 -dict=fuzz/wat.dict
+
 # Minimise a crash
 cargo fuzz tmin parse_module fuzz/artifacts/parse_module/<crash-file>
 
@@ -98,12 +108,14 @@ cargo fuzz tmin parse_module fuzz/artifacts/parse_module/<crash-file>
 - `parse_module` - Byte mutation fuzzing of the binary parser
 - `execute_module` - Parser + execution with correctly typed function arguments
 - `generate_module` - Structure-aware fuzzing: generates syntactically valid modules using `arbitrary` crate
+- `lex_wat` - WAT lexer fuzzing with arbitrary strings
 
 **Fuzzing resources:**
 - `fuzz/wasm.dict` - Dictionary with WebAssembly byte sequences (opcodes, section IDs, etc.)
+- `fuzz/wat.dict` - Dictionary with WAT text format tokens (keywords, numbers, strings, etc.)
 - `fuzz/seed_corpus.sh` - Seeds corpus from .wasm files and spec test JSON
 
-**Files to commit:** `fuzz/Cargo.toml`, `fuzz/fuzz_targets/*.rs`, `fuzz/.gitignore`, `fuzz/wasm.dict`, `fuzz/seed_corpus.sh`
+**Files to commit:** `fuzz/Cargo.toml`, `fuzz/fuzz_targets/*.rs`, `fuzz/.gitignore`, `fuzz/wasm.dict`, `fuzz/wat.dict`, `fuzz/seed_corpus.sh`
 **Files to ignore:** `fuzz/target/`, `fuzz/corpus/`, `fuzz/artifacts/`
 
 ## Benchmarking
@@ -153,7 +165,40 @@ Results saved to `target/criterion/` with HTML reports.
 cargo run --bin test-coverage  # See which instructions enable most tests
 ```
 
+## WAT Lexer
+The `src/wat/` module provides a lexer for the WebAssembly text format.
+
+```rust
+use kasm::wat::{Lexer, TokenKind};
+
+let source = "(module (func $add (param i32 i32) (result i32)))";
+for result in Lexer::new(source) {
+    match result {
+        Ok(token) => println!("{:?} at {}:{}", token.kind, token.span.line, token.span.column),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+}
+```
+
+**Token types:**
+- `Keyword` - Reserved words and instructions (e.g., `module`, `func`, `i32.add`)
+- `Id` - Identifiers starting with `$` (e.g., `$foo`, `$_bar`)
+- `Integer` - Signed integers with `SignedValue<u64>` to handle full u64 range
+- `Float` - Float literals including `inf`, `nan`, and `nan:0x...` payloads
+- `String` - Byte strings with escape sequences
+- `LParen`, `RParen` - Parentheses
+
+**Design notes:**
+- Iterator-based lazy tokenisation (no upfront allocation)
+- Preserves exact source spans for error reporting
+- `SignedValue<T>` separates sign from magnitude (handles `-0`, `u64::MAX`)
+- `FloatLit` enum preserves `inf`/`nan` semantics without f64 conversion
+- Property-based tests with proptest for invariant checking
+- Fuzz target `lex_wat` for robustness testing
+
 ## Key Files
+- src/wat/lexer.rs - WAT tokeniser with iterator API
+- src/wat/token.rs - Token, TokenKind, SignedValue, FloatLit, Span
 - src/main.rs - CLI with `run` and `dump` subcommands
 - src/runtime/store.rs - Store, FuncAddr, MemoryAddr, TableAddr, cross-module execution
 - src/runtime/executor.rs - State machine interpreter
@@ -165,9 +210,10 @@ cargo run --bin test-coverage  # See which instructions enable most tests
 - tests/wasi_tests.rs - WASI integration tests (inline WAT)
 
 ## Error Types
-- `DecodeError` - Parser errors with byte positions
+- `DecodeError` - Binary parser errors with byte positions
 - `RuntimeError` - Execution errors
 - `ValidationError` - Type validation errors
+- `LexError` - WAT lexer errors with line/column spans
 
 ## Testing
 - Unit tests: Individual component tests

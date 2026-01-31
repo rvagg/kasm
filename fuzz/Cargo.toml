@@ -42,3 +42,10 @@ path = "fuzz_targets/generate_module.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "lex_wat"
+path = "fuzz_targets/lex_wat.rs"
+test = false
+doc = false
+bench = false
