@@ -49,3 +49,10 @@ path = "fuzz_targets/lex_wat.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parse_wat"
+path = "fuzz_targets/parse_wat.rs"
+test = false
+doc = false
+bench = false

@@ -1641,7 +1641,7 @@ pub struct Memory {
     pub limits: Limits,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ExportIndex {
     Function(u32),
     Table(u32),

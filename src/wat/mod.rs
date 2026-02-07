@@ -1,9 +1,26 @@
 //! WebAssembly Text Format (WAT) support.
 //!
-//! This module provides lexical analysis for WAT, the human-readable text format
-//! for WebAssembly modules.
+//! This module provides lexical analysis and parsing for WAT, the human-readable
+//! text format for WebAssembly modules.
 //!
-//! # Example
+//! # Parsing Example
+//!
+//! ```
+//! use kasm::wat::parse;
+//!
+//! let wat = r#"
+//!     (module
+//!         (func $add (param i32 i32) (result i32)
+//!             local.get 0
+//!             local.get 1
+//!             i32.add))
+//! "#;
+//!
+//! let module = parse(wat).expect("valid WAT");
+//! assert_eq!(module.functions.len(), 1);
+//! ```
+//!
+//! # Lexer Example
 //!
 //! ```
 //! use kasm::wat::{Lexer, TokenKind};
@@ -17,8 +34,8 @@
 //!
 //! # Error Handling
 //!
-//! The lexer yields `Result<Token, LexError>` for each token. On malformed input,
-//! iteration stops at the first error:
+//! Both the lexer and parser return `Result` types with detailed error information
+//! including source location:
 //!
 //! ```
 //! use kasm::wat::Lexer;
@@ -31,8 +48,12 @@
 mod cursor;
 mod error;
 mod lexer;
+mod parser;
+pub mod sexpr;
 mod token;
 
 pub use error::LexError;
 pub use lexer::Lexer;
+pub use parser::{ParseError, parse};
+pub use sexpr::{ReadError, SExpr, SExprList};
 pub use token::{FloatLit, SignedValue, Span, Token, TokenKind};

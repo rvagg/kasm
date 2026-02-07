@@ -13,11 +13,14 @@ src/parser/         # Binary parser, validation
   module.rs         # Module representation
   structured.rs     # Control flow tree builder
 
-src/wat/            # WAT (text format) frontend
+src/wat/            # WAT (text format) parser
+  mod.rs            # Public API: parse() function
   lexer.rs          # Tokeniser with iterator API
   token.rs          # Token types (keywords, integers, floats, strings, ids)
   cursor.rs         # Character-level cursor with position tracking
-  error.rs          # LexError with span information
+  sexpr.rs          # S-expression tree representation
+  parser.rs         # Two-phase parser (S-expr → Module)
+  error.rs          # LexError/ParseError with span information
 
 src/runtime/        # Interpreter
   store.rs          # Store-based execution, cross-module function calls
@@ -48,8 +51,10 @@ benches/                # Criterion benchmarks
 - 86/86 core spec tests pass (21,303 assertions)
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
 - AssemblyScript support: env.abort with UTF-16 string extraction
-- WAT lexer: complete tokeniser for WebAssembly text format
-- Missing: WAT parser, SIMD (v128), filesystem operations
+- WAT parser: complete WebAssembly 1.0 text format parser
+- Missing: binary encoder (Module → .wasm), SIMD (v128), filesystem operations
+- Future: binary encoder would allow replacing the external `wat` dev-dependency
+  in tests/benchmarks with `kasm::wat::parse()` directly
 
 ## CLI
 ```bash
@@ -94,6 +99,9 @@ cargo +nightly fuzz run generate_module -- -max_total_time=60
 # Run WAT lexer fuzzer
 cargo +nightly fuzz run lex_wat -- -max_total_time=60 -dict=fuzz/wat.dict
 
+# Run WAT parser fuzzer
+cargo +nightly fuzz run parse_wat -- -max_total_time=60 -dict=fuzz/wat.dict
+
 # Minimise a crash
 cargo fuzz tmin parse_module fuzz/artifacts/parse_module/<crash-file>
 
@@ -108,7 +116,8 @@ cargo fuzz tmin parse_module fuzz/artifacts/parse_module/<crash-file>
 - `parse_module` - Byte mutation fuzzing of the binary parser
 - `execute_module` - Parser + execution with correctly typed function arguments
 - `generate_module` - Structure-aware fuzzing: generates syntactically valid modules using `arbitrary` crate
-- `lex_wat` - WAT lexer fuzzing with arbitrary strings
+- `lex_wat` - WAT lexer fuzzing with arbitrary byte sequences
+- `parse_wat` - WAT parser fuzzing with arbitrary byte sequences
 
 **Fuzzing resources:**
 - `fuzz/wasm.dict` - Dictionary with WebAssembly byte sequences (opcodes, section IDs, etc.)
@@ -165,38 +174,53 @@ Results saved to `target/criterion/` with HTML reports.
 cargo run --bin test-coverage  # See which instructions enable most tests
 ```
 
-## WAT Lexer
-The `src/wat/` module provides a lexer for the WebAssembly text format.
+## WAT Parser
+The `src/wat/` module provides a complete WebAssembly 1.0 text format parser.
 
 ```rust
-use kasm::wat::{Lexer, TokenKind};
+use kasm::wat::parse;
 
-let source = "(module (func $add (param i32 i32) (result i32)))";
-for result in Lexer::new(source) {
-    match result {
-        Ok(token) => println!("{:?} at {}:{}", token.kind, token.span.line, token.span.column),
-        Err(e) => eprintln!("Error: {}", e),
-    }
-}
+let source = r#"(module
+    (func $add (param i32 i32) (result i32)
+        local.get 0
+        local.get 1
+        i32.add)
+)"#;
+let module = parse(source).unwrap();
 ```
 
-**Token types:**
-- `Keyword` - Reserved words and instructions (e.g., `module`, `func`, `i32.add`)
-- `Id` - Identifiers starting with `$` (e.g., `$foo`, `$_bar`)
-- `Integer` - Signed integers with `SignedValue<u64>` to handle full u64 range
-- `Float` - Float literals including `inf`, `nan`, and `nan:0x...` payloads
-- `String` - Byte strings with escape sequences
-- `LParen`, `RParen` - Parentheses
+**Supported constructs:**
+- Types: function types with params and results
+- Functions: flat and folded (S-expression) instruction syntax
+- Tables: with funcref/externref element types
+- Memories: with limits (min, optional max)
+- Globals: mutable and immutable, all value types
+- Imports/Exports: functions, tables, memories, globals
+- Start function
+- Element segments: active, passive, declarative modes
+- Data segments: active (with offset), passive modes
+- All WASM 1.0 instructions including control flow, numeric, memory ops
+
+**Parser architecture:**
+1. **Lexer** (`lexer.rs`): Iterator-based tokenisation
+2. **S-expression reader** (`sexpr.rs`): Builds tree from tokens
+3. **Parser** (`parser.rs`): Transforms S-expr tree to Module
+
+**Instruction syntax:**
+- Flat syntax: `local.get 0` `i32.add`
+- Folded syntax: `(i32.add (local.get 0) (local.get 1))`
+- Mixed syntax supported within same function
 
 **Design notes:**
-- Iterator-based lazy tokenisation (no upfront allocation)
-- Preserves exact source spans for error reporting
-- `SignedValue<T>` separates sign from magnitude (handles `-0`, `u64::MAX`)
-- `FloatLit` enum preserves `inf`/`nan` semantics without f64 conversion
-- Property-based tests with proptest for invariant checking
-- Fuzz target `lex_wat` for robustness testing
+- Two-phase parsing avoids instruction duplication via `ArgSource` abstraction
+- Named identifiers (`$name`) resolved to indices during parsing
+- Preserves source spans for error reporting
+- Fuzz targets: `lex_wat`, `parse_wat`
 
 ## Key Files
+- src/wat/mod.rs - WAT public API (parse function)
+- src/wat/parser.rs - S-expression to Module transformation
+- src/wat/sexpr.rs - S-expression tree with span tracking
 - src/wat/lexer.rs - WAT tokeniser with iterator API
 - src/wat/token.rs - Token, TokenKind, SignedValue, FloatLit, Span
 - src/main.rs - CLI with `run` and `dump` subcommands
@@ -214,6 +238,7 @@ for result in Lexer::new(source) {
 - `RuntimeError` - Execution errors
 - `ValidationError` - Type validation errors
 - `LexError` - WAT lexer errors with line/column spans
+- `ParseError` - WAT parser errors with source spans
 
 ## Testing
 - Unit tests: Individual component tests
