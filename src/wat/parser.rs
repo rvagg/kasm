@@ -28,7 +28,7 @@ use crate::parser::module::{
     GlobalSection, GlobalType, Import, ImportSection, Limits, Locals, Memory, MemorySection, Module, RefType,
     SectionPosition, StartSection, TableSection, TableType, TypeSection, ValueType,
 };
-use crate::parser::structured::{StructuredFunction, StructuredInstruction};
+use crate::parser::structure_builder::StructureBuilder;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -694,24 +694,7 @@ fn parse_func(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), ParseEr
     }
     ctx.register(Namespace::Func, name);
 
-    // Handle inline exports
-    while let Some(item) = list.get(idx) {
-        if item.is_list_headed_by("export") {
-            let export_list = item.as_list().unwrap();
-            let export_name = parse_string(
-                export_list
-                    .get(1)
-                    .ok_or_else(|| ParseError::new("expected export name", export_list.span))?,
-            )?;
-            ctx.exports.push(Export {
-                name: export_name,
-                index: ExportIndex::Function(ctx.func_count - 1),
-            });
-            idx += 1;
-        } else {
-            break;
-        }
-    }
+    idx = collect_inline_exports(list, idx, ExportIndex::Function(ctx.func_count - 1), ctx)?;
 
     // Parse type use (type reference and/or inline params/results)
     let (type_idx, body_start) = parse_type_use(list, idx, true, ctx)?;
@@ -740,14 +723,8 @@ fn parse_func(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), ParseEr
             return_types: Vec::new(),
         });
 
-    let structured_body: Vec<StructuredInstruction> = body.into_iter().map(StructuredInstruction::Plain).collect();
-
-    let structured = StructuredFunction {
-        body: structured_body,
-        local_count: ctx.local_count as usize,
-        return_types: func_type.return_types.clone(),
-        end_instruction: None,
-    };
+    let structured = StructureBuilder::build_function(&body, ctx.local_count as usize, func_type.return_types.clone())
+        .map_err(|e| ParseError::new(e.to_string(), list.span))?;
 
     ctx.functions.push(Function { ftype_index: type_idx });
     ctx.code.push(FunctionBody {
@@ -761,17 +738,33 @@ fn parse_func(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), ParseEr
 
 /// Parses a local declaration.
 ///
-/// Grammar: `local ::= '(' 'local' id? valtype* ')'`
+/// Grammar: `local ::= '(' 'local' id valtype ')' | '(' 'local' valtype* ')'`
 fn parse_local(list: SExprList<'_>, locals: &mut Vec<ValueType>, ctx: &mut ParseContext) -> Result<(), ParseError> {
-    for item in list.iter_from(1) {
-        if let Some(name) = item.as_id() {
-            ctx.register(Namespace::Local, Some(name));
-        } else {
+    let mut idx = 1;
+
+    let name = list.get(idx).and_then(|s| s.as_id());
+    if name.is_some() {
+        idx += 1;
+        // Named form: exactly one valtype
+        let item = list
+            .get(idx)
+            .ok_or_else(|| ParseError::new("expected valtype after local name", list.span))?;
+        let ty = parse_valtype(item)?;
+        ctx.register(Namespace::Local, name);
+        locals.push(ty);
+        if list.get(idx + 1).is_some() {
+            return Err(ParseError::new("named local must have exactly one type", list.span));
+        }
+    } else {
+        // Anonymous form: zero or more valtypes
+        while let Some(item) = list.get(idx) {
             let ty = parse_valtype(item)?;
             ctx.register(Namespace::Local, None);
             locals.push(ty);
+            idx += 1;
         }
     }
+
     Ok(())
 }
 
@@ -789,6 +782,7 @@ fn parse_table(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), ParseE
         idx += 1;
     }
     ctx.register(Namespace::Table, name);
+    idx = collect_inline_exports(list, idx, ExportIndex::Table(ctx.table_count - 1), ctx)?;
 
     let limits = parse_limits(list, idx)?;
     let ref_idx = idx + limits_len(&limits);
@@ -808,6 +802,7 @@ fn parse_memory(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), Parse
         idx += 1;
     }
     ctx.register(Namespace::Memory, name);
+    idx = collect_inline_exports(list, idx, ExportIndex::Memory(ctx.memory_count - 1), ctx)?;
 
     let limits = parse_limits(list, idx)?;
     ctx.memories.push(Memory { limits });
@@ -824,16 +819,15 @@ fn parse_global(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), Parse
         idx += 1;
     }
     ctx.register(Namespace::Global, name);
+    idx = collect_inline_exports(list, idx, ExportIndex::Global(ctx.global_count - 1), ctx)?;
 
     let global_type = parse_global_type(list, idx)?;
     idx += 1; // Consume the type or (mut type)
 
-    // Parse init expression
     let init_sexpr = list
         .get(idx)
         .ok_or_else(|| ParseError::new("expected init expression", list.span))?;
-    let mut init = Vec::new();
-    parse_instruction(init_sexpr, &mut init, ctx)?;
+    let init = parse_const_expr(init_sexpr, ctx)?;
 
     ctx.globals.push(Global { global_type, init });
     Ok(())
@@ -870,6 +864,32 @@ fn parse_global_type(list: SExprList<'_>, idx: usize) -> Result<GlobalType, Pars
 // ============================================================================
 // Exports, Start, Data
 // ============================================================================
+
+/// Consumes inline `(export "name")` forms from a definition, registering
+/// each as an export of the given kind. Returns the adjusted index past any
+/// inline exports. Used by func, table, memory, and global parsers.
+fn collect_inline_exports(
+    list: SExprList<'_>,
+    mut idx: usize,
+    index: ExportIndex,
+    ctx: &mut ParseContext,
+) -> Result<usize, ParseError> {
+    while let Some(item) = list.get(idx) {
+        if item.is_list_headed_by("export") {
+            let export_list = item.as_list().unwrap();
+            let name = parse_string(
+                export_list
+                    .get(1)
+                    .ok_or_else(|| ParseError::new("expected export name", export_list.span))?,
+            )?;
+            ctx.exports.push(Export { name, index });
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+    Ok(idx)
+}
 
 /// Parses an export.
 ///
@@ -954,10 +974,7 @@ fn parse_elem(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), ParseEr
     if let Some(item) = list.get(idx) {
         if item.is_list_headed_by("offset") {
             let offset_list = item.as_list().unwrap();
-            let mut offset = Vec::new();
-            for expr_item in offset_list.iter_from(1) {
-                parse_instruction(expr_item, &mut offset, ctx)?;
-            }
+            let offset = parse_const_expr_multi(offset_list.iter_from(1), ctx)?;
             idx += 1;
 
             // Active mode, parse element list
@@ -973,8 +990,7 @@ fn parse_elem(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), ParseEr
 
         // Check if first item is an expression (active mode with inline offset)
         if item.as_list().is_some() && !is_elem_keyword(item) {
-            let mut offset = Vec::new();
-            parse_instruction(item, &mut offset, ctx)?;
+            let offset = parse_const_expr(item, ctx)?;
             idx += 1;
 
             // Active mode with expression offset, parse element list (handles 'func' keyword)
@@ -1038,52 +1054,39 @@ fn parse_elem_list(
         }
     }
 
-    // Parse element expressions
+    // Parse element expressions. Each init expression includes a trailing End
+    // to match the binary format representation.
     let mut init = Vec::new();
     while let Some(item) = list.get(idx) {
         if let Some(inner) = item.as_list() {
             if inner.head_keyword() == Some("item") {
-                // (item expr)
-                let mut expr = Vec::new();
-                for expr_item in inner.iter_from(1) {
-                    parse_instruction(expr_item, &mut expr, ctx)?;
-                }
+                let expr = parse_const_expr_multi(inner.iter_from(1), ctx)?;
                 init.push(expr);
             } else if inner.head_keyword() == Some("ref.func") {
-                // (ref.func $f)
                 let func_idx = parse_index(inner.get(1), Namespace::Func, ctx)?;
-                init.push(vec![make_instr(InstructionKind::RefFunc { func_idx })]);
+                init.push(vec![make_instr(InstructionKind::RefFunc { func_idx }), make_end()]);
             } else if inner.head_keyword() == Some("ref.null") {
-                // (ref.null func) or (ref.null extern)
                 let heap_type = inner.get(1).and_then(|s| s.as_keyword()).unwrap_or("func");
-                let kind = if heap_type == "extern" {
-                    InstructionKind::RefNull {
-                        ref_type: ValueType::ExternRef,
-                    }
+                let ref_type = if heap_type == "extern" {
+                    ValueType::ExternRef
                 } else {
-                    InstructionKind::RefNull {
-                        ref_type: ValueType::FuncRef,
-                    }
+                    ValueType::FuncRef
                 };
-                init.push(vec![make_instr(kind)]);
+                init.push(vec![make_instr(InstructionKind::RefNull { ref_type }), make_end()]);
             } else {
-                // Might be a bare expression
-                let mut expr = Vec::new();
-                parse_instruction(item, &mut expr, ctx)?;
-                init.push(expr);
+                init.push(parse_const_expr(item, ctx)?);
             }
         } else if let Some(id_or_idx) = item.as_id().or_else(|| {
             item.as_atom()
                 .filter(|t| matches!(t.kind, TokenKind::Integer(_)))
                 .map(|_| "")
         }) {
-            // Bare function index
             let func_idx = if id_or_idx.is_empty() {
                 parse_index(Some(item), Namespace::Func, ctx)?
             } else {
                 ctx.resolve(Namespace::Func, id_or_idx, item.span())?
             };
-            init.push(vec![make_instr(InstructionKind::RefFunc { func_idx })]);
+            init.push(vec![make_instr(InstructionKind::RefFunc { func_idx }), make_end()]);
         } else {
             break;
         }
@@ -1106,7 +1109,7 @@ fn parse_elem_func_indices(
 
     while let Some(item) = list.get(idx) {
         if let Ok(func_idx) = parse_index(Some(item), Namespace::Func, ctx) {
-            init.push(vec![make_instr(InstructionKind::RefFunc { func_idx })]);
+            init.push(vec![make_instr(InstructionKind::RefFunc { func_idx }), make_end()]);
             idx += 1;
         } else {
             break;
@@ -1147,16 +1150,12 @@ fn parse_data(list: SExprList<'_>, ctx: &mut ParseContext) -> Result<(), ParseEr
         if item.is_list_headed_by("offset") {
             // Explicit (offset expr) form
             let offset_list = item.as_list().unwrap();
-            let mut offset = Vec::new();
-            for expr_item in offset_list.iter_from(1) {
-                parse_instruction(expr_item, &mut offset, ctx)?;
-            }
+            let offset = parse_const_expr_multi(offset_list.iter_from(1), ctx)?;
             idx += 1;
             DataMode::Active { memory_index, offset }
         } else if item.as_list().is_some() && !is_string_atom(item) {
             // Implicit offset expression (abbreviated form)
-            let mut offset = Vec::new();
-            parse_instruction(item, &mut offset, ctx)?;
+            let offset = parse_const_expr(item, ctx)?;
             idx += 1;
             DataMode::Active { memory_index, offset }
         } else {
@@ -1357,7 +1356,7 @@ fn parse_block_instr(
 
     // Emit end
     ctx.pop_label();
-    out.push(make_instr(InstructionKind::End));
+    out.push(make_end());
 
     Ok(())
 }
@@ -1420,7 +1419,7 @@ fn parse_if_instr(
     }
 
     ctx.pop_label();
-    out.push(make_instr(InstructionKind::End));
+    out.push(make_end());
 
     Ok(())
 }
@@ -1893,12 +1892,41 @@ fn parse_memarg_from_args(args: &ArgSource<'_>, natural_align: u32) -> Result<(M
 // ============================================================================
 
 /// Creates an Instruction with empty position.
+/// Parses a constant expression and appends a trailing `End` instruction.
+///
+/// The binary format terminates constant expressions with 0x0B (End). The
+/// binary parser includes this in the instruction vector; the WAT parser must
+/// do the same so the runtime evaluator sees a consistent representation.
+fn parse_const_expr(sexpr: &SExpr, ctx: &mut ParseContext) -> Result<Vec<Instruction>, ParseError> {
+    let mut instrs = Vec::new();
+    parse_instruction(sexpr, &mut instrs, ctx)?;
+    instrs.push(make_end());
+    Ok(instrs)
+}
+
+/// Parses multiple S-expressions as a constant expression with trailing `End`.
+fn parse_const_expr_multi<'a>(
+    items: impl Iterator<Item = &'a SExpr>,
+    ctx: &mut ParseContext,
+) -> Result<Vec<Instruction>, ParseError> {
+    let mut instrs = Vec::new();
+    for item in items {
+        parse_instruction(item, &mut instrs, ctx)?;
+    }
+    instrs.push(make_end());
+    Ok(instrs)
+}
+
 fn make_instr(kind: InstructionKind) -> Instruction {
     Instruction {
         kind,
         position: ByteRange { offset: 0, length: 0 },
         original_bytes: Vec::new(),
     }
+}
+
+fn make_end() -> Instruction {
+    make_instr(InstructionKind::End)
 }
 
 /// Checks if an S-expression is an immediate (not a nested instruction).
@@ -2474,5 +2502,135 @@ mod tests {
             (data (i32.const 0) "hello" " " "world"))"#;
         let module = parse(wat).unwrap();
         assert_eq!(module.data.data[0].init, b"hello world");
+    }
+
+    // ====================================================================
+    // Inline exports
+    // ====================================================================
+
+    #[test]
+    fn inline_export_func() {
+        let wat = r#"(module (func (export "f") (result i32) (i32.const 1)))"#;
+        let module = parse(wat).unwrap();
+        assert_eq!(module.exports.exports.len(), 1);
+        assert_eq!(module.exports.exports[0].name, "f");
+        assert!(matches!(module.exports.exports[0].index, ExportIndex::Function(0)));
+    }
+
+    #[test]
+    fn inline_export_memory() {
+        let wat = r#"(module (memory (export "mem") 1))"#;
+        let module = parse(wat).unwrap();
+        assert_eq!(module.exports.exports.len(), 1);
+        assert_eq!(module.exports.exports[0].name, "mem");
+        assert!(matches!(module.exports.exports[0].index, ExportIndex::Memory(0)));
+    }
+
+    #[test]
+    fn inline_export_table() {
+        let wat = r#"(module (table (export "t") 1 funcref))"#;
+        let module = parse(wat).unwrap();
+        assert_eq!(module.exports.exports.len(), 1);
+        assert_eq!(module.exports.exports[0].name, "t");
+        assert!(matches!(module.exports.exports[0].index, ExportIndex::Table(0)));
+    }
+
+    #[test]
+    fn inline_export_global() {
+        let wat = r#"(module (global (export "g") i32 (i32.const 42)))"#;
+        let module = parse(wat).unwrap();
+        assert_eq!(module.exports.exports.len(), 1);
+        assert_eq!(module.exports.exports[0].name, "g");
+        assert!(matches!(module.exports.exports[0].index, ExportIndex::Global(0)));
+    }
+
+    #[test]
+    fn inline_export_multiple_on_one_item() {
+        let wat = r#"(module (memory (export "m1") (export "m2") 1))"#;
+        let module = parse(wat).unwrap();
+        assert_eq!(module.exports.exports.len(), 2);
+        assert_eq!(module.exports.exports[0].name, "m1");
+        assert_eq!(module.exports.exports[1].name, "m2");
+    }
+
+    #[test]
+    fn inline_export_named_item() {
+        let wat = r#"(module
+            (memory $mem (export "memory") 1)
+            (func $f (export "_start") (nop))
+        )"#;
+        let module = parse(wat).unwrap();
+        assert_eq!(module.exports.exports.len(), 2);
+        assert_eq!(module.exports.exports[0].name, "memory");
+        assert!(matches!(module.exports.exports[0].index, ExportIndex::Memory(0)));
+        assert_eq!(module.exports.exports[1].name, "_start");
+        assert!(matches!(module.exports.exports[1].index, ExportIndex::Function(0)));
+    }
+
+    // ====================================================================
+    // Structured control flow via StructureBuilder
+    // ====================================================================
+
+    #[test]
+    fn block_produces_structured_instruction() {
+        use crate::parser::structured::StructuredInstruction;
+        let wat = "(module (func (block (nop))))";
+        let module = parse(wat).unwrap();
+        let body = &module.code.code[0].body.body;
+        assert!(
+            matches!(body[0], StructuredInstruction::Block { .. }),
+            "expected Block, got {:?}",
+            body[0]
+        );
+    }
+
+    #[test]
+    fn nested_blocks_structured() {
+        use crate::parser::structured::StructuredInstruction;
+        let wat = "(module (func (result i32)
+            (block $outer (result i32)
+                (block $inner (result i32)
+                    (i32.const 42)
+                    (br $outer)
+                )
+            )
+        ))";
+        let module = parse(wat).unwrap();
+        let body = &module.code.code[0].body.body;
+        assert!(matches!(body[0], StructuredInstruction::Block { .. }));
+        if let StructuredInstruction::Block { body: inner, .. } = &body[0] {
+            assert!(matches!(inner[0], StructuredInstruction::Block { .. }));
+        }
+    }
+
+    #[test]
+    fn if_else_structured() {
+        use crate::parser::structured::StructuredInstruction;
+        let wat = "(module (func (param i32) (result i32)
+            (if (result i32) (local.get 0)
+                (then (i32.const 1))
+                (else (i32.const 0))
+            )
+        ))";
+        let module = parse(wat).unwrap();
+        let body = &module.code.code[0].body.body;
+        // body[0] is the condition (local.get 0), body[1] is the If
+        assert!(matches!(body[0], StructuredInstruction::Plain(_)));
+        assert!(matches!(
+            body[1],
+            StructuredInstruction::If {
+                else_branch: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn loop_structured() {
+        use crate::parser::structured::StructuredInstruction;
+        let wat = "(module (func (loop $l (br $l))))";
+        let module = parse(wat).unwrap();
+        let body = &module.code.code[0].body.body;
+        assert!(matches!(body[0], StructuredInstruction::Loop { .. }));
     }
 }

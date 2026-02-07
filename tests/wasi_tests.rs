@@ -4,16 +4,16 @@ mod common;
 
 use common::CapturedWriter;
 use kasm::parser;
+use kasm::parser::module::Module;
 use kasm::parser::reader::Reader;
 use kasm::runtime::store::Store;
 use kasm::runtime::wasi::{MEMORY_EXPORT, WasiContext, add_assemblyscript_imports, create_wasi_imports};
-use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-/// Helper to compile WAT to WASM
-fn wat_to_wasm(wat: &str) -> Vec<u8> {
-    wat::parse_str(wat).expect("Failed to parse WAT")
+/// Helper to parse WAT source into a Module
+fn parse_wat(wat: &str) -> Module {
+    kasm::wat::parse(wat).expect("Failed to parse WAT")
 }
 
 #[test]
@@ -41,10 +41,7 @@ fn test_hello_wasi() {
       )
     )
     "#;
-    let wasm = wat_to_wasm(wat);
-
-    // Parse the module
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     // Create captured stdout
     let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
@@ -121,8 +118,7 @@ fn test_fd_read_stdin() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     // Create captured stdout and mock stdin
     let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
@@ -196,8 +192,7 @@ fn test_args() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stdout = CapturedWriter(stdout_buffer.clone());
@@ -236,7 +231,8 @@ fn test_assemblyscript_hello() {
     let wasm = std::fs::read("examples/assemblyscript/build/release.wasm")
         .expect("Failed to read AssemblyScript wasm - run `npm run asbuild` in examples/assemblyscript first");
 
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parser::parse(&std::collections::HashMap::new(), "test", &mut Reader::new(wasm))
+        .expect("Failed to parse module");
 
     let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stdout = CapturedWriter(stdout_buffer.clone());
@@ -290,8 +286,7 @@ fn test_proc_exit() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let ctx = Arc::new(WasiContext::builder().build());
 
@@ -349,8 +344,7 @@ fn test_multiple_iovecs() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stdout = CapturedWriter(stdout_buffer.clone());
@@ -405,8 +399,7 @@ fn test_fd_read_eof() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     // Empty stdin
     let stdin = Cursor::new(Vec::<u8>::new());
@@ -516,8 +509,7 @@ fn test_environ() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stdout = CapturedWriter(stdout_buffer.clone());
@@ -588,8 +580,7 @@ fn test_fd_prestat_returns_badf() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let ctx = Arc::new(WasiContext::builder().build());
 
@@ -664,8 +655,7 @@ fn test_preopen_enumerate() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
     let stdout = CapturedWriter(stdout_buffer.clone());
@@ -795,8 +785,7 @@ fn test_path_open_and_read() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     // Create a temp file with known content
     let dir = std::env::temp_dir();
@@ -898,8 +887,7 @@ fn test_path_open_write() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let dir = std::env::temp_dir();
     let file_path = dir.join("test_write.txt");
@@ -985,8 +973,7 @@ fn test_fd_close_then_read_fails() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let dir = std::env::temp_dir();
     let file_path = dir.join("test_close.txt");
@@ -1051,8 +1038,7 @@ fn test_path_traversal_blocked() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let dir = std::env::temp_dir();
     let dir_str = dir.to_str().unwrap();
@@ -1108,8 +1094,7 @@ fn test_path_open_nonexistent_file() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let dir = std::env::temp_dir();
     let dir_str = dir.to_str().unwrap();
@@ -1204,8 +1189,7 @@ fn test_fd_seek() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let dir = std::env::temp_dir();
     let file_path = dir.join("test_seek.txt");
@@ -1286,8 +1270,7 @@ fn test_fd_fdstat_get() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let dir = std::env::temp_dir();
     let dir_str = dir.to_str().unwrap();
@@ -1365,8 +1348,7 @@ fn test_return_from_nested_block_preserves_caller() {
     )
     "#;
 
-    let wasm = wat_to_wasm(wat);
-    let module = parser::parse(&HashMap::new(), "test", &mut Reader::new(wasm)).expect("Failed to parse module");
+    let module = parse_wat(wat);
 
     let mut store = Store::new();
     let instance_id = store.create_instance(&module, None).expect("Failed to create instance");

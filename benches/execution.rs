@@ -4,20 +4,15 @@
 //! and overall execution throughput.
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use kasm::parser;
+use kasm::parser::module::Module;
 use kasm::runtime::store::Store;
 use kasm::runtime::value::Value;
-use std::collections::HashMap;
 
 /// Load and parse a WAT module from benches/modules/
-fn load_module(name: &str) -> parser::module::Module {
+fn load_module(name: &str) -> Module {
     let wat_path = format!("benches/modules/{}.wat", name);
-    let wat_bytes = std::fs::read(&wat_path).expect(&format!("Failed to read {}", wat_path));
-    let wasm_bytes = wat::parse_bytes(&wat_bytes).expect(&format!("Failed to parse WAT: {}", name));
-
-    let mut reader = parser::reader::Reader::new(wasm_bytes.to_vec());
-    let module_registry = HashMap::new();
-    parser::parse(&module_registry, name, &mut reader).expect(&format!("Failed to parse: {}", name))
+    let wat_source = std::fs::read_to_string(&wat_path).expect(&format!("Failed to read {}", wat_path));
+    kasm::wat::parse(&wat_source).expect(&format!("Failed to parse WAT: {}", name))
 }
 
 /// Create a store and instantiate a module
