@@ -1,7 +1,7 @@
 //! Instruction encoding to binary format
 
 use super::{BlockType, InstructionKind};
-use crate::parser::reader;
+use crate::parser::encoding;
 
 impl InstructionKind {
     /// Get the primary opcode for this instruction
@@ -281,49 +281,49 @@ impl InstructionKind {
 
         let mut bytes = vec![self.opcode()];
 
-        // Add prefix subopcode if needed
+        // Prefix subopcode
         if let Some(sub) = self.subopcode_0xfc() {
-            bytes.extend(&reader::emit_vu32(sub));
+            encoding::write_vu32(&mut bytes, sub);
         } else if let Some(sub) = self.subopcode_0xfd() {
-            bytes.extend(&reader::emit_vu32(sub));
+            encoding::write_vu32(&mut bytes, sub);
         }
 
-        // Add instruction-specific data
+        // Instruction-specific operands
         match self {
             // Block types
             Block { block_type } | Loop { block_type } | If { block_type } => {
-                bytes.extend(&encode_block_type(block_type));
+                encode_block_type(&mut bytes, block_type);
             }
 
             // Label indices
             Br { label_idx } | BrIf { label_idx } => {
-                bytes.extend(&reader::emit_vu32(*label_idx));
+                encoding::write_vu32(&mut bytes, *label_idx);
             }
 
             // Branch table
             BrTable { labels, default } => {
-                bytes.extend(&reader::emit_vu32(labels.len() as u32));
+                encoding::write_vu32(&mut bytes, labels.len() as u32);
                 for label in labels {
-                    bytes.extend(&reader::emit_vu32(*label));
+                    encoding::write_vu32(&mut bytes, *label);
                 }
-                bytes.extend(&reader::emit_vu32(*default));
+                encoding::write_vu32(&mut bytes, *default);
             }
 
             // Function/variable indices
             Call { func_idx } | RefFunc { func_idx } => {
-                bytes.extend(&reader::emit_vu32(*func_idx));
+                encoding::write_vu32(&mut bytes, *func_idx);
             }
             LocalGet { local_idx } | LocalSet { local_idx } | LocalTee { local_idx } => {
-                bytes.extend(&reader::emit_vu32(*local_idx));
+                encoding::write_vu32(&mut bytes, *local_idx);
             }
             GlobalGet { global_idx } | GlobalSet { global_idx } => {
-                bytes.extend(&reader::emit_vu32(*global_idx));
+                encoding::write_vu32(&mut bytes, *global_idx);
             }
 
             // Call indirect
             CallIndirect { type_idx, table_idx } => {
-                bytes.extend(&reader::emit_vu32(*type_idx));
-                bytes.extend(&reader::emit_vu32(*table_idx));
+                encoding::write_vu32(&mut bytes, *type_idx);
+                encoding::write_vu32(&mut bytes, *table_idx);
             }
 
             // Reference types
@@ -333,7 +333,7 @@ impl InstructionKind {
 
             // Select typed
             SelectTyped { val_types } => {
-                bytes.extend(&reader::emit_vu32(val_types.len() as u32));
+                encoding::write_vu32(&mut bytes, val_types.len() as u32);
                 for vt in val_types {
                     bytes.extend(&vt.emit_bytes());
                 }
@@ -345,18 +345,18 @@ impl InstructionKind {
             | TableGrow { table_idx }
             | TableSize { table_idx }
             | TableFill { table_idx } => {
-                bytes.extend(&reader::emit_vu32(*table_idx));
+                encoding::write_vu32(&mut bytes, *table_idx);
             }
             TableInit { elem_idx, table_idx } => {
-                bytes.extend(&reader::emit_vu32(*elem_idx));
-                bytes.extend(&reader::emit_vu32(*table_idx));
+                encoding::write_vu32(&mut bytes, *elem_idx);
+                encoding::write_vu32(&mut bytes, *table_idx);
             }
             ElemDrop { elem_idx } => {
-                bytes.extend(&reader::emit_vu32(*elem_idx));
+                encoding::write_vu32(&mut bytes, *elem_idx);
             }
             TableCopy { dst_table, src_table } => {
-                bytes.extend(&reader::emit_vu32(*dst_table));
-                bytes.extend(&reader::emit_vu32(*src_table));
+                encoding::write_vu32(&mut bytes, *dst_table);
+                encoding::write_vu32(&mut bytes, *src_table);
             }
 
             // Memory instructions with memarg
@@ -385,37 +385,37 @@ impl InstructionKind {
             | I64Store32 { memarg }
             | V128Load { memarg }
             | V128Store { memarg } => {
-                bytes.extend(&reader::emit_vu32(memarg.align));
-                bytes.extend(&reader::emit_vu32(memarg.offset));
+                encoding::write_vu32(&mut bytes, memarg.align);
+                encoding::write_vu32(&mut bytes, memarg.offset);
             }
 
             // Memory size/grow
             MemorySize | MemoryGrow => {
-                bytes.push(0x00); // Reserved byte
+                bytes.push(0x00); // reserved byte
             }
 
             // Memory init/copy/fill
             MemoryInit { data_idx } => {
-                bytes.extend(&reader::emit_vu32(*data_idx));
-                bytes.push(0x00); // Reserved byte
+                encoding::write_vu32(&mut bytes, *data_idx);
+                bytes.push(0x00); // reserved byte
             }
             DataDrop { data_idx } => {
-                bytes.extend(&reader::emit_vu32(*data_idx));
+                encoding::write_vu32(&mut bytes, *data_idx);
             }
             MemoryCopy => {
-                bytes.push(0x00); // Reserved byte
-                bytes.push(0x00); // Reserved byte
+                bytes.push(0x00); // reserved byte
+                bytes.push(0x00); // reserved byte
             }
             MemoryFill => {
-                bytes.push(0x00); // Reserved byte
+                bytes.push(0x00); // reserved byte
             }
 
             // Constants
             I32Const { value } => {
-                bytes.extend(&reader::emit_vs32(*value));
+                encoding::write_vs32(&mut bytes, *value);
             }
             I64Const { value } => {
-                bytes.extend(&reader::emit_vs64(*value));
+                encoding::write_vs64(&mut bytes, *value);
             }
             F32Const { value } => {
                 bytes.extend(&value.to_le_bytes());
@@ -429,7 +429,7 @@ impl InstructionKind {
                 bytes.extend(value);
             }
 
-            // All other instructions have no additional data
+            // All other instructions have no additional operands
             _ => {}
         }
 
@@ -437,10 +437,10 @@ impl InstructionKind {
     }
 }
 
-fn encode_block_type(block_type: &BlockType) -> Vec<u8> {
+fn encode_block_type(bytes: &mut Vec<u8>, block_type: &BlockType) {
     match block_type {
-        BlockType::Empty => vec![0x40],
-        BlockType::Value(vt) => vt.emit_bytes(),
-        BlockType::FuncType(idx) => reader::emit_vs32(*idx as i32),
+        BlockType::Empty => bytes.push(encoding::BLOCK_TYPE_EMPTY),
+        BlockType::Value(vt) => bytes.extend(&vt.emit_bytes()),
+        BlockType::FuncType(idx) => encoding::write_vs32(bytes, *idx as i32),
     }
 }

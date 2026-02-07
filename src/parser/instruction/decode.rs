@@ -2,12 +2,10 @@
 
 use super::super::limits;
 use super::{BlockType, ByteRange, Instruction, InstructionKind, MemArg};
+use crate::parser::encoding;
 use crate::parser::module::ValueType;
 use crate::parser::reader::Reader;
 use std::io;
-
-// WebAssembly opcode constants
-const OPCODE_EMPTY_BLOCK_TYPE: u8 = 0x40;
 
 /// Error type for instruction decoding
 #[derive(Debug)]
@@ -69,7 +67,7 @@ impl BlockType {
     pub fn decode(reader: &mut Reader) -> Result<Self, DecodeError> {
         // Peek at the next byte to determine block type
         let b = reader.read_byte()?;
-        if b == OPCODE_EMPTY_BLOCK_TYPE {
+        if b == encoding::BLOCK_TYPE_EMPTY {
             Ok(BlockType::Empty)
         } else if ValueType::is_value_type_byte(b) {
             // Parse as value type

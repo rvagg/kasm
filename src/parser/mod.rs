@@ -1,3 +1,4 @@
+pub mod encoding;
 pub mod instruction;
 pub mod limits;
 pub mod module;
@@ -34,12 +35,12 @@ pub fn parse(
         let sec_id = bytes
             .read_byte()
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "malformed section id"))?;
-        if sec_id != 0 {
-            // handle the reordering of datacount to be before code, make datacount 10, and shuffle 10+ up one
+        if sec_id != encoding::SECTION_CUSTOM {
+            // DataCount (12) precedes Code (10) in wire order; remap to monotonic sequence for ordering validation
             let mapped_section_id = match sec_id {
-                10 => 11,
-                11 => 12,
-                12 => 10,
+                encoding::SECTION_CODE => encoding::SECTION_DATA,
+                encoding::SECTION_DATA => encoding::SECTION_DATA_COUNT,
+                encoding::SECTION_DATA_COUNT => encoding::SECTION_CODE,
                 _ => sec_id,
             };
             if mapped_section_id <= last_section_id {
@@ -135,11 +136,11 @@ fn read_sections(
     let start_pos: usize = bytes.pos();
     let section_end = start_pos + section_len as usize;
     let positional: &mut dyn module::Positional = match sec_id {
-        1 => {
+        encoding::SECTION_TYPE => {
             read_section_type(bytes, &mut unit.types, section_end)?;
             &mut unit.types as &mut dyn module::Positional
         }
-        2 => {
+        encoding::SECTION_IMPORT => {
             read_section_import(
                 bytes,
                 module_registry,
@@ -151,19 +152,19 @@ fn read_sections(
             )?;
             &mut unit.imports as &mut dyn module::Positional
         }
-        3 => {
+        encoding::SECTION_FUNCTION => {
             read_section_function(bytes, &mut unit.functions, &unit.types, section_end)?;
             &mut unit.functions as &mut dyn module::Positional
         }
-        4 => {
+        encoding::SECTION_TABLE => {
             read_section_table(bytes, &mut unit.table, section_end)?;
             &mut unit.table as &mut dyn module::Positional
         }
-        5 => {
+        encoding::SECTION_MEMORY => {
             read_section_memory(bytes, &mut unit.memory, &unit.imports, section_end)?;
             &mut unit.memory as &mut dyn module::Positional
         }
-        6 => {
+        encoding::SECTION_GLOBAL => {
             read_section_global(
                 bytes,
                 &mut unit.globals,
@@ -173,7 +174,7 @@ fn read_sections(
             )?;
             &mut unit.globals as &mut dyn module::Positional
         }
-        7 => {
+        encoding::SECTION_EXPORT => {
             read_section_export(
                 bytes,
                 &mut unit.exports,
@@ -186,11 +187,11 @@ fn read_sections(
             )?;
             &mut unit.exports as &mut dyn module::Positional
         }
-        8 => {
+        encoding::SECTION_START => {
             read_section_start(bytes, &mut unit.start)?;
             &mut unit.start as &mut dyn module::Positional
         }
-        9 => {
+        encoding::SECTION_ELEMENT => {
             read_section_elements(
                 bytes,
                 &unit.imports,
@@ -201,11 +202,11 @@ fn read_sections(
             )?;
             &mut unit.elements as &mut dyn module::Positional
         }
-        10 => {
+        encoding::SECTION_CODE => {
             read_section_code(bytes, unit, section_end)?;
             &mut unit.code as &mut dyn module::Positional
         }
-        11 => {
+        encoding::SECTION_DATA => {
             read_section_data(
                 bytes,
                 &unit.imports,
@@ -220,11 +221,11 @@ fn read_sections(
             )?;
             &mut unit.data as &mut dyn module::Positional
         }
-        12 => {
+        encoding::SECTION_DATA_COUNT => {
             read_section_datacount(bytes, &mut unit.data_count)?;
             &mut unit.data_count as &mut dyn module::Positional
         }
-        0 => {
+        encoding::SECTION_CUSTOM => {
             let custom = read_section_custom(bytes, section_len, &mut unit.custom)?;
             custom as &mut dyn module::Positional
         }
@@ -293,7 +294,7 @@ fn read_section_type(
     bytes.validate_item_count_in_section(count, section_end)?;
 
     for _ in 0..count {
-        if bytes.read_byte()? != 0x60 {
+        if bytes.read_byte()? != encoding::TYPE_FUNC {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 // NOTE: binary-leb128.wast asserts this, for some reason, by pushing through a 0xe0 byte
@@ -600,14 +601,14 @@ impl module::Data {
         let mut mode = module::DataMode::Passive;
         let typ = bytes.read_vu32()?;
         match typ {
-            0 => {
+            encoding::DATA_ACTIVE => {
                 mode = module::DataMode::Active {
                     memory_index: 0,
                     offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
                 };
             }
-            1 => {} // nothing else needed
-            2 => {
+            encoding::DATA_PASSIVE => {}
+            encoding::DATA_ACTIVE_EXPLICIT => {
                 mode = module::DataMode::Active {
                     memory_index: bytes.read_vu32()?,
                     offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
@@ -717,7 +718,7 @@ impl module::ExternalKind {
     ) -> Result<module::ExternalKind, instruction::DecodeError> {
         let byte = bytes.read_byte()?;
         match byte {
-            0x00 => {
+            encoding::DESC_FUNC => {
                 let typeidx = bytes.read_vu32()?;
                 if typeidx >= type_count {
                     return Err(io::Error::new(
@@ -728,15 +729,15 @@ impl module::ExternalKind {
                 }
                 Ok(module::ExternalKind::Function(typeidx))
             }
-            0x01 => {
+            encoding::DESC_TABLE => {
                 let tabletype = module::TableType::decode(bytes)?;
                 Ok(module::ExternalKind::Table(tabletype))
             }
-            0x02 => {
+            encoding::DESC_MEMORY => {
                 let memtype = module::Limits::decode_memory_limits(bytes)?;
                 Ok(module::ExternalKind::Memory(memtype))
             }
-            0x03 => {
+            encoding::DESC_GLOBAL => {
                 let globaltype = module::GlobalType::decode(bytes)?;
                 Ok(module::ExternalKind::Global(globaltype))
             }
@@ -800,11 +801,7 @@ fn read_section_global(
 impl module::RefType {
     pub fn decode(bytes: &mut reader::Reader) -> Result<Self, instruction::DecodeError> {
         let byte = bytes.read_byte()?;
-        match byte {
-            0x70 => Ok(module::RefType::FuncRef),
-            0x6f => Ok(module::RefType::ExternRef),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("unknown ref type: 0x{byte:02x}")).into()),
-        }
+        module::RefType::from_wire_byte(byte).map_err(|e| e.into())
     }
 }
 
@@ -935,19 +932,15 @@ impl module::Element {
     ) -> Result<Self, instruction::DecodeError> {
         let read_type = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
             let byte = bytes.read_byte()?;
-            match byte {
-                0x70 => Ok(module::RefType::FuncRef),
-                0x6f => Ok(module::RefType::ExternRef),
-                _ => Err(io::Error::new(io::ErrorKind::InvalidData, "malformed reference type")),
-            }
+            module::RefType::from_wire_byte(byte)
         };
         let read_element_kind = |bytes: &mut reader::Reader| -> Result<module::RefType, io::Error> {
             let byte = bytes.read_byte()?;
             match byte {
-                0x00 => Ok(module::RefType::FuncRef),
+                encoding::ELEMKIND_FUNCREF => Ok(module::RefType::FuncRef),
                 _ => Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("unknown element element kind: 0x{byte:02x}"),
+                    format!("unknown element kind: 0x{byte:02x}"),
                 )),
             }
         };

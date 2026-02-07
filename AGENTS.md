@@ -22,6 +22,11 @@ src/wat/            # WAT (text format) parser
   parser.rs         # Two-phase parser (S-expr → Module)
   error.rs          # LexError/ParseError with span information
 
+src/encoder.rs      # Binary encoder (Module → .wasm)
+
+src/parser/
+  encoding.rs       # LEB128/float/vector encoding primitives (write_* and emit_* API)
+
 src/runtime/        # Interpreter
   store.rs          # Store-based execution, cross-module function calls
   executor.rs       # State machine execution (no recursion)
@@ -52,9 +57,9 @@ benches/                # Criterion benchmarks
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
 - AssemblyScript support: env.abort with UTF-16 string extraction
 - WAT parser: complete WebAssembly 1.0 text format parser
-- Missing: binary encoder (Module → .wasm), SIMD (v128), filesystem operations
-- Future: binary encoder would allow replacing the external `wat` dev-dependency
-  in tests/benchmarks with `kasm::wat::parse()` directly
+- Binary encoder: Module → .wasm (all 13 sections, 80 tests including spec fixture round-trips)
+- Missing: SIMD (v128), filesystem operations
+- Future: encoder enables `kasm compile` CLI and replacing external `wat` dev-dependency
 
 ## CLI
 ```bash
@@ -217,6 +222,30 @@ let module = parse(source).unwrap();
 - Preserves source spans for error reporting
 - Fuzz targets: `lex_wat`, `parse_wat`
 
+## Binary Encoder
+The `src/encoder.rs` module encodes a Module to WebAssembly binary format (.wasm).
+
+```rust
+use kasm::encoder;
+use kasm::wat;
+
+let module = wat::parse("(module (func))").unwrap();
+let bytes = encoder::encode(&module).unwrap();
+assert_eq!(&bytes[0..4], b"\0asm");
+```
+
+**Sections encoded** (in wire order): type, import, function, table, memory, global, export, start, element, data_count, code, data, custom.
+
+**Encoding primitives** (`src/parser/encoding.rs`):
+- `write_*(&mut Vec<u8>, value)` — zero-copy write into caller's buffer (primary API)
+- `emit_*(value) -> Vec<u8>` — convenience wrappers returning allocated Vec
+
+**Testing strategy:** Encode stability — encode a Module to bytes A, parse A back, re-encode to bytes B, assert A == B. This avoids needing PartialEq on Module types.
+
+```bash
+cargo test --test encoder_tests    # 80 encoder tests
+```
+
 ## Key Files
 - src/wat/mod.rs - WAT public API (parse function)
 - src/wat/parser.rs - S-expression to Module transformation
@@ -230,7 +259,10 @@ let module = parse(source).unwrap();
 - src/runtime/wasi/context.rs - WasiContext (memory, fds, args, env)
 - src/runtime/ops/*.rs - Instruction implementations by category
 - src/runtime/implemented.rs - Registry of implemented instructions
+- src/encoder.rs - Binary encoder (Module → .wasm bytes)
+- src/parser/encoding.rs - Encoding primitives (LEB128, floats, vectors)
 - tests/parser_tests.rs - Spec test harness with spectest imports
+- tests/encoder_tests.rs - Encoder round-trip tests (WAT, binary, spec fixtures)
 - tests/wasi_tests.rs - WASI integration tests (inline WAT)
 
 ## Error Types
@@ -239,6 +271,7 @@ let module = parse(source).unwrap();
 - `ValidationError` - Type validation errors
 - `LexError` - WAT lexer errors with line/column spans
 - `ParseError` - WAT parser errors with source spans
+- `EncodeError` - Binary encoder errors (invalid element flags, invalid state)
 
 ## Testing
 - Unit tests: Individual component tests

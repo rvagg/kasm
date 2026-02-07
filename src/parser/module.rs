@@ -1271,7 +1271,8 @@ impl CodeSection {
 
             let mut offset = ftype.parameters.len() as u32;
             function_body.locals.iter().for_each(|(count, value_type)| {
-                let count_bytes = super::reader::emit_vu32(*count);
+                let mut count_bytes = Vec::new();
+                super::encoding::write_vu32(&mut count_bytes, *count);
                 let mut byts = count_bytes.iter().fold(String::new(), |mut acc, byte| {
                     acc.push_str(&format!("{byte:02x} "));
                     acc
@@ -1706,6 +1707,25 @@ pub struct FunctionBody {
 pub enum RefType {
     FuncRef,
     ExternRef,
+}
+
+impl RefType {
+    /// Returns the wire byte for this reference type (§5.3.4).
+    pub fn wire_byte(&self) -> u8 {
+        match self {
+            RefType::FuncRef => 0x70,
+            RefType::ExternRef => 0x6F,
+        }
+    }
+
+    /// Decodes a reference type from its wire byte.
+    pub fn from_wire_byte(byte: u8) -> Result<Self, io::Error> {
+        match byte {
+            0x70 => Ok(RefType::FuncRef),
+            0x6f => Ok(RefType::ExternRef),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, "malformed reference type")),
+        }
+    }
 }
 
 impl From<RefType> for ValueType {
@@ -2182,11 +2202,12 @@ impl fmt::Display for FunctionBody {
 
 impl ExportIndex {
     pub fn decode(byte: u8, idx: u32) -> Result<ExportIndex, io::Error> {
+        use super::encoding::{DESC_FUNC, DESC_GLOBAL, DESC_MEMORY, DESC_TABLE};
         match byte {
-            0x00 => Ok(ExportIndex::Function(idx)),
-            0x01 => Ok(ExportIndex::Table(idx)),
-            0x02 => Ok(ExportIndex::Memory(idx)),
-            0x03 => Ok(ExportIndex::Global(idx)),
+            DESC_FUNC => Ok(ExportIndex::Function(idx)),
+            DESC_TABLE => Ok(ExportIndex::Table(idx)),
+            DESC_MEMORY => Ok(ExportIndex::Memory(idx)),
+            DESC_GLOBAL => Ok(ExportIndex::Global(idx)),
             _ => {
                 let msg: String = format!("invalid export type: {byte}");
                 Err(io::Error::new(io::ErrorKind::InvalidData, msg))

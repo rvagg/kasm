@@ -1,10 +1,6 @@
 extern crate byteorder;
 extern crate hex;
-extern crate rand;
 
-use byteorder::WriteBytesExt;
-#[cfg(test)]
-use rand::Rng;
 use std::io;
 
 use self::byteorder::{LittleEndian, ReadBytesExt};
@@ -353,24 +349,6 @@ where
     Ok(result)
 }
 
-fn emit_vu(v: u64) -> Vec<u8> {
-    // unsigned leb128
-    let mut result: Vec<u8> = vec![];
-    let mut value = v;
-    let mut more = true;
-    while more {
-        let mut byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if value == 0 {
-            more = false;
-        } else {
-            byte |= 0x80;
-        }
-        result.push(byte);
-    }
-    result
-}
-
 pub fn read_vu64<F>(reader: &mut F) -> Result<u64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -444,75 +422,11 @@ fn test_read_vu64() {
     );
 }
 
-#[allow(dead_code)]
-pub fn emit_vu64(v: u64) -> Vec<u8> {
-    emit_vu(v)
-}
-
-#[test]
-fn test_emit_vu64() {
-    let emit = |v: u64| emit_vu64(v);
-
-    assert_eq_with_diag(emit(0), vec![0]);
-    assert_eq_with_diag(emit(1), vec![1]);
-    assert_eq_with_diag(emit(624485), vec![0b11100101, 0b10001110, 0b00100110]);
-    assert_eq_with_diag(emit(127), vec![0x7f]);
-    assert_eq_with_diag(emit(16256), vec![0x80, 0x7f]);
-    assert_eq_with_diag(emit(0x3b4), vec![0xb4, 0x07]);
-    assert_eq_with_diag(emit(0x40c), vec![0x8c, 0x08]);
-    assert_eq_with_diag(emit(0xffffffff), vec![0xff, 0xff, 0xff, 0xff, 0xf]);
-    assert_eq_with_diag(emit(0x80000000), vec![128, 128, 128, 128, 8]);
-}
-
-#[test]
-fn test_rt_vu64() {
-    let mut test_values = vec![0, 1, u64::MAX, u64::MIN, 128, 129, 130, 624485];
-
-    // Add powers of 2
-    for i in 0..63 {
-        let value = 1u64 << i;
-        test_values.push(value);
-        test_values.push(value + 1);
-        test_values.push(value - 1);
-    }
-
-    // Add max and min values for different byte sizes
-    for i in 1..8 {
-        let max_value = (1u64 << (i * 8)) - 1;
-        test_values.push(max_value);
-    }
-
-    // Add random values
-    let mut rng = rand::rng();
-    for _ in 0..100 {
-        test_values.push(rng.random::<u64>());
-    }
-
-    // Add sequential numbers
-    for i in 0..1000 {
-        test_values.push(i);
-    }
-
-    for &expected in &test_values {
-        let byts = emit_vu64(expected);
-        let mut reader = Reader::new(byts);
-        let r = reader.read_vu64();
-        let actual = r.unwrap_or_else(|_err| {
-            panic!("Failed to read vu64");
-        });
-        assert_eq_with_diag(actual, expected);
-    }
-}
-
 pub fn read_vu32<F>(reader: &mut F) -> Result<u32, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
 {
     read_vu(reader, 32).map(|v| v as u32)
-}
-
-pub fn emit_vu32(v: u32) -> Vec<u8> {
-    emit_vu(v as u64)
 }
 
 #[test]
@@ -544,73 +458,12 @@ fn test_read_vu32() {
     );
 }
 
-#[test]
-fn test_emit_vu32() {
-    let emit = |v: u32| emit_vu32(v);
-
-    assert_eq_with_diag(emit(0), vec![0]);
-    assert_eq_with_diag(emit(1), vec![1]);
-    assert_eq_with_diag(emit(624485), vec![0b11100101, 0b10001110, 0b00100110]);
-    assert_eq_with_diag(emit(127), vec![0x7f]);
-    assert_eq_with_diag(emit(16256), vec![0x80, 0x7f]);
-    assert_eq_with_diag(emit(0x3b4), vec![0xb4, 0x07]);
-    assert_eq_with_diag(emit(0x40c), vec![0x8c, 0x08]);
-    assert_eq_with_diag(emit(0xffffffff), vec![0xff, 0xff, 0xff, 0xff, 0xf]);
-    assert_eq_with_diag(emit(0x80000000), vec![128, 128, 128, 128, 8]);
-}
-
-#[test]
-fn test_rt_vu32() {
-    let mut test_values = vec![0, 1, u32::MAX, u32::MIN, 128, 129, 130, 624485];
-
-    // Add powers of 2
-    for i in 0..31 {
-        let value = 1u32 << i;
-        test_values.push(value);
-        test_values.push(value + 1);
-        test_values.push(value - 1);
-    }
-
-    // Add max and min values for different byte sizes
-    for i in 1..4 {
-        let max_value = (1u32 << (i * 8)) - 1;
-        test_values.push(max_value);
-    }
-
-    // Add random values
-    let mut rng = rand::rng();
-    for _ in 0..100 {
-        test_values.push(rng.random::<u32>());
-    }
-
-    // Add sequential numbers
-    for i in 0..1000 {
-        test_values.push(i);
-    }
-
-    for &expected in &test_values {
-        let byts = emit_vu32(expected);
-        let mut reader = Reader::new(byts);
-        let r = reader.read_vu32();
-        let actual = r.unwrap_or_else(|_err| {
-            panic!("Failed to read vu32");
-        });
-        assert_eq_with_diag(actual, expected);
-    }
-}
-
 pub fn read_vu1<F>(reader: &mut F) -> Result<bool, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
 {
     read_vu(reader, 1).map(|v| v == 1)
 }
-
-/*
-pub fn emit_vu1(v: bool) -> Vec<u8> {
-    vec![if v { 1 } else { 0 }]
-}
-*/
 
 #[test]
 fn test_read_vu1() {
@@ -669,23 +522,6 @@ where
     Ok(result)
 }
 
-fn emit_vs(v: i64) -> Vec<u8> {
-    let mut result: Vec<u8> = vec![];
-    let mut value = v;
-    let mut more = true;
-    while more {
-        let mut byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if (value == 0 && (byte & 0x40) == 0) || (value == -1 && (byte & 0x40) != 0) {
-            more = false;
-        } else {
-            byte |= 0x80;
-        }
-        result.push(byte);
-    }
-    result
-}
-
 pub fn read_vs64<F>(reader: &mut F) -> Result<i64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -698,10 +534,6 @@ where
     F: FnMut() -> Result<u8, io::Error>,
 {
     read_vs(reader, 32).map(|v| v as i32)
-}
-
-pub fn emit_vs32(v: i32) -> Vec<u8> {
-    emit_vs(v as i64)
 }
 
 pub fn read_vs33<F>(reader: &mut F) -> Result<i32, io::Error>
@@ -744,91 +576,6 @@ fn test_read_vs64() {
     );
 }
 
-pub fn emit_vs64(v: i64) -> Vec<u8> {
-    emit_vs(v)
-}
-
-#[test]
-fn test_emit_vs64() {
-    let emit = |v: i64| emit_vs64(v);
-
-    assert_eq_with_diag(emit(0), vec![0]);
-    assert_eq_with_diag(emit(1), vec![1]);
-    assert_eq_with_diag(emit(624485), vec![0b11100101, 0b10001110, 0b00100110]);
-    assert_eq_with_diag(emit(0x3b4), vec![0xb4, 0x07]);
-    assert_eq_with_diag(emit(0x40c), vec![0x8c, 0x08]);
-    assert_eq_with_diag(emit(-1), vec![0x7f]);
-    assert_eq_with_diag(emit(-128), vec![0x80, 0x7f]);
-    assert_eq_with_diag(emit(-624485), vec![0b10011011, 0b11110001, 0b01011001]);
-    assert_eq_with_diag(
-        emit(0x7ff8000000000000),
-        vec![128, 128, 128, 128, 128, 128, 128, 252, 255, 0],
-    );
-    assert_eq_with_diag(
-        emit(0x8000000000000000u64 as i64),
-        vec![128, 128, 128, 128, 128, 128, 128, 128, 128, 127],
-    );
-}
-
-#[test]
-fn test_rt_vs64() {
-    let mut test_values = vec![
-        0,
-        1,
-        -1,
-        i64::MAX,
-        i64::MIN,
-        128,
-        -128,
-        129,
-        -129,
-        130,
-        -130,
-        624485,
-        -624485,
-    ];
-
-    // Add powers of 2
-    for i in 0..63 {
-        let value = 1i64 << i;
-        test_values.push(value);
-        test_values.push(-value);
-        test_values.push(value + 1);
-        test_values.push(-value - 1);
-        test_values.push(value - 1);
-        test_values.push(-value + 1);
-    }
-
-    // Add max and min values for different byte sizes
-    for i in 1..8 {
-        let max_value = (1i64 << (i * 8)) - 1;
-        let min_value = -(1i64 << (i * 8));
-        test_values.push(max_value);
-        test_values.push(min_value);
-    }
-
-    // Add random values
-    let mut rng = rand::rng();
-    for _ in 0..100 {
-        test_values.push(rng.random::<i64>());
-    }
-
-    // Add sequential numbers
-    for i in -1000..1000 {
-        test_values.push(i);
-    }
-
-    for &expected in &test_values {
-        let byts = emit_vs64(expected);
-        let mut reader = Reader::new(byts);
-        let r = reader.read_vs64();
-        let actual = r.unwrap_or_else(|_err| {
-            panic!("Failed to read vs64");
-        });
-        assert_eq_with_diag(actual, expected);
-    }
-}
-
 #[test]
 fn test_read_vs32() {
     let read = |v: Vec<u8>| {
@@ -862,80 +609,6 @@ fn test_read_vs32() {
     );
 }
 
-#[test]
-fn test_emit_vs32() {
-    let emit = |v: i32| emit_vs32(v);
-
-    assert_eq_with_diag(emit(0), vec![0]);
-    assert_eq_with_diag(emit(1), vec![1]);
-    assert_eq_with_diag(emit(624485), vec![0b11100101, 0b10001110, 0b00100110]);
-    assert_eq_with_diag(emit(0x3b4), vec![0xb4, 0x07]);
-    assert_eq_with_diag(emit(0x40c), vec![0x8c, 0x08]);
-    assert_eq_with_diag(emit(-1), vec![0x7f]);
-    assert_eq_with_diag(emit(-128), vec![0x80, 0x7f]);
-    assert_eq_with_diag(emit(-624485), vec![0b10011011, 0b11110001, 0b01011001]);
-    assert_eq_with_diag(emit(0x80000000u32 as i32), vec![128, 128, 128, 128, 120]);
-}
-
-#[test]
-fn test_rt_vs32() {
-    let mut test_values = vec![
-        0,
-        1,
-        -1,
-        i32::MAX,
-        i32::MIN,
-        128,
-        -128,
-        129,
-        -129,
-        130,
-        -130,
-        624485,
-        -624485,
-    ];
-
-    // Add powers of 2
-    for i in 0..31 {
-        let value = 1i32 << i;
-        test_values.push(value);
-        test_values.push(-value);
-        test_values.push(value + 1);
-        test_values.push(-value - 1);
-        test_values.push(value - 1);
-        test_values.push(-value + 1);
-    }
-
-    // Add max and min values for different byte sizes
-    for i in 1..4 {
-        let max_value = (1i32 << (i * 8)) - 1;
-        let min_value = -(1i32 << (i * 8));
-        test_values.push(max_value);
-        test_values.push(min_value);
-    }
-
-    // Add random values
-    let mut rng = rand::rng();
-    for _ in 0..100 {
-        test_values.push(rng.random::<i32>());
-    }
-
-    // Add sequential numbers
-    for i in -1000..1000 {
-        test_values.push(i);
-    }
-
-    for &expected in &test_values {
-        let byts = emit_vs32(expected);
-        let mut reader = Reader::new(byts);
-        let r = reader.read_vs32();
-        let actual = r.unwrap_or_else(|_err| {
-            panic!("Failed to read vs32");
-        });
-        assert_eq_with_diag(actual, expected);
-    }
-}
-
 pub fn read_f32<F>(reader: &mut F) -> Result<f32, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -965,14 +638,6 @@ fn test_read_f32() {
     assert_eq_with_diag(read(vec![255, 255, 127, 0]), 1.1754942e-38);
     assert_eq_with_diag(read(vec![255, 255, 127, 127]), 3.402_823_5e38);
     assert_eq_with_diag(read(vec![249, 2, 21, 80]), 1.0e10);
-}
-
-#[allow(dead_code)]
-pub fn emit_f32(v: f32) -> Vec<u8> {
-    let mut buf = [0u8; 4];
-    let mut wtr = io::Cursor::new(&mut buf[..]);
-    wtr.write_f32::<LittleEndian>(v).unwrap();
-    buf.to_vec()
 }
 
 pub fn read_f64<F>(reader: &mut F) -> Result<f64, io::Error>
@@ -1011,14 +676,6 @@ fn test_read_f64() {
         1.797_693_134_862_315_7e308,
     );
     assert_eq_with_diag(read(vec![125, 195, 148, 37, 173, 73, 178, 84]), 1.0e100);
-}
-
-#[allow(dead_code)]
-pub fn emit_f64(v: f64) -> Vec<u8> {
-    let mut buf = [0u8; 8];
-    let mut wtr = io::Cursor::new(&mut buf[..]);
-    wtr.write_f64::<LittleEndian>(v).unwrap();
-    buf.to_vec()
 }
 
 pub fn read_v128<F>(reader: &mut F) -> Result<[u8; 16], io::Error>
@@ -1071,18 +728,6 @@ fn test_read_v128() {
         read(vec![0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x7f, 0, 0, 0, 0, 0, 0]),
         [0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x7f, 0, 0, 0, 0, 0, 0],
     );
-}
-
-#[allow(dead_code)]
-pub fn emit_v128(v: [u8; 16]) -> Vec<u8> {
-    v.to_vec()
-}
-
-#[allow(dead_code)]
-pub fn emit_u8vec(v: &Vec<u8>) -> Vec<u8> {
-    let mut result = emit_vu32(v.len() as u32);
-    result.extend(v);
-    result
 }
 
 #[cfg(test)]
