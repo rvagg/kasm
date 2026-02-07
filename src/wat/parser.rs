@@ -625,29 +625,29 @@ fn parse_type_use(
                 idx += 1;
             }
             Some("param") => {
-                if register_locals {
-                    let mut has_name = false;
-                    for (i, p) in inner.iter_from(1).enumerate() {
-                        if let Some(name) = p.as_id() {
-                            has_name = true;
-                            ctx.register(Namespace::Local, Some(name));
-                            ctx.param_count += 1;
-                        } else if let Ok(ty) = parse_valtype(p) {
-                            if !has_name || i > 0 {
-                                ctx.register(Namespace::Local, None);
-                                ctx.param_count += 1;
-                            }
-                            params.push(ty);
-                        }
+                // Grammar: param ::= '(' 'param' id valtype ')' | '(' 'param' valtype* ')'
+                let first = inner.get(1);
+                let name = first.and_then(|s| s.as_id());
+                if let Some(name) = name {
+                    // Named form: exactly one valtype
+                    let ty_item = inner
+                        .get(2)
+                        .ok_or_else(|| ParseError::new("expected valtype after param name", inner.span))?;
+                    let ty = parse_valtype(ty_item)?;
+                    if register_locals {
+                        ctx.register(Namespace::Local, Some(name));
+                        ctx.param_count += 1;
                     }
+                    params.push(ty);
                 } else {
+                    // Anonymous form: zero or more valtypes
                     for p in inner.iter_from(1) {
-                        if p.as_id().is_some() {
-                            continue;
+                        let ty = parse_valtype(p)?;
+                        if register_locals {
+                            ctx.register(Namespace::Local, None);
+                            ctx.param_count += 1;
                         }
-                        if let Ok(ty) = parse_valtype(p) {
-                            params.push(ty);
-                        }
+                        params.push(ty);
                     }
                 }
                 idx += 1;

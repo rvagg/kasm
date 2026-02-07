@@ -1,10 +1,12 @@
 use clap::{Parser, Subcommand};
 use kasm::parser;
+use kasm::parser::module::Module;
 use kasm::runtime::store::Store;
 use kasm::runtime::wasi::{WasiContext, create_wasi_instance};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{stderr, stdin, stdout};
+use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -18,7 +20,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Execute a WASI module
+    /// Execute a WASI module (.wasm or .wat)
     Run {
         /// Path to the WebAssembly module
         file: String,
@@ -34,7 +36,7 @@ enum Commands {
 
     /// Dump module information (defaults to detailed view)
     Dump {
-        /// Path to the WebAssembly module
+        /// Path to the WebAssembly module (.wasm or .wat)
         file: String,
 
         /// Show only module header (magic, version)
@@ -45,6 +47,29 @@ enum Commands {
         #[arg(long, short = 'd')]
         disassemble: bool,
     },
+
+    /// Compile a WAT file to WebAssembly binary
+    Compile {
+        /// Path to the WAT source file
+        file: String,
+
+        /// Output path (defaults to input with .wasm extension)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+}
+
+/// Load and parse a WebAssembly module from a `.wasm` or `.wat` file.
+fn load_module(file: &str) -> Result<Module, String> {
+    if file.ends_with(".wat") {
+        let source = fs::read_to_string(file).map_err(|e| format!("Error reading {}: {}", file, e))?;
+        kasm::wat::parse(&source).map_err(|e| format!("Error parsing {}: {}", file, e))
+    } else {
+        let bytes = fs::read(file).map_err(|e| format!("Error reading {}: {}", file, e))?;
+        let module_registry = HashMap::new();
+        parser::parse(&module_registry, file, &mut parser::reader::Reader::new(bytes))
+            .map_err(|e| format!("Error parsing {}: {}", file, e))
+    }
 }
 
 fn main() -> ExitCode {
@@ -57,23 +82,15 @@ fn main() -> ExitCode {
             header,
             disassemble,
         } => dump_module(&file, header, disassemble),
+        Commands::Compile { file, output } => compile_module(&file, output),
     }
 }
 
 fn dump_module(file: &str, header: bool, disassemble: bool) -> ExitCode {
-    let bytes = match fs::read(file) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("Error reading {}: {}", file, e);
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let module_registry = HashMap::new();
-    let module = match parser::parse(&module_registry, file, &mut parser::reader::Reader::new(bytes)) {
+    let module = match load_module(file) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("Error parsing {}: {}", file, e);
+            eprintln!("{}", e);
             return ExitCode::FAILURE;
         }
     };
@@ -90,22 +107,50 @@ fn dump_module(file: &str, header: bool, disassemble: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> ExitCode {
-    // Read the module file
-    let bytes = match fs::read(file) {
-        Ok(b) => b,
+fn compile_module(file: &str, output: Option<String>) -> ExitCode {
+    let source = match fs::read_to_string(file) {
+        Ok(s) => s,
         Err(e) => {
             eprintln!("Error reading {}: {}", file, e);
             return ExitCode::FAILURE;
         }
     };
 
-    // Parse the module
-    let module_registry = HashMap::new();
-    let module = match parser::parse(&module_registry, file, &mut parser::reader::Reader::new(bytes)) {
+    let module = match kasm::wat::parse(&source) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("Error parsing {}: {}", file, e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let bytes = match kasm::encoder::encode(&module) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("Error encoding {}: {}", file, e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let output_path = output.unwrap_or_else(|| {
+        let p = Path::new(file);
+        p.with_extension("wasm").to_string_lossy().into_owned()
+    });
+
+    if let Err(e) = fs::write(&output_path, &bytes) {
+        eprintln!("Error writing {}: {}", output_path, e);
+        return ExitCode::FAILURE;
+    }
+
+    eprintln!("{}: {} bytes", output_path, bytes.len());
+    ExitCode::SUCCESS
+}
+
+fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> ExitCode {
+    let module = match load_module(file) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{}", e);
             return ExitCode::FAILURE;
         }
     };
@@ -114,8 +159,7 @@ fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> E
     let mut args = vec![file.to_string()];
     args.extend(module_args);
 
-    // Create WASI context with real stdio and preopened directories
-    // Note: WasiContext uses RefCell internally which isn't Sync, but we don't
+    // WasiContext uses RefCell internally which isn't Sync, but we don't
     // share it across threads, so Arc is fine here.
     let mut builder = WasiContext::builder()
         .args(args)
@@ -135,7 +179,6 @@ fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> E
     #[allow(clippy::arc_with_non_send_sync)]
     let ctx = Arc::new(builder.build());
 
-    // Create store and WASI instance (with AssemblyScript support)
     let mut store = Store::new();
     let instance_id = match create_wasi_instance(&mut store, &module, ctx.clone(), true) {
         Ok(id) => id,
@@ -156,13 +199,12 @@ fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> E
         return ExitCode::FAILURE;
     }
 
-    // Execute _start
     let result = store.invoke_export(instance_id, "_start", vec![], None);
 
-    // Handle result
+    // proc_exit() raises a trap to halt execution, so check for an exit
+    // code in both the Ok and Err arms.
     match result {
         Ok(_) => {
-            // Check if proc_exit was called
             if let Some(code) = ctx.exit_code() {
                 ExitCode::from(code as u8)
             } else {
@@ -170,7 +212,6 @@ fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> E
             }
         }
         Err(e) => {
-            // Check if this was a proc_exit trap
             if let Some(code) = ctx.exit_code() {
                 ExitCode::from(code as u8)
             } else {

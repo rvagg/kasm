@@ -56,17 +56,19 @@ benches/                # Criterion benchmarks
 - 86/86 core spec tests pass (21,303 assertions)
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
 - AssemblyScript support: env.abort with UTF-16 string extraction
-- WAT parser: complete WebAssembly 1.0 text format parser
-- Binary encoder: Module → .wasm (all 13 sections, 80 tests including spec fixture round-trips)
+- WAT parser: complete WebAssembly 1.0 text format (inline exports, structured control flow)
+- Binary encoder: Module → .wasm (all 13 sections, 81 tests including spec fixture round-trips)
+- CLI: run/dump accept .wat natively, compile subcommand (WAT → .wasm)
+- No external `wat` crate dependency — all WAT parsing uses kasm::wat::parse()
 - Missing: SIMD (v128), filesystem operations
-- Future: encoder enables `kasm compile` CLI and replacing external `wat` dev-dependency
 
 ## CLI
 ```bash
-kasm run <file.wasm> [-- args...]   # Execute WASI module
-kasm dump <file.wasm>               # Show module details
-kasm dump <file.wasm> --header      # Show only header
-kasm dump <file.wasm> -d            # Disassemble
+kasm run <file> [-- args...]        # Execute WASI module (.wasm or .wat)
+kasm dump <file>                    # Show module details (.wasm or .wat)
+kasm dump <file> --header           # Show only header
+kasm dump <file> -d                 # Disassemble
+kasm compile <file.wat> [-o out]    # Compile WAT to .wasm binary
 ```
 
 ## Development Workflow
@@ -252,7 +254,7 @@ cargo test --test encoder_tests    # 80 encoder tests
 - src/wat/sexpr.rs - S-expression tree with span tracking
 - src/wat/lexer.rs - WAT tokeniser with iterator API
 - src/wat/token.rs - Token, TokenKind, SignedValue, FloatLit, Span
-- src/main.rs - CLI with `run` and `dump` subcommands
+- src/main.rs - CLI with `run`, `dump`, and `compile` subcommands
 - src/runtime/store.rs - Store, FuncAddr, MemoryAddr, TableAddr, cross-module execution
 - src/runtime/executor.rs - State machine interpreter
 - src/runtime/wasi/mod.rs - WASI imports and create_wasi_instance helper
