@@ -11,7 +11,7 @@ use super::{
     store::{SharedMemory, SharedTable},
     table::Table,
 };
-use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
+use crate::parser::instruction::{BlockType, Instruction, InstructionKind, SimdOp};
 use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
 use std::sync::{Arc, Mutex};
@@ -150,11 +150,7 @@ impl<'a> Executor<'a> {
                 ValueType::F64 => Value::F64(0.0),
                 ValueType::FuncRef => Value::FuncRef(None),
                 ValueType::ExternRef => Value::ExternRef(None),
-                ValueType::V128 => {
-                    return Err(RuntimeError::UnimplementedInstruction(
-                        "V128 type not yet supported".to_string(),
-                    ));
-                }
+                ValueType::V128 => Value::V128([0u8; 16]),
             };
             globals.push(default_value);
         }
@@ -436,6 +432,7 @@ impl<'a> Executor<'a> {
                         ref_type
                     ))),
                 },
+                InstructionKind::Simd(SimdOp::V128Const { value }) => Ok(Value::V128(*value)),
                 InstructionKind::RefFunc { func_idx } => {
                     // Validate function exists
                     let total_functions = self.module.imports.function_count() + self.module.functions.functions.len();
@@ -540,11 +537,7 @@ impl<'a> Executor<'a> {
                     ValueType::F64 => Value::F64(0.0),
                     ValueType::FuncRef => Value::FuncRef(None),
                     ValueType::ExternRef => Value::ExternRef(None),
-                    _ => {
-                        return Err(RuntimeError::UnimplementedInstruction(format!(
-                            "Local type {local_type:?} not supported"
-                        )));
-                    }
+                    ValueType::V128 => Value::V128([0u8; 16]),
                 };
                 locals.push(zero_value);
             }
@@ -704,11 +697,7 @@ impl<'a> Executor<'a> {
                         ValueType::F64 => Value::F64(0.0),
                         ValueType::FuncRef => Value::FuncRef(None),
                         ValueType::ExternRef => Value::ExternRef(None),
-                        _ => {
-                            return Err(RuntimeError::UnimplementedInstruction(format!(
-                                "Local type {local_type:?} not supported"
-                            )));
-                        }
+                        ValueType::V128 => Value::V128([0u8; 16]),
                     };
                     locals.push(zero_value);
                 }
@@ -2480,6 +2469,9 @@ impl<'a> Executor<'a> {
                 self.element_segments[*elem_idx as usize].clear();
                 Ok(BlockEnd::Normal)
             }
+
+            // SIMD instructions
+            Simd(_op) => Err(RuntimeError::Trap("SIMD instructions not yet implemented".to_string())),
 
             // ----------------------------------------------------------------
             // Unimplemented instructions

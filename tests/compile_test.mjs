@@ -50,12 +50,17 @@ async function compileWast (parsed, wastPath) {
     throw new Error('json spec not found')
   }
   const specParsed = JSON.parse(spec)
-  // Count expected binaries: modules + assert_invalid/assert_malformed commands
+  // Count expected binaries: modules + assert_invalid/assert_malformed commands.
+  // Text-format malformed modules produce .wat files, not .wasm — exclude them.
+  // module_type is only present when the spec JSON specifies a text-format module;
+  // for binary modules the field is absent (undefined), so undefined !== 'text'
+  // correctly includes them.
   const expectedBinaries = specParsed.commands.filter(cmd =>
-    cmd.type === 'module' ||
+    (cmd.type === 'module' ||
     cmd.type === 'assert_invalid' ||
     cmd.type === 'assert_malformed' ||
-    cmd.type === 'assert_unlinkable'
+    cmd.type === 'assert_unlinkable') &&
+    cmd.module_type !== 'text'
   ).length
 
   if (bins.length !== expectedBinaries) {

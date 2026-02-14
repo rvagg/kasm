@@ -1,0 +1,498 @@
+{
+  "bin": {
+    "simd_align.0.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QAAABoL",
+    "simd_align.1.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QABABoL",
+    "simd_align.10.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QEAABoL",
+    "simd_align.11.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QEBABoL",
+    "simd_align.12.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QECABoL",
+    "simd_align.13.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QEDABoL",
+    "simd_align.14.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QIAABoL",
+    "simd_align.15.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QIBABoL",
+    "simd_align.16.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QICABoL",
+    "simd_align.17.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QIDABoL",
+    "simd_align.18.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QMAABoL",
+    "simd_align.19.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QMBABoL",
+    "simd_align.2.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QACABoL",
+    "simd_align.20.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QMCABoL",
+    "simd_align.21.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QMDABoL",
+    "simd_align.22.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QQAABoL",
+    "simd_align.23.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QQBABoL",
+    "simd_align.24.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QQCABoL",
+    "simd_align.25.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QQDABoL",
+    "simd_align.26.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QUAABoL",
+    "simd_align.27.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QUBABoL",
+    "simd_align.28.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QUCABoL",
+    "simd_align.29.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QUDABoL",
+    "simd_align.3.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QADABoL",
+    "simd_align.30.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QYAABoL",
+    "simd_align.31.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QYBABoL",
+    "simd_align.32.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QYCABoL",
+    "simd_align.33.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QYDABoL",
+    "simd_align.34.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QcAABoL",
+    "simd_align.35.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QgAABoL",
+    "simd_align.36.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QgBABoL",
+    "simd_align.37.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QkAABoL",
+    "simd_align.38.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QkBABoL",
+    "simd_align.39.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QkCABoL",
+    "simd_align.4.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QAEABoL",
+    "simd_align.40.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QoAABoL",
+    "simd_align.41.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QoBABoL",
+    "simd_align.42.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QoCABoL",
+    "simd_align.43.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QoDABoL",
+    "simd_align.44.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKCwEJAEEA/QAFABoL",
+    "simd_align.45.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAAKHAEaAEEA/QwAAAAAAAAAAAAAAAAAAAAA/QsFAAs=",
+    "simd_align.46.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0BBAAL",
+    "simd_align.47.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0CBAAL",
+    "simd_align.48.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0DBAAL",
+    "simd_align.49.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0EBAAL",
+    "simd_align.5.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKHAEaAEEA/QwAAAAAAQAAAAIAAAADAAAA/QsAAAs=",
+    "simd_align.50.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0FBAAL",
+    "simd_align.51.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0GBAAL",
+    "simd_align.52.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0HAQAL",
+    "simd_align.53.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0IAgAL",
+    "simd_align.54.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0JAwAL",
+    "simd_align.55.wasm": "AGFzbQEAAAABBQFgAAF7AwIBAAUDAQABCgoBCABBAP0KBAAL",
+    "simd_align.6.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKHAEaAEEA/QwAAAAAAQAAAAIAAAADAAAA/QsBAAs=",
+    "simd_align.7.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKHAEaAEEA/QwAAAAAAQAAAAIAAAADAAAA/QsCAAs=",
+    "simd_align.8.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKHAEaAEEA/QwAAAAAAQAAAAIAAAADAAAA/QsDAAs=",
+    "simd_align.9.wasm": "AGFzbQEAAAABBAFgAAADAgEABQMBAAEKHAEaAEEA/QwAAAAAAQAAAAIAAAADAAAA/QsEAAs=",
+    "simd_align.90.wasm": "AGFzbQEAAAABCwJgAX8Be2ACf3sAAwMCAAEFBAEBAQEHLAISdjEyOC5sb2FkIGFsaWduPTE2AAATdjEyOC5zdG9yZSBhbGlnbj0xNgABChUCCAAgAP0ABAALCgAgACAB/QsEAAs=",
+    "simd_align.91.wasm": "AGFzbQEAAAABBQFgAAF7AwUEAAAAAAUDAQABB48BBB12MTI4X3VuYWxpZ25lZF9yZWFkX2FuZF93cml0ZQAAG3YxMjhfYWxpZ25lZF9yZWFkX2FuZF93cml0ZQABJXYxMjhfYWxpZ25lZF9yZWFkX2FuZF91bmFsaWduZWRfd3JpdGUAAiV2MTI4X3VuYWxpZ25lZF9yZWFkX2FuZF9hbGlnbmVkX3dyaXRlAAMKjQEEIgEBe0EA/QwAAQIDBAUGBwgJCgsMDQ4P/QsEAEEA/QAEAAsiAQF7QQD9DAAAAQACAAMABAAFAAYABwD9CwEAQQD9AAEACyIBAXtBAP0MAAAAAAEAAAACAAAAAwAAAP0LBABBAP0AAQALIgEBe0EA/QwAAAAAAQAAAAIAAAADAAAA/QsBAEEA/QAEAAs="
+  },
+  "spec": {"source_filename": "/workspace/webassembly-spec/test/core/simd/simd_align.wast",
+ "commands": [
+  {"type": "module", "line": 3, "filename": "simd_align.0.wasm"}, 
+  {"type": "module", "line": 4, "filename": "simd_align.1.wasm"}, 
+  {"type": "module", "line": 5, "filename": "simd_align.2.wasm"}, 
+  {"type": "module", "line": 6, "filename": "simd_align.3.wasm"}, 
+  {"type": "module", "line": 7, "filename": "simd_align.4.wasm"}, 
+  {"type": "module", "line": 9, "filename": "simd_align.5.wasm"}, 
+  {"type": "module", "line": 10, "filename": "simd_align.6.wasm"}, 
+  {"type": "module", "line": 11, "filename": "simd_align.7.wasm"}, 
+  {"type": "module", "line": 12, "filename": "simd_align.8.wasm"}, 
+  {"type": "module", "line": 13, "filename": "simd_align.9.wasm"}, 
+  {"type": "module", "line": 15, "filename": "simd_align.10.wasm"}, 
+  {"type": "module", "line": 16, "filename": "simd_align.11.wasm"}, 
+  {"type": "module", "line": 17, "filename": "simd_align.12.wasm"}, 
+  {"type": "module", "line": 18, "filename": "simd_align.13.wasm"}, 
+  {"type": "module", "line": 19, "filename": "simd_align.14.wasm"}, 
+  {"type": "module", "line": 20, "filename": "simd_align.15.wasm"}, 
+  {"type": "module", "line": 21, "filename": "simd_align.16.wasm"}, 
+  {"type": "module", "line": 22, "filename": "simd_align.17.wasm"}, 
+  {"type": "module", "line": 23, "filename": "simd_align.18.wasm"}, 
+  {"type": "module", "line": 24, "filename": "simd_align.19.wasm"}, 
+  {"type": "module", "line": 25, "filename": "simd_align.20.wasm"}, 
+  {"type": "module", "line": 26, "filename": "simd_align.21.wasm"}, 
+  {"type": "module", "line": 27, "filename": "simd_align.22.wasm"}, 
+  {"type": "module", "line": 28, "filename": "simd_align.23.wasm"}, 
+  {"type": "module", "line": 29, "filename": "simd_align.24.wasm"}, 
+  {"type": "module", "line": 30, "filename": "simd_align.25.wasm"}, 
+  {"type": "module", "line": 31, "filename": "simd_align.26.wasm"}, 
+  {"type": "module", "line": 32, "filename": "simd_align.27.wasm"}, 
+  {"type": "module", "line": 33, "filename": "simd_align.28.wasm"}, 
+  {"type": "module", "line": 34, "filename": "simd_align.29.wasm"}, 
+  {"type": "module", "line": 35, "filename": "simd_align.30.wasm"}, 
+  {"type": "module", "line": 36, "filename": "simd_align.31.wasm"}, 
+  {"type": "module", "line": 37, "filename": "simd_align.32.wasm"}, 
+  {"type": "module", "line": 38, "filename": "simd_align.33.wasm"}, 
+  {"type": "module", "line": 40, "filename": "simd_align.34.wasm"}, 
+  {"type": "module", "line": 41, "filename": "simd_align.35.wasm"}, 
+  {"type": "module", "line": 42, "filename": "simd_align.36.wasm"}, 
+  {"type": "module", "line": 43, "filename": "simd_align.37.wasm"}, 
+  {"type": "module", "line": 44, "filename": "simd_align.38.wasm"}, 
+  {"type": "module", "line": 45, "filename": "simd_align.39.wasm"}, 
+  {"type": "module", "line": 46, "filename": "simd_align.40.wasm"}, 
+  {"type": "module", "line": 47, "filename": "simd_align.41.wasm"}, 
+  {"type": "module", "line": 48, "filename": "simd_align.42.wasm"}, 
+  {"type": "module", "line": 49, "filename": "simd_align.43.wasm"}, 
+  {"type": "assert_invalid", "line": 54, "filename": "simd_align.44.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 58, "filename": "simd_align.45.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 62, "filename": "simd_align.46.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 66, "filename": "simd_align.47.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 70, "filename": "simd_align.48.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 74, "filename": "simd_align.49.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 78, "filename": "simd_align.50.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 82, "filename": "simd_align.51.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 86, "filename": "simd_align.52.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 90, "filename": "simd_align.53.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 94, "filename": "simd_align.54.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_invalid", "line": 98, "filename": "simd_align.55.wasm", "text": "alignment must not be larger than natural", "module_type": "binary"}, 
+  {"type": "assert_malformed", "line": 105, "filename": "simd_align.56.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 111, "filename": "simd_align.57.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 117, "filename": "simd_align.58.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 123, "filename": "simd_align.59.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 129, "filename": "simd_align.60.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 135, "filename": "simd_align.61.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 141, "filename": "simd_align.62.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 147, "filename": "simd_align.63.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 153, "filename": "simd_align.64.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 159, "filename": "simd_align.65.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 165, "filename": "simd_align.66.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 171, "filename": "simd_align.67.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 177, "filename": "simd_align.68.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 183, "filename": "simd_align.69.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 189, "filename": "simd_align.70.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 195, "filename": "simd_align.71.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 201, "filename": "simd_align.72.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 207, "filename": "simd_align.73.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 213, "filename": "simd_align.74.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 219, "filename": "simd_align.75.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 225, "filename": "simd_align.76.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 231, "filename": "simd_align.77.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 237, "filename": "simd_align.78.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 243, "filename": "simd_align.79.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 249, "filename": "simd_align.80.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 255, "filename": "simd_align.81.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 261, "filename": "simd_align.82.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 267, "filename": "simd_align.83.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 273, "filename": "simd_align.84.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 279, "filename": "simd_align.85.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 285, "filename": "simd_align.86.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 291, "filename": "simd_align.87.wat", "text": "unknown operator", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 297, "filename": "simd_align.88.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "assert_malformed", "line": 303, "filename": "simd_align.89.wat", "text": "alignment must be a power of two", "module_type": "text"}, 
+  {"type": "module", "line": 311, "filename": "simd_align.90.wasm"}, 
+  {"type": "assert_return", "line": 321, "action": {"type": "invoke", "field": "v128.load align=16", "args": [{"type": "i32", "value": "0"}]}, "expected": [{"type": "v128", "lane_type": "i32", "value": ["0", "0", "0", "0"]}]}, 
+  {"type": "assert_return", "line": 322, "action": {"type": "invoke", "field": "v128.load align=16", "args": [{"type": "i32", "value": "1"}]}, "expected": [{"type": "v128", "lane_type": "i32", "value": ["0", "0", "0", "0"]}]}, 
+  {"type": "assert_return", "line": 323, "action": {"type": "invoke", "field": "v128.store align=16", "args": [{"type": "i32", "value": "1"}, {"type": "v128", "lane_type": "i8", "value": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"]}]}, "expected": []}, 
+  {"type": "assert_return", "line": 324, "action": {"type": "invoke", "field": "v128.load align=16", "args": [{"type": "i32", "value": "0"}]}, "expected": [{"type": "v128", "lane_type": "i8", "value": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]}]}, 
+  {"type": "module", "line": 328, "filename": "simd_align.91.wasm"}, 
+  {"type": "assert_return", "line": 352, "action": {"type": "invoke", "field": "v128_unaligned_read_and_write", "args": []}, "expected": [{"type": "v128", "lane_type": "i8", "value": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"]}]}, 
+  {"type": "assert_return", "line": 353, "action": {"type": "invoke", "field": "v128_aligned_read_and_write", "args": []}, "expected": [{"type": "v128", "lane_type": "i16", "value": ["0", "1", "2", "3", "4", "5", "6", "7"]}]}, 
+  {"type": "assert_return", "line": 354, "action": {"type": "invoke", "field": "v128_aligned_read_and_unaligned_write", "args": []}, "expected": [{"type": "v128", "lane_type": "i32", "value": ["0", "1", "2", "3"]}]}, 
+  {"type": "assert_return", "line": 355, "action": {"type": "invoke", "field": "v128_unaligned_read_and_aligned_write", "args": []}, "expected": [{"type": "v128", "lane_type": "i32", "value": ["0", "1", "2", "3"]}]}]},
+  "code": [
+    "(module (memory 1)\n  (func (drop (v128.load align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load align=8 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load align=16 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (v128.store align=1 (i32.const 0) (v128.const i32x4 0 1 2 3))))",
+    "(module (memory 1)\n  (func (v128.store align=2 (i32.const 0) (v128.const i32x4 0 1 2 3))))",
+    "(module (memory 1)\n  (func (v128.store align=4 (i32.const 0) (v128.const i32x4 0 1 2 3))))",
+    "(module (memory 1)\n  (func (v128.store align=8 (i32.const 0) (v128.const i32x4 0 1 2 3))))",
+    "(module (memory 1)\n  (func (v128.store align=16 (i32.const 0) (v128.const i32x4 0 1 2 3))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_s align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_s align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_s align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_s align=8 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_u align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_u align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_u align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8x8_u align=8 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_s align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_s align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_s align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_s align=8 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_u align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_u align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_u align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16x4_u align=8 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_s align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_s align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_s align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_s align=8 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_u align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_u align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_u align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32x2_u align=8 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load8_splat align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16_splat align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load16_splat align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32_splat align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32_splat align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load32_splat align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load64_splat align=1 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load64_splat align=2 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load64_splat align=4 (i32.const 0)))))",
+    "(module (memory 1)\n  (func (drop (v128.load64_splat align=8 (i32.const 0)))))",
+    "(assert_invalid (module (memory 1) (func (drop (v128.load align=32 (i32.const 0))))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 0) (func(v128.store align=32 (i32.const 0) (v128.const i32x4 0 0 0 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load8x8_s align=16 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load8x8_u align=16 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load16x4_s align=16 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load16x4_u align=16 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load32x2_s align=16 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load32x2_u align=16 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load8_splat align=2 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load16_splat align=4 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load32_splat align=8 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_invalid (module (memory 1) (func (result v128) (v128.load64_splat align=16 (i32.const 0)))) \"alignment must not be larger than natural\")",
+    "(assert_malformed (module quote \"(memory 1) (func (drop (v128.load align=-1 (i32.const 0))))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (drop (v128.load align=0 (i32.const 0))))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (drop (v128.load align=7 (i32.const 0))))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (v128.store align=-1 (i32.const 0) (v128.const i32x4 0 0 0 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 0) (func (v128.store align=0 (i32.const 0) (v128.const i32x4 0 0 0 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 0) (func (v128.store align=7 (i32.const 0) (v128.const i32x4 0 0 0 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8x8_s align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8x8_s align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8x8_s align=7 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8x8_u align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8x8_u align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8x8_u align=7 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16x4_s align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16x4_s align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16x4_s align=7 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16x4_u align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16x4_u align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16x4_u align=7 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32x2_s align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32x2_s align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32x2_s align=7 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32x2_u align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32x2_u align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32x2_u align=7 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8_splat align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load8_splat align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16_splat align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load16_splat align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32_splat align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32_splat align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load32_splat align=3 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load64_splat align=-1 (i32.const 0)))\" ) \"unknown operator\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load64_splat align=0 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(assert_malformed (module quote \"(memory 1) (func (result v128) (v128.load64_splat align=7 (i32.const 0)))\" ) \"alignment must be a power of two\")",
+    "(module (memory 1 1)\n  (func (export \"v128.load align=16\") (param $address i32) (result v128) (v128.load align=16 (local.get $address)) )\n  (func (export \"v128.store align=16\") (param $address i32) (param $value v128) (v128.store align=16 (local.get $address) (local.get $value)) ))",
+    "(assert_return (invoke \"v128.load align=16\" (i32.const 0)) (v128.const i32x4 0 0 0 0))",
+    "(assert_return (invoke \"v128.load align=16\" (i32.const 1)) (v128.const i32x4 0 0 0 0))",
+    "(assert_return (invoke \"v128.store align=16\" (i32.const 1) (v128.const i8x16 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)))",
+    "(assert_return (invoke \"v128.load align=16\" (i32.const 0)) (v128.const i8x16 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15))",
+    "(module (memory 1)\n  (func (export \"v128_unaligned_read_and_write\") (result v128) (local v128) (v128.store (i32.const 0) (v128.const i8x16 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)) (v128.load (i32.const 0)) )\n  (func (export \"v128_aligned_read_and_write\") (result v128) (local v128) (v128.store align=2 (i32.const 0) (v128.const i16x8 0 1 2 3 4 5 6 7)) (v128.load align=2 (i32.const 0)) )\n  (func (export \"v128_aligned_read_and_unaligned_write\") (result v128) (local v128) (v128.store (i32.const 0) (v128.const i32x4 0 1 2 3)) (v128.load align=2 (i32.const 0)) )\n  (func (export \"v128_unaligned_read_and_aligned_write\") (result v128) (local v128) (v128.store align=2 (i32.const 0) (v128.const i32x4 0 1 2 3)) (v128.load (i32.const 0)) ))",
+    "(assert_return (invoke \"v128_unaligned_read_and_write\") (v128.const i8x16 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15))",
+    "(assert_return (invoke \"v128_aligned_read_and_write\") (v128.const i16x8 0 1 2 3 4 5 6 7))",
+    "(assert_return (invoke \"v128_aligned_read_and_unaligned_write\") (v128.const i32x4 0 1 2 3))",
+    "(assert_return (invoke \"v128_unaligned_read_and_aligned_write\") (v128.const i32x4 0 1 2 3))"
+  ],
+  "dump": {
+    "simd_align.0.wasm": {
+      "header": "\nsimd_align.0.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.0.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.0.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 00 00 00                | v128.load 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.1.wasm": {
+      "header": "\nsimd_align.1.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.1.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.1.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 00 01 00                | v128.load 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.2.wasm": {
+      "header": "\nsimd_align.2.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.2.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.2.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 00 02 00                | v128.load 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.3.wasm": {
+      "header": "\nsimd_align.3.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.3.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.3.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 00 03 00                | v128.load 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.4.wasm": {
+      "header": "\nsimd_align.4.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.4.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.4.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 00 04 00                | v128.load 4 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.5.wasm": {
+      "header": "\nsimd_align.5.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000035 (size=0x0000001c) count: 1\n",
+      "details": "\nsimd_align.5.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=26\n",
+      "disassemble": "\nsimd_align.5.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0c 00 00 00 00 01 00 00 | v128.const 0x00000000 0x00000001 0x00000002 0x00000003\n 000027: 00 02 00 00 00 03 00 00 00 | \n 000030: fd 0b 00 00                | v128.store 0 0\n 000034: 0b                         | end\n"
+    },
+    "simd_align.6.wasm": {
+      "header": "\nsimd_align.6.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000035 (size=0x0000001c) count: 1\n",
+      "details": "\nsimd_align.6.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=26\n",
+      "disassemble": "\nsimd_align.6.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0c 00 00 00 00 01 00 00 | v128.const 0x00000000 0x00000001 0x00000002 0x00000003\n 000027: 00 02 00 00 00 03 00 00 00 | \n 000030: fd 0b 01 00                | v128.store 1 0\n 000034: 0b                         | end\n"
+    },
+    "simd_align.7.wasm": {
+      "header": "\nsimd_align.7.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000035 (size=0x0000001c) count: 1\n",
+      "details": "\nsimd_align.7.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=26\n",
+      "disassemble": "\nsimd_align.7.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0c 00 00 00 00 01 00 00 | v128.const 0x00000000 0x00000001 0x00000002 0x00000003\n 000027: 00 02 00 00 00 03 00 00 00 | \n 000030: fd 0b 02 00                | v128.store 2 0\n 000034: 0b                         | end\n"
+    },
+    "simd_align.8.wasm": {
+      "header": "\nsimd_align.8.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000035 (size=0x0000001c) count: 1\n",
+      "details": "\nsimd_align.8.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=26\n",
+      "disassemble": "\nsimd_align.8.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0c 00 00 00 00 01 00 00 | v128.const 0x00000000 0x00000001 0x00000002 0x00000003\n 000027: 00 02 00 00 00 03 00 00 00 | \n 000030: fd 0b 03 00                | v128.store 3 0\n 000034: 0b                         | end\n"
+    },
+    "simd_align.9.wasm": {
+      "header": "\nsimd_align.9.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000035 (size=0x0000001c) count: 1\n",
+      "details": "\nsimd_align.9.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=26\n",
+      "disassemble": "\nsimd_align.9.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0c 00 00 00 00 01 00 00 | v128.const 0x00000000 0x00000001 0x00000002 0x00000003\n 000027: 00 02 00 00 00 03 00 00 00 | \n 000030: fd 0b 04 00                | v128.store 4 0\n 000034: 0b                         | end\n"
+    },
+    "simd_align.10.wasm": {
+      "header": "\nsimd_align.10.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.10.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.10.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 01 00 00                | v128.load8x8_s 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.11.wasm": {
+      "header": "\nsimd_align.11.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.11.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.11.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 01 01 00                | v128.load8x8_s 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.12.wasm": {
+      "header": "\nsimd_align.12.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.12.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.12.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 01 02 00                | v128.load8x8_s 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.13.wasm": {
+      "header": "\nsimd_align.13.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.13.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.13.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 01 03 00                | v128.load8x8_s 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.14.wasm": {
+      "header": "\nsimd_align.14.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.14.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.14.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 02 00 00                | v128.load8x8_u 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.15.wasm": {
+      "header": "\nsimd_align.15.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.15.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.15.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 02 01 00                | v128.load8x8_u 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.16.wasm": {
+      "header": "\nsimd_align.16.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.16.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.16.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 02 02 00                | v128.load8x8_u 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.17.wasm": {
+      "header": "\nsimd_align.17.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.17.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.17.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 02 03 00                | v128.load8x8_u 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.18.wasm": {
+      "header": "\nsimd_align.18.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.18.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.18.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 03 00 00                | v128.load16x4_s 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.19.wasm": {
+      "header": "\nsimd_align.19.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.19.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.19.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 03 01 00                | v128.load16x4_s 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.20.wasm": {
+      "header": "\nsimd_align.20.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.20.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.20.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 03 02 00                | v128.load16x4_s 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.21.wasm": {
+      "header": "\nsimd_align.21.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.21.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.21.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 03 03 00                | v128.load16x4_s 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.22.wasm": {
+      "header": "\nsimd_align.22.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.22.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.22.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 04 00 00                | v128.load16x4_u 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.23.wasm": {
+      "header": "\nsimd_align.23.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.23.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.23.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 04 01 00                | v128.load16x4_u 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.24.wasm": {
+      "header": "\nsimd_align.24.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.24.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.24.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 04 02 00                | v128.load16x4_u 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.25.wasm": {
+      "header": "\nsimd_align.25.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.25.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.25.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 04 03 00                | v128.load16x4_u 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.26.wasm": {
+      "header": "\nsimd_align.26.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.26.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.26.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 05 00 00                | v128.load32x2_s 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.27.wasm": {
+      "header": "\nsimd_align.27.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.27.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.27.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 05 01 00                | v128.load32x2_s 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.28.wasm": {
+      "header": "\nsimd_align.28.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.28.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.28.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 05 02 00                | v128.load32x2_s 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.29.wasm": {
+      "header": "\nsimd_align.29.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.29.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.29.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 05 03 00                | v128.load32x2_s 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.30.wasm": {
+      "header": "\nsimd_align.30.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.30.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.30.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 06 00 00                | v128.load32x2_u 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.31.wasm": {
+      "header": "\nsimd_align.31.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.31.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.31.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 06 01 00                | v128.load32x2_u 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.32.wasm": {
+      "header": "\nsimd_align.32.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.32.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.32.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 06 02 00                | v128.load32x2_u 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.33.wasm": {
+      "header": "\nsimd_align.33.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.33.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.33.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 06 03 00                | v128.load32x2_u 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.34.wasm": {
+      "header": "\nsimd_align.34.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.34.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.34.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 07 00 00                | v128.load8_splat 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.35.wasm": {
+      "header": "\nsimd_align.35.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.35.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.35.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 08 00 00                | v128.load16_splat 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.36.wasm": {
+      "header": "\nsimd_align.36.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.36.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.36.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 08 01 00                | v128.load16_splat 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.37.wasm": {
+      "header": "\nsimd_align.37.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.37.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.37.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 09 00 00                | v128.load32_splat 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.38.wasm": {
+      "header": "\nsimd_align.38.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.38.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.38.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 09 01 00                | v128.load32_splat 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.39.wasm": {
+      "header": "\nsimd_align.39.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.39.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.39.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 09 02 00                | v128.load32_splat 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.40.wasm": {
+      "header": "\nsimd_align.40.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.40.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.40.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0a 00 00                | v128.load64_splat 0 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.41.wasm": {
+      "header": "\nsimd_align.41.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.41.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.41.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0a 01 00                | v128.load64_splat 1 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.42.wasm": {
+      "header": "\nsimd_align.42.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.42.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.42.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0a 02 00                | v128.load64_splat 2 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.43.wasm": {
+      "header": "\nsimd_align.43.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000e (size=0x00000004) count: 1\n Function start=0x00000010 end=0x00000012 (size=0x00000002) count: 1\n   Memory start=0x00000014 end=0x00000017 (size=0x00000003) count: 1\n     Code start=0x00000019 end=0x00000024 (size=0x0000000b) count: 1\n",
+      "details": "\nsimd_align.43.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> nil\nFunction[1]:\n - func[0] sig=0\nMemory[1]:\n - memory[0] pages: initial=1\nCode[1]:\n - func[0] size=9\n",
+      "disassemble": "\nsimd_align.43.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n00001b func[0]:\n 00001c: 41 00                      | i32.const 0\n 00001e: fd 0a 03 00                | v128.load64_splat 3 0\n 000022: 1a                         | drop\n 000023: 0b                         | end\n"
+    },
+    "simd_align.90.wasm": {
+      "header": "\nsimd_align.90.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x00000015 (size=0x0000000b) count: 2\n Function start=0x00000017 end=0x0000001a (size=0x00000003) count: 2\n   Memory start=0x0000001c end=0x00000020 (size=0x00000004) count: 1\n   Export start=0x00000022 end=0x0000004e (size=0x0000002c) count: 2\n     Code start=0x00000050 end=0x00000065 (size=0x00000015) count: 2\n",
+      "details": "\nsimd_align.90.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[2]:\n - type[0] (i32) -> v128\n - type[1] (i32, v128) -> nil\nFunction[2]:\n - func[0] sig=0 <v128.load align=16>\n - func[1] sig=1 <v128.store align=16>\nMemory[1]:\n - memory[0] pages: initial=1 max=1\nExport[2]:\n - func[0] <v128.load align=16> -> \"v128.load align=16\"\n - func[1] <v128.store align=16> -> \"v128.store align=16\"\nCode[2]:\n - func[0] size=8 <v128.load align=16>\n - func[1] size=10 <v128.store align=16>\n",
+      "disassemble": "\nsimd_align.90.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n000052 func[0] <v128.load align=16>:\n 000053: 20 00                      | local.get 0\n 000055: fd 00 04 00                | v128.load 4 0\n 000059: 0b                         | end\n00005b func[1] <v128.store align=16>:\n 00005c: 20 00                      | local.get 0\n 00005e: 20 01                      | local.get 1\n 000060: fd 0b 04 00                | v128.store 4 0\n 000064: 0b                         | end\n"
+    },
+    "simd_align.91.wasm": {
+      "header": "\nsimd_align.91.wasm:\tfile format wasm 0x1\n\nSections:\n\n     Type start=0x0000000a end=0x0000000f (size=0x00000005) count: 1\n Function start=0x00000011 end=0x00000016 (size=0x00000005) count: 4\n   Memory start=0x00000018 end=0x0000001b (size=0x00000003) count: 1\n   Export start=0x0000001e end=0x000000ad (size=0x0000008f) count: 4\n     Code start=0x000000b0 end=0x0000013d (size=0x0000008d) count: 4\n",
+      "details": "\nsimd_align.91.wasm:\tfile format wasm 0x1\n\nSection Details:\n\nType[1]:\n - type[0] () -> v128\nFunction[4]:\n - func[0] sig=0 <v128_unaligned_read_and_write>\n - func[1] sig=0 <v128_aligned_read_and_write>\n - func[2] sig=0 <v128_aligned_read_and_unaligned_write>\n - func[3] sig=0 <v128_unaligned_read_and_aligned_write>\nMemory[1]:\n - memory[0] pages: initial=1\nExport[4]:\n - func[0] <v128_unaligned_read_and_write> -> \"v128_unaligned_read_and_write\"\n - func[1] <v128_aligned_read_and_write> -> \"v128_aligned_read_and_write\"\n - func[2] <v128_aligned_read_and_unaligned_write> -> \"v128_aligned_read_and_unaligned_write\"\n - func[3] <v128_unaligned_read_and_aligned_write> -> \"v128_unaligned_read_and_aligned_write\"\nCode[4]:\n - func[0] size=34 <v128_unaligned_read_and_write>\n - func[1] size=34 <v128_aligned_read_and_write>\n - func[2] size=34 <v128_aligned_read_and_unaligned_write>\n - func[3] size=34 <v128_unaligned_read_and_aligned_write>\n",
+      "disassemble": "\nsimd_align.91.wasm:\tfile format wasm 0x1\n\nCode Disassembly:\n\n0000b2 func[0] <v128_unaligned_read_and_write>:\n 0000b3: 01 7b                      | local[0] type=v128\n 0000b5: 41 00                      | i32.const 0\n 0000b7: fd 0c 00 01 02 03 04 05 06 | v128.const 0x03020100 0x07060504 0x0b0a0908 0x0f0e0d0c\n 0000c0: 07 08 09 0a 0b 0c 0d 0e 0f | \n 0000c9: fd 0b 04 00                | v128.store 4 0\n 0000cd: 41 00                      | i32.const 0\n 0000cf: fd 00 04 00                | v128.load 4 0\n 0000d3: 0b                         | end\n0000d5 func[1] <v128_aligned_read_and_write>:\n 0000d6: 01 7b                      | local[0] type=v128\n 0000d8: 41 00                      | i32.const 0\n 0000da: fd 0c 00 00 01 00 02 00 03 | v128.const 0x00010000 0x00030002 0x00050004 0x00070006\n 0000e3: 00 04 00 05 00 06 00 07 00 | \n 0000ec: fd 0b 01 00                | v128.store 1 0\n 0000f0: 41 00                      | i32.const 0\n 0000f2: fd 00 01 00                | v128.load 1 0\n 0000f6: 0b                         | end\n0000f8 func[2] <v128_aligned_read_and_unaligned_write>:\n 0000f9: 01 7b                      | local[0] type=v128\n 0000fb: 41 00                      | i32.const 0\n 0000fd: fd 0c 00 00 00 00 01 00 00 | v128.const 0x00000000 0x00000001 0x00000002 0x00000003\n 000106: 00 02 00 00 00 03 00 00 00 | \n 00010f: fd 0b 04 00                | v128.store 4 0\n 000113: 41 00                      | i32.const 0\n 000115: fd 00 01 00                | v128.load 1 0\n 000119: 0b                         | end\n00011b func[3] <v128_unaligned_read_and_aligned_write>:\n 00011c: 01 7b                      | local[0] type=v128\n 00011e: 41 00                      | i32.const 0\n 000120: fd 0c 00 00 00 00 01 00 00 | v128.const 0x00000000 0x00000001 0x00000002 0x00000003\n 000129: 00 02 00 00 00 03 00 00 00 | \n 000132: fd 0b 01 00                | v128.store 1 0\n 000136: 41 00                      | i32.const 0\n 000138: fd 00 04 00                | v128.load 4 0\n 00013c: 0b                         | end\n"
+    }
+  }
+}

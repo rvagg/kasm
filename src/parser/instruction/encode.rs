@@ -226,9 +226,7 @@ impl InstructionKind {
             I64TruncSatF64U => 0xFC,
 
             // SIMD
-            V128Load { .. } => 0xFD,
-            V128Store { .. } => 0xFD,
-            V128Const { .. } => 0xFD,
+            Simd(..) => 0xFD,
         }
     }
 
@@ -266,11 +264,8 @@ impl InstructionKind {
 
     /// Get the subopcode for 0xFD prefix instructions (SIMD)
     pub fn subopcode_0xfd(&self) -> Option<u32> {
-        use InstructionKind::*;
         match self {
-            V128Load { .. } => Some(0x00),
-            V128Store { .. } => Some(0x0B),
-            V128Const { .. } => Some(0x0C),
+            InstructionKind::Simd(op) => Some(op.subopcode()),
             _ => None,
         }
     }
@@ -382,9 +377,7 @@ impl InstructionKind {
             | I32Store16 { memarg }
             | I64Store8 { memarg }
             | I64Store16 { memarg }
-            | I64Store32 { memarg }
-            | V128Load { memarg }
-            | V128Store { memarg } => {
+            | I64Store32 { memarg } => {
                 encoding::write_vu32(&mut bytes, memarg.align);
                 encoding::write_vu32(&mut bytes, memarg.offset);
             }
@@ -424,9 +417,9 @@ impl InstructionKind {
                 bytes.extend(&value.to_le_bytes());
             }
 
-            // V128 const
-            V128Const { value } => {
-                bytes.extend(value);
+            // SIMD instruction operands
+            Simd(op) => {
+                op.encode_operands(&mut bytes);
             }
 
             // All other instructions have no additional operands

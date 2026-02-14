@@ -41,7 +41,7 @@ pub fn decode_constant_expression_with_ref_func(
 }
 
 /// Memory argument for memory access instructions
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MemArg {
     /// Memory alignment (as power of 2)
     pub align: u32,
@@ -315,11 +315,304 @@ pub enum InstructionKind {
     I64TruncSatF64S,
     I64TruncSatF64U,
 
-    // SIMD instructions placeholder (0xFD prefix)
-    V128Load { memarg: MemArg },
-    V128Store { memarg: MemArg },
-    V128Const { value: [u8; 16] },
-    // Additional SIMD instructions would go here
+    // SIMD instructions (0xFD prefix) — delegated to SimdOp
+    Simd(SimdOp),
+}
+
+/// SIMD instruction opcodes (0xFD prefix, ~236 sub-opcodes)
+#[derive(Debug, Clone, PartialEq)]
+pub enum SimdOp {
+    // Memory operations
+    V128Load { memarg: MemArg },        // 0x00
+    V128Load8x8S { memarg: MemArg },    // 0x01
+    V128Load8x8U { memarg: MemArg },    // 0x02
+    V128Load16x4S { memarg: MemArg },   // 0x03
+    V128Load16x4U { memarg: MemArg },   // 0x04
+    V128Load32x2S { memarg: MemArg },   // 0x05
+    V128Load32x2U { memarg: MemArg },   // 0x06
+    V128Load8Splat { memarg: MemArg },  // 0x07
+    V128Load16Splat { memarg: MemArg }, // 0x08
+    V128Load32Splat { memarg: MemArg }, // 0x09
+    V128Load64Splat { memarg: MemArg }, // 0x0A
+    V128Store { memarg: MemArg },       // 0x0B
+
+    // Constant and shuffle
+    V128Const { value: [u8; 16] },    // 0x0C
+    I8x16Shuffle { lanes: [u8; 16] }, // 0x0D
+
+    // Splat
+    I8x16Swizzle, // 0x0E
+    I8x16Splat,   // 0x0F
+    I16x8Splat,   // 0x10
+    I32x4Splat,   // 0x11
+    I64x2Splat,   // 0x12
+    F32x4Splat,   // 0x13
+    F64x2Splat,   // 0x14
+
+    // Lane extraction/replacement
+    I8x16ExtractLaneS { lane: u8 }, // 0x15
+    I8x16ExtractLaneU { lane: u8 }, // 0x16
+    I8x16ReplaceLane { lane: u8 },  // 0x17
+    I16x8ExtractLaneS { lane: u8 }, // 0x18
+    I16x8ExtractLaneU { lane: u8 }, // 0x19
+    I16x8ReplaceLane { lane: u8 },  // 0x1A
+    I32x4ExtractLane { lane: u8 },  // 0x1B
+    I32x4ReplaceLane { lane: u8 },  // 0x1C
+    I64x2ExtractLane { lane: u8 },  // 0x1D
+    I64x2ReplaceLane { lane: u8 },  // 0x1E
+    F32x4ExtractLane { lane: u8 },  // 0x1F
+    F32x4ReplaceLane { lane: u8 },  // 0x20
+    F64x2ExtractLane { lane: u8 },  // 0x21
+    F64x2ReplaceLane { lane: u8 },  // 0x22
+
+    // i8x16 comparisons
+    I8x16Eq,  // 0x23
+    I8x16Ne,  // 0x24
+    I8x16LtS, // 0x25
+    I8x16LtU, // 0x26
+    I8x16GtS, // 0x27
+    I8x16GtU, // 0x28
+    I8x16LeS, // 0x29
+    I8x16LeU, // 0x2A
+    I8x16GeS, // 0x2B
+    I8x16GeU, // 0x2C
+
+    // i16x8 comparisons
+    I16x8Eq,  // 0x2D
+    I16x8Ne,  // 0x2E
+    I16x8LtS, // 0x2F
+    I16x8LtU, // 0x30
+    I16x8GtS, // 0x31
+    I16x8GtU, // 0x32
+    I16x8LeS, // 0x33
+    I16x8LeU, // 0x34
+    I16x8GeS, // 0x35
+    I16x8GeU, // 0x36
+
+    // i32x4 comparisons
+    I32x4Eq,  // 0x37
+    I32x4Ne,  // 0x38
+    I32x4LtS, // 0x39
+    I32x4LtU, // 0x3A
+    I32x4GtS, // 0x3B
+    I32x4GtU, // 0x3C
+    I32x4LeS, // 0x3D
+    I32x4LeU, // 0x3E
+    I32x4GeS, // 0x3F
+    I32x4GeU, // 0x40
+
+    // f32x4 comparisons
+    F32x4Eq, // 0x41
+    F32x4Ne, // 0x42
+    F32x4Lt, // 0x43
+    F32x4Gt, // 0x44
+    F32x4Le, // 0x45
+    F32x4Ge, // 0x46
+
+    // f64x2 comparisons
+    F64x2Eq, // 0x47
+    F64x2Ne, // 0x48
+    F64x2Lt, // 0x49
+    F64x2Gt, // 0x4A
+    F64x2Le, // 0x4B
+    F64x2Ge, // 0x4C
+
+    // v128 bitwise
+    V128Not,       // 0x4D
+    V128And,       // 0x4E
+    V128AndNot,    // 0x4F
+    V128Or,        // 0x50
+    V128Xor,       // 0x51
+    V128Bitselect, // 0x52
+    V128AnyTrue,   // 0x53
+
+    // Load/store lane
+    V128Load8Lane { memarg: MemArg, lane: u8 },   // 0x54
+    V128Load16Lane { memarg: MemArg, lane: u8 },  // 0x55
+    V128Load32Lane { memarg: MemArg, lane: u8 },  // 0x56
+    V128Load64Lane { memarg: MemArg, lane: u8 },  // 0x57
+    V128Store8Lane { memarg: MemArg, lane: u8 },  // 0x58
+    V128Store16Lane { memarg: MemArg, lane: u8 }, // 0x59
+    V128Store32Lane { memarg: MemArg, lane: u8 }, // 0x5A
+    V128Store64Lane { memarg: MemArg, lane: u8 }, // 0x5B
+
+    // Load zero
+    V128Load32Zero { memarg: MemArg }, // 0x5C
+    V128Load64Zero { memarg: MemArg }, // 0x5D
+
+    // Conversions (placed between load-zero and i8x16 ops in opcode order)
+    F32x4DemoteF64x2Zero, // 0x5E
+    F64x2PromoteLowF32x4, // 0x5F
+
+    // i8x16 operations (0x60-0x7B)
+    // f32x4 and f64x2 rounding ops are interleaved here per the spec —
+    // they were added later and assigned to gaps in this opcode range.
+    I8x16Abs,          // 0x60
+    I8x16Neg,          // 0x61
+    I8x16Popcnt,       // 0x62
+    I8x16AllTrue,      // 0x63
+    I8x16Bitmask,      // 0x64
+    I8x16NarrowI16x8S, // 0x65
+    I8x16NarrowI16x8U, // 0x66
+    F32x4Ceil,         // 0x67
+    F32x4Floor,        // 0x68
+    F32x4Trunc,        // 0x69
+    F32x4Nearest,      // 0x6A
+    I8x16Shl,          // 0x6B
+    I8x16ShrS,         // 0x6C
+    I8x16ShrU,         // 0x6D
+    I8x16Add,          // 0x6E
+    I8x16AddSatS,      // 0x6F
+    I8x16AddSatU,      // 0x70
+    I8x16Sub,          // 0x71
+    I8x16SubSatS,      // 0x72
+    I8x16SubSatU,      // 0x73
+    F64x2Ceil,         // 0x74
+    F64x2Floor,        // 0x75
+    I8x16MinS,         // 0x76
+    I8x16MinU,         // 0x77
+    I8x16MaxS,         // 0x78
+    I8x16MaxU,         // 0x79
+    F64x2Trunc,        // 0x7A
+    I8x16AvgrU,        // 0x7B
+
+    // Pairwise extension
+    I16x8ExtAddPairwiseI8x16S, // 0x7C
+    I16x8ExtAddPairwiseI8x16U, // 0x7D
+    I32x4ExtAddPairwiseI16x8S, // 0x7E
+    I32x4ExtAddPairwiseI16x8U, // 0x7F
+
+    // i16x8 operations (0x80-0x9F, with f64x2.nearest at 0x94)
+    I16x8Abs,              // 0x80
+    I16x8Neg,              // 0x81
+    I16x8Q15MulrSatS,      // 0x82
+    I16x8AllTrue,          // 0x83
+    I16x8Bitmask,          // 0x84
+    I16x8NarrowI32x4S,     // 0x85
+    I16x8NarrowI32x4U,     // 0x86
+    I16x8ExtendLowI8x16S,  // 0x87
+    I16x8ExtendHighI8x16S, // 0x88
+    I16x8ExtendLowI8x16U,  // 0x89
+    I16x8ExtendHighI8x16U, // 0x8A
+    I16x8Shl,              // 0x8B
+    I16x8ShrS,             // 0x8C
+    I16x8ShrU,             // 0x8D
+    I16x8Add,              // 0x8E
+    I16x8AddSatS,          // 0x8F
+    I16x8AddSatU,          // 0x90
+    I16x8Sub,              // 0x91
+    I16x8SubSatS,          // 0x92
+    I16x8SubSatU,          // 0x93
+    F64x2Nearest,          // 0x94
+    I16x8Mul,              // 0x95
+    I16x8MinS,             // 0x96
+    I16x8MinU,             // 0x97
+    I16x8MaxS,             // 0x98
+    I16x8MaxU,             // 0x99
+    // 0x9A reserved
+    I16x8AvgrU,            // 0x9B
+    I16x8ExtMulLowI8x16S,  // 0x9C
+    I16x8ExtMulHighI8x16S, // 0x9D
+    I16x8ExtMulLowI8x16U,  // 0x9E
+    I16x8ExtMulHighI8x16U, // 0x9F
+
+    // i32x4 operations
+    I32x4Abs, // 0xA0
+    I32x4Neg, // 0xA1
+    // 0xA2 reserved
+    I32x4AllTrue, // 0xA3
+    I32x4Bitmask, // 0xA4
+    // 0xA5-0xA6 reserved
+    I32x4ExtendLowI16x8S,  // 0xA7
+    I32x4ExtendHighI16x8S, // 0xA8
+    I32x4ExtendLowI16x8U,  // 0xA9
+    I32x4ExtendHighI16x8U, // 0xAA
+    I32x4Shl,              // 0xAB
+    I32x4ShrS,             // 0xAC
+    I32x4ShrU,             // 0xAD
+    I32x4Add,              // 0xAE
+    // 0xAF-0xB0 reserved
+    I32x4Sub, // 0xB1
+    // 0xB2-0xB4 reserved
+    I32x4Mul,       // 0xB5
+    I32x4MinS,      // 0xB6
+    I32x4MinU,      // 0xB7
+    I32x4MaxS,      // 0xB8
+    I32x4MaxU,      // 0xB9
+    I32x4DotI16x8S, // 0xBA
+    // 0xBB reserved
+    I32x4ExtMulLowI16x8S,  // 0xBC
+    I32x4ExtMulHighI16x8S, // 0xBD
+    I32x4ExtMulLowI16x8U,  // 0xBE
+    I32x4ExtMulHighI16x8U, // 0xBF
+
+    // i64x2 operations
+    I64x2Abs, // 0xC0
+    I64x2Neg, // 0xC1
+    // 0xC2 reserved
+    I64x2AllTrue, // 0xC3
+    I64x2Bitmask, // 0xC4
+    // 0xC5-0xC6 reserved
+    I64x2ExtendLowI32x4S,  // 0xC7
+    I64x2ExtendHighI32x4S, // 0xC8
+    I64x2ExtendLowI32x4U,  // 0xC9
+    I64x2ExtendHighI32x4U, // 0xCA
+    I64x2Shl,              // 0xCB
+    I64x2ShrS,             // 0xCC
+    I64x2ShrU,             // 0xCD
+    I64x2Add,              // 0xCE
+    // 0xCF-0xD0 reserved
+    I64x2Sub, // 0xD1
+    // 0xD2-0xD4 reserved
+    I64x2Mul,              // 0xD5
+    I64x2Eq,               // 0xD6
+    I64x2Ne,               // 0xD7
+    I64x2LtS,              // 0xD8
+    I64x2GtS,              // 0xD9
+    I64x2LeS,              // 0xDA
+    I64x2GeS,              // 0xDB
+    I64x2ExtMulLowI32x4S,  // 0xDC
+    I64x2ExtMulHighI32x4S, // 0xDD
+    I64x2ExtMulLowI32x4U,  // 0xDE
+    I64x2ExtMulHighI32x4U, // 0xDF
+
+    // f32x4 operations
+    F32x4Abs, // 0xE0
+    F32x4Neg, // 0xE1
+    // 0xE2 reserved
+    F32x4Sqrt, // 0xE3
+    F32x4Add,  // 0xE4
+    F32x4Sub,  // 0xE5
+    F32x4Mul,  // 0xE6
+    F32x4Div,  // 0xE7
+    F32x4Min,  // 0xE8
+    F32x4Max,  // 0xE9
+    F32x4PMin, // 0xEA
+    F32x4PMax, // 0xEB
+
+    // f64x2 operations
+    F64x2Abs, // 0xEC
+    F64x2Neg, // 0xED
+    // 0xEE reserved
+    F64x2Sqrt, // 0xEF
+    F64x2Add,  // 0xF0
+    F64x2Sub,  // 0xF1
+    F64x2Mul,  // 0xF2
+    F64x2Div,  // 0xF3
+    F64x2Min,  // 0xF4
+    F64x2Max,  // 0xF5
+    F64x2PMin, // 0xF6
+    F64x2PMax, // 0xF7
+
+    // Truncation/conversion
+    I32x4TruncSatF32x4S,     // 0xF8
+    I32x4TruncSatF32x4U,     // 0xF9
+    F32x4ConvertI32x4S,      // 0xFA
+    F32x4ConvertI32x4U,      // 0xFB
+    I32x4TruncSatF64x2SZero, // 0xFC
+    I32x4TruncSatF64x2UZero, // 0xFD
+    F64x2ConvertLowI32x4S,   // 0xFE
+    F64x2ConvertLowI32x4U,   // 0xFF
 }
 
 impl InstructionKind {
@@ -582,9 +875,629 @@ impl InstructionKind {
             I64TruncSatF32U => "i64.trunc_sat_f32_u",
             I64TruncSatF64S => "i64.trunc_sat_f64_s",
             I64TruncSatF64U => "i64.trunc_sat_f64_u",
+            Simd(op) => op.mnemonic(),
+        }
+    }
+}
+
+impl SimdOp {
+    /// Get the mnemonic for this SIMD instruction
+    pub fn mnemonic(&self) -> &'static str {
+        use SimdOp::*;
+        match self {
             V128Load { .. } => "v128.load",
+            V128Load8x8S { .. } => "v128.load8x8_s",
+            V128Load8x8U { .. } => "v128.load8x8_u",
+            V128Load16x4S { .. } => "v128.load16x4_s",
+            V128Load16x4U { .. } => "v128.load16x4_u",
+            V128Load32x2S { .. } => "v128.load32x2_s",
+            V128Load32x2U { .. } => "v128.load32x2_u",
+            V128Load8Splat { .. } => "v128.load8_splat",
+            V128Load16Splat { .. } => "v128.load16_splat",
+            V128Load32Splat { .. } => "v128.load32_splat",
+            V128Load64Splat { .. } => "v128.load64_splat",
             V128Store { .. } => "v128.store",
             V128Const { .. } => "v128.const",
+            I8x16Shuffle { .. } => "i8x16.shuffle",
+            I8x16Swizzle => "i8x16.swizzle",
+            I8x16Splat => "i8x16.splat",
+            I16x8Splat => "i16x8.splat",
+            I32x4Splat => "i32x4.splat",
+            I64x2Splat => "i64x2.splat",
+            F32x4Splat => "f32x4.splat",
+            F64x2Splat => "f64x2.splat",
+            I8x16ExtractLaneS { .. } => "i8x16.extract_lane_s",
+            I8x16ExtractLaneU { .. } => "i8x16.extract_lane_u",
+            I8x16ReplaceLane { .. } => "i8x16.replace_lane",
+            I16x8ExtractLaneS { .. } => "i16x8.extract_lane_s",
+            I16x8ExtractLaneU { .. } => "i16x8.extract_lane_u",
+            I16x8ReplaceLane { .. } => "i16x8.replace_lane",
+            I32x4ExtractLane { .. } => "i32x4.extract_lane",
+            I32x4ReplaceLane { .. } => "i32x4.replace_lane",
+            I64x2ExtractLane { .. } => "i64x2.extract_lane",
+            I64x2ReplaceLane { .. } => "i64x2.replace_lane",
+            F32x4ExtractLane { .. } => "f32x4.extract_lane",
+            F32x4ReplaceLane { .. } => "f32x4.replace_lane",
+            F64x2ExtractLane { .. } => "f64x2.extract_lane",
+            F64x2ReplaceLane { .. } => "f64x2.replace_lane",
+            I8x16Eq => "i8x16.eq",
+            I8x16Ne => "i8x16.ne",
+            I8x16LtS => "i8x16.lt_s",
+            I8x16LtU => "i8x16.lt_u",
+            I8x16GtS => "i8x16.gt_s",
+            I8x16GtU => "i8x16.gt_u",
+            I8x16LeS => "i8x16.le_s",
+            I8x16LeU => "i8x16.le_u",
+            I8x16GeS => "i8x16.ge_s",
+            I8x16GeU => "i8x16.ge_u",
+            I16x8Eq => "i16x8.eq",
+            I16x8Ne => "i16x8.ne",
+            I16x8LtS => "i16x8.lt_s",
+            I16x8LtU => "i16x8.lt_u",
+            I16x8GtS => "i16x8.gt_s",
+            I16x8GtU => "i16x8.gt_u",
+            I16x8LeS => "i16x8.le_s",
+            I16x8LeU => "i16x8.le_u",
+            I16x8GeS => "i16x8.ge_s",
+            I16x8GeU => "i16x8.ge_u",
+            I32x4Eq => "i32x4.eq",
+            I32x4Ne => "i32x4.ne",
+            I32x4LtS => "i32x4.lt_s",
+            I32x4LtU => "i32x4.lt_u",
+            I32x4GtS => "i32x4.gt_s",
+            I32x4GtU => "i32x4.gt_u",
+            I32x4LeS => "i32x4.le_s",
+            I32x4LeU => "i32x4.le_u",
+            I32x4GeS => "i32x4.ge_s",
+            I32x4GeU => "i32x4.ge_u",
+            F32x4Eq => "f32x4.eq",
+            F32x4Ne => "f32x4.ne",
+            F32x4Lt => "f32x4.lt",
+            F32x4Gt => "f32x4.gt",
+            F32x4Le => "f32x4.le",
+            F32x4Ge => "f32x4.ge",
+            F64x2Eq => "f64x2.eq",
+            F64x2Ne => "f64x2.ne",
+            F64x2Lt => "f64x2.lt",
+            F64x2Gt => "f64x2.gt",
+            F64x2Le => "f64x2.le",
+            F64x2Ge => "f64x2.ge",
+            V128Not => "v128.not",
+            V128And => "v128.and",
+            V128AndNot => "v128.andnot",
+            V128Or => "v128.or",
+            V128Xor => "v128.xor",
+            V128Bitselect => "v128.bitselect",
+            V128AnyTrue => "v128.any_true",
+            V128Load8Lane { .. } => "v128.load8_lane",
+            V128Load16Lane { .. } => "v128.load16_lane",
+            V128Load32Lane { .. } => "v128.load32_lane",
+            V128Load64Lane { .. } => "v128.load64_lane",
+            V128Store8Lane { .. } => "v128.store8_lane",
+            V128Store16Lane { .. } => "v128.store16_lane",
+            V128Store32Lane { .. } => "v128.store32_lane",
+            V128Store64Lane { .. } => "v128.store64_lane",
+            V128Load32Zero { .. } => "v128.load32_zero",
+            V128Load64Zero { .. } => "v128.load64_zero",
+            F32x4DemoteF64x2Zero => "f32x4.demote_f64x2_zero",
+            F64x2PromoteLowF32x4 => "f64x2.promote_low_f32x4",
+            I8x16Abs => "i8x16.abs",
+            I8x16Neg => "i8x16.neg",
+            I8x16Popcnt => "i8x16.popcnt",
+            I8x16AllTrue => "i8x16.all_true",
+            I8x16Bitmask => "i8x16.bitmask",
+            I8x16NarrowI16x8S => "i8x16.narrow_i16x8_s",
+            I8x16NarrowI16x8U => "i8x16.narrow_i16x8_u",
+            F32x4Ceil => "f32x4.ceil",
+            F32x4Floor => "f32x4.floor",
+            F32x4Trunc => "f32x4.trunc",
+            F32x4Nearest => "f32x4.nearest",
+            I8x16Shl => "i8x16.shl",
+            I8x16ShrS => "i8x16.shr_s",
+            I8x16ShrU => "i8x16.shr_u",
+            I8x16Add => "i8x16.add",
+            I8x16AddSatS => "i8x16.add_sat_s",
+            I8x16AddSatU => "i8x16.add_sat_u",
+            I8x16Sub => "i8x16.sub",
+            I8x16SubSatS => "i8x16.sub_sat_s",
+            I8x16SubSatU => "i8x16.sub_sat_u",
+            F64x2Ceil => "f64x2.ceil",
+            F64x2Floor => "f64x2.floor",
+            I8x16MinS => "i8x16.min_s",
+            I8x16MinU => "i8x16.min_u",
+            I8x16MaxS => "i8x16.max_s",
+            I8x16MaxU => "i8x16.max_u",
+            F64x2Trunc => "f64x2.trunc",
+            I8x16AvgrU => "i8x16.avgr_u",
+            I16x8ExtAddPairwiseI8x16S => "i16x8.extadd_pairwise_i8x16_s",
+            I16x8ExtAddPairwiseI8x16U => "i16x8.extadd_pairwise_i8x16_u",
+            I32x4ExtAddPairwiseI16x8S => "i32x4.extadd_pairwise_i16x8_s",
+            I32x4ExtAddPairwiseI16x8U => "i32x4.extadd_pairwise_i16x8_u",
+            I16x8Abs => "i16x8.abs",
+            I16x8Neg => "i16x8.neg",
+            I16x8Q15MulrSatS => "i16x8.q15mulr_sat_s",
+            I16x8AllTrue => "i16x8.all_true",
+            I16x8Bitmask => "i16x8.bitmask",
+            I16x8NarrowI32x4S => "i16x8.narrow_i32x4_s",
+            I16x8NarrowI32x4U => "i16x8.narrow_i32x4_u",
+            I16x8ExtendLowI8x16S => "i16x8.extend_low_i8x16_s",
+            I16x8ExtendHighI8x16S => "i16x8.extend_high_i8x16_s",
+            I16x8ExtendLowI8x16U => "i16x8.extend_low_i8x16_u",
+            I16x8ExtendHighI8x16U => "i16x8.extend_high_i8x16_u",
+            I16x8Shl => "i16x8.shl",
+            I16x8ShrS => "i16x8.shr_s",
+            I16x8ShrU => "i16x8.shr_u",
+            I16x8Add => "i16x8.add",
+            I16x8AddSatS => "i16x8.add_sat_s",
+            I16x8AddSatU => "i16x8.add_sat_u",
+            I16x8Sub => "i16x8.sub",
+            I16x8SubSatS => "i16x8.sub_sat_s",
+            I16x8SubSatU => "i16x8.sub_sat_u",
+            F64x2Nearest => "f64x2.nearest",
+            I16x8Mul => "i16x8.mul",
+            I16x8MinS => "i16x8.min_s",
+            I16x8MinU => "i16x8.min_u",
+            I16x8MaxS => "i16x8.max_s",
+            I16x8MaxU => "i16x8.max_u",
+            I16x8AvgrU => "i16x8.avgr_u",
+            I16x8ExtMulLowI8x16S => "i16x8.extmul_low_i8x16_s",
+            I16x8ExtMulHighI8x16S => "i16x8.extmul_high_i8x16_s",
+            I16x8ExtMulLowI8x16U => "i16x8.extmul_low_i8x16_u",
+            I16x8ExtMulHighI8x16U => "i16x8.extmul_high_i8x16_u",
+            I32x4Abs => "i32x4.abs",
+            I32x4Neg => "i32x4.neg",
+            I32x4AllTrue => "i32x4.all_true",
+            I32x4Bitmask => "i32x4.bitmask",
+            I32x4ExtendLowI16x8S => "i32x4.extend_low_i16x8_s",
+            I32x4ExtendHighI16x8S => "i32x4.extend_high_i16x8_s",
+            I32x4ExtendLowI16x8U => "i32x4.extend_low_i16x8_u",
+            I32x4ExtendHighI16x8U => "i32x4.extend_high_i16x8_u",
+            I32x4Shl => "i32x4.shl",
+            I32x4ShrS => "i32x4.shr_s",
+            I32x4ShrU => "i32x4.shr_u",
+            I32x4Add => "i32x4.add",
+            I32x4Sub => "i32x4.sub",
+            I32x4Mul => "i32x4.mul",
+            I32x4MinS => "i32x4.min_s",
+            I32x4MinU => "i32x4.min_u",
+            I32x4MaxS => "i32x4.max_s",
+            I32x4MaxU => "i32x4.max_u",
+            I32x4DotI16x8S => "i32x4.dot_i16x8_s",
+            I32x4ExtMulLowI16x8S => "i32x4.extmul_low_i16x8_s",
+            I32x4ExtMulHighI16x8S => "i32x4.extmul_high_i16x8_s",
+            I32x4ExtMulLowI16x8U => "i32x4.extmul_low_i16x8_u",
+            I32x4ExtMulHighI16x8U => "i32x4.extmul_high_i16x8_u",
+            I64x2Abs => "i64x2.abs",
+            I64x2Neg => "i64x2.neg",
+            I64x2AllTrue => "i64x2.all_true",
+            I64x2Bitmask => "i64x2.bitmask",
+            I64x2ExtendLowI32x4S => "i64x2.extend_low_i32x4_s",
+            I64x2ExtendHighI32x4S => "i64x2.extend_high_i32x4_s",
+            I64x2ExtendLowI32x4U => "i64x2.extend_low_i32x4_u",
+            I64x2ExtendHighI32x4U => "i64x2.extend_high_i32x4_u",
+            I64x2Shl => "i64x2.shl",
+            I64x2ShrS => "i64x2.shr_s",
+            I64x2ShrU => "i64x2.shr_u",
+            I64x2Add => "i64x2.add",
+            I64x2Sub => "i64x2.sub",
+            I64x2Mul => "i64x2.mul",
+            I64x2Eq => "i64x2.eq",
+            I64x2Ne => "i64x2.ne",
+            I64x2LtS => "i64x2.lt_s",
+            I64x2GtS => "i64x2.gt_s",
+            I64x2LeS => "i64x2.le_s",
+            I64x2GeS => "i64x2.ge_s",
+            I64x2ExtMulLowI32x4S => "i64x2.extmul_low_i32x4_s",
+            I64x2ExtMulHighI32x4S => "i64x2.extmul_high_i32x4_s",
+            I64x2ExtMulLowI32x4U => "i64x2.extmul_low_i32x4_u",
+            I64x2ExtMulHighI32x4U => "i64x2.extmul_high_i32x4_u",
+            F32x4Abs => "f32x4.abs",
+            F32x4Neg => "f32x4.neg",
+            F32x4Sqrt => "f32x4.sqrt",
+            F32x4Add => "f32x4.add",
+            F32x4Sub => "f32x4.sub",
+            F32x4Mul => "f32x4.mul",
+            F32x4Div => "f32x4.div",
+            F32x4Min => "f32x4.min",
+            F32x4Max => "f32x4.max",
+            F32x4PMin => "f32x4.pmin",
+            F32x4PMax => "f32x4.pmax",
+            F64x2Abs => "f64x2.abs",
+            F64x2Neg => "f64x2.neg",
+            F64x2Sqrt => "f64x2.sqrt",
+            F64x2Add => "f64x2.add",
+            F64x2Sub => "f64x2.sub",
+            F64x2Mul => "f64x2.mul",
+            F64x2Div => "f64x2.div",
+            F64x2Min => "f64x2.min",
+            F64x2Max => "f64x2.max",
+            F64x2PMin => "f64x2.pmin",
+            F64x2PMax => "f64x2.pmax",
+            I32x4TruncSatF32x4S => "i32x4.trunc_sat_f32x4_s",
+            I32x4TruncSatF32x4U => "i32x4.trunc_sat_f32x4_u",
+            F32x4ConvertI32x4S => "f32x4.convert_i32x4_s",
+            F32x4ConvertI32x4U => "f32x4.convert_i32x4_u",
+            I32x4TruncSatF64x2SZero => "i32x4.trunc_sat_f64x2_s_zero",
+            I32x4TruncSatF64x2UZero => "i32x4.trunc_sat_f64x2_u_zero",
+            F64x2ConvertLowI32x4S => "f64x2.convert_low_i32x4_s",
+            F64x2ConvertLowI32x4U => "f64x2.convert_low_i32x4_u",
+        }
+    }
+
+    /// Get the SIMD sub-opcode (LEB128-encoded after the 0xFD prefix byte)
+    pub fn subopcode(&self) -> u32 {
+        use SimdOp::*;
+        match self {
+            V128Load { .. } => 0x00,
+            V128Load8x8S { .. } => 0x01,
+            V128Load8x8U { .. } => 0x02,
+            V128Load16x4S { .. } => 0x03,
+            V128Load16x4U { .. } => 0x04,
+            V128Load32x2S { .. } => 0x05,
+            V128Load32x2U { .. } => 0x06,
+            V128Load8Splat { .. } => 0x07,
+            V128Load16Splat { .. } => 0x08,
+            V128Load32Splat { .. } => 0x09,
+            V128Load64Splat { .. } => 0x0A,
+            V128Store { .. } => 0x0B,
+            V128Const { .. } => 0x0C,
+            I8x16Shuffle { .. } => 0x0D,
+            I8x16Swizzle => 0x0E,
+            I8x16Splat => 0x0F,
+            I16x8Splat => 0x10,
+            I32x4Splat => 0x11,
+            I64x2Splat => 0x12,
+            F32x4Splat => 0x13,
+            F64x2Splat => 0x14,
+            I8x16ExtractLaneS { .. } => 0x15,
+            I8x16ExtractLaneU { .. } => 0x16,
+            I8x16ReplaceLane { .. } => 0x17,
+            I16x8ExtractLaneS { .. } => 0x18,
+            I16x8ExtractLaneU { .. } => 0x19,
+            I16x8ReplaceLane { .. } => 0x1A,
+            I32x4ExtractLane { .. } => 0x1B,
+            I32x4ReplaceLane { .. } => 0x1C,
+            I64x2ExtractLane { .. } => 0x1D,
+            I64x2ReplaceLane { .. } => 0x1E,
+            F32x4ExtractLane { .. } => 0x1F,
+            F32x4ReplaceLane { .. } => 0x20,
+            F64x2ExtractLane { .. } => 0x21,
+            F64x2ReplaceLane { .. } => 0x22,
+            I8x16Eq => 0x23,
+            I8x16Ne => 0x24,
+            I8x16LtS => 0x25,
+            I8x16LtU => 0x26,
+            I8x16GtS => 0x27,
+            I8x16GtU => 0x28,
+            I8x16LeS => 0x29,
+            I8x16LeU => 0x2A,
+            I8x16GeS => 0x2B,
+            I8x16GeU => 0x2C,
+            I16x8Eq => 0x2D,
+            I16x8Ne => 0x2E,
+            I16x8LtS => 0x2F,
+            I16x8LtU => 0x30,
+            I16x8GtS => 0x31,
+            I16x8GtU => 0x32,
+            I16x8LeS => 0x33,
+            I16x8LeU => 0x34,
+            I16x8GeS => 0x35,
+            I16x8GeU => 0x36,
+            I32x4Eq => 0x37,
+            I32x4Ne => 0x38,
+            I32x4LtS => 0x39,
+            I32x4LtU => 0x3A,
+            I32x4GtS => 0x3B,
+            I32x4GtU => 0x3C,
+            I32x4LeS => 0x3D,
+            I32x4LeU => 0x3E,
+            I32x4GeS => 0x3F,
+            I32x4GeU => 0x40,
+            F32x4Eq => 0x41,
+            F32x4Ne => 0x42,
+            F32x4Lt => 0x43,
+            F32x4Gt => 0x44,
+            F32x4Le => 0x45,
+            F32x4Ge => 0x46,
+            F64x2Eq => 0x47,
+            F64x2Ne => 0x48,
+            F64x2Lt => 0x49,
+            F64x2Gt => 0x4A,
+            F64x2Le => 0x4B,
+            F64x2Ge => 0x4C,
+            V128Not => 0x4D,
+            V128And => 0x4E,
+            V128AndNot => 0x4F,
+            V128Or => 0x50,
+            V128Xor => 0x51,
+            V128Bitselect => 0x52,
+            V128AnyTrue => 0x53,
+            V128Load8Lane { .. } => 0x54,
+            V128Load16Lane { .. } => 0x55,
+            V128Load32Lane { .. } => 0x56,
+            V128Load64Lane { .. } => 0x57,
+            V128Store8Lane { .. } => 0x58,
+            V128Store16Lane { .. } => 0x59,
+            V128Store32Lane { .. } => 0x5A,
+            V128Store64Lane { .. } => 0x5B,
+            V128Load32Zero { .. } => 0x5C,
+            V128Load64Zero { .. } => 0x5D,
+            F32x4DemoteF64x2Zero => 0x5E,
+            F64x2PromoteLowF32x4 => 0x5F,
+            I8x16Abs => 0x60,
+            I8x16Neg => 0x61,
+            I8x16Popcnt => 0x62,
+            I8x16AllTrue => 0x63,
+            I8x16Bitmask => 0x64,
+            I8x16NarrowI16x8S => 0x65,
+            I8x16NarrowI16x8U => 0x66,
+            F32x4Ceil => 0x67,
+            F32x4Floor => 0x68,
+            F32x4Trunc => 0x69,
+            F32x4Nearest => 0x6A,
+            I8x16Shl => 0x6B,
+            I8x16ShrS => 0x6C,
+            I8x16ShrU => 0x6D,
+            I8x16Add => 0x6E,
+            I8x16AddSatS => 0x6F,
+            I8x16AddSatU => 0x70,
+            I8x16Sub => 0x71,
+            I8x16SubSatS => 0x72,
+            I8x16SubSatU => 0x73,
+            F64x2Ceil => 0x74,
+            F64x2Floor => 0x75,
+            I8x16MinS => 0x76,
+            I8x16MinU => 0x77,
+            I8x16MaxS => 0x78,
+            I8x16MaxU => 0x79,
+            F64x2Trunc => 0x7A,
+            I8x16AvgrU => 0x7B,
+            I16x8ExtAddPairwiseI8x16S => 0x7C,
+            I16x8ExtAddPairwiseI8x16U => 0x7D,
+            I32x4ExtAddPairwiseI16x8S => 0x7E,
+            I32x4ExtAddPairwiseI16x8U => 0x7F,
+            I16x8Abs => 0x80,
+            I16x8Neg => 0x81,
+            I16x8Q15MulrSatS => 0x82,
+            I16x8AllTrue => 0x83,
+            I16x8Bitmask => 0x84,
+            I16x8NarrowI32x4S => 0x85,
+            I16x8NarrowI32x4U => 0x86,
+            I16x8ExtendLowI8x16S => 0x87,
+            I16x8ExtendHighI8x16S => 0x88,
+            I16x8ExtendLowI8x16U => 0x89,
+            I16x8ExtendHighI8x16U => 0x8A,
+            I16x8Shl => 0x8B,
+            I16x8ShrS => 0x8C,
+            I16x8ShrU => 0x8D,
+            I16x8Add => 0x8E,
+            I16x8AddSatS => 0x8F,
+            I16x8AddSatU => 0x90,
+            I16x8Sub => 0x91,
+            I16x8SubSatS => 0x92,
+            I16x8SubSatU => 0x93,
+            F64x2Nearest => 0x94,
+            I16x8Mul => 0x95,
+            I16x8MinS => 0x96,
+            I16x8MinU => 0x97,
+            I16x8MaxS => 0x98,
+            I16x8MaxU => 0x99,
+            I16x8AvgrU => 0x9B,
+            I16x8ExtMulLowI8x16S => 0x9C,
+            I16x8ExtMulHighI8x16S => 0x9D,
+            I16x8ExtMulLowI8x16U => 0x9E,
+            I16x8ExtMulHighI8x16U => 0x9F,
+            I32x4Abs => 0xA0,
+            I32x4Neg => 0xA1,
+            I32x4AllTrue => 0xA3,
+            I32x4Bitmask => 0xA4,
+            I32x4ExtendLowI16x8S => 0xA7,
+            I32x4ExtendHighI16x8S => 0xA8,
+            I32x4ExtendLowI16x8U => 0xA9,
+            I32x4ExtendHighI16x8U => 0xAA,
+            I32x4Shl => 0xAB,
+            I32x4ShrS => 0xAC,
+            I32x4ShrU => 0xAD,
+            I32x4Add => 0xAE,
+            I32x4Sub => 0xB1,
+            I32x4Mul => 0xB5,
+            I32x4MinS => 0xB6,
+            I32x4MinU => 0xB7,
+            I32x4MaxS => 0xB8,
+            I32x4MaxU => 0xB9,
+            I32x4DotI16x8S => 0xBA,
+            I32x4ExtMulLowI16x8S => 0xBC,
+            I32x4ExtMulHighI16x8S => 0xBD,
+            I32x4ExtMulLowI16x8U => 0xBE,
+            I32x4ExtMulHighI16x8U => 0xBF,
+            I64x2Abs => 0xC0,
+            I64x2Neg => 0xC1,
+            I64x2AllTrue => 0xC3,
+            I64x2Bitmask => 0xC4,
+            I64x2ExtendLowI32x4S => 0xC7,
+            I64x2ExtendHighI32x4S => 0xC8,
+            I64x2ExtendLowI32x4U => 0xC9,
+            I64x2ExtendHighI32x4U => 0xCA,
+            I64x2Shl => 0xCB,
+            I64x2ShrS => 0xCC,
+            I64x2ShrU => 0xCD,
+            I64x2Add => 0xCE,
+            I64x2Sub => 0xD1,
+            I64x2Mul => 0xD5,
+            I64x2Eq => 0xD6,
+            I64x2Ne => 0xD7,
+            I64x2LtS => 0xD8,
+            I64x2GtS => 0xD9,
+            I64x2LeS => 0xDA,
+            I64x2GeS => 0xDB,
+            I64x2ExtMulLowI32x4S => 0xDC,
+            I64x2ExtMulHighI32x4S => 0xDD,
+            I64x2ExtMulLowI32x4U => 0xDE,
+            I64x2ExtMulHighI32x4U => 0xDF,
+            F32x4Abs => 0xE0,
+            F32x4Neg => 0xE1,
+            F32x4Sqrt => 0xE3,
+            F32x4Add => 0xE4,
+            F32x4Sub => 0xE5,
+            F32x4Mul => 0xE6,
+            F32x4Div => 0xE7,
+            F32x4Min => 0xE8,
+            F32x4Max => 0xE9,
+            F32x4PMin => 0xEA,
+            F32x4PMax => 0xEB,
+            F64x2Abs => 0xEC,
+            F64x2Neg => 0xED,
+            F64x2Sqrt => 0xEF,
+            F64x2Add => 0xF0,
+            F64x2Sub => 0xF1,
+            F64x2Mul => 0xF2,
+            F64x2Div => 0xF3,
+            F64x2Min => 0xF4,
+            F64x2Max => 0xF5,
+            F64x2PMin => 0xF6,
+            F64x2PMax => 0xF7,
+            I32x4TruncSatF32x4S => 0xF8,
+            I32x4TruncSatF32x4U => 0xF9,
+            F32x4ConvertI32x4S => 0xFA,
+            F32x4ConvertI32x4U => 0xFB,
+            I32x4TruncSatF64x2SZero => 0xFC,
+            I32x4TruncSatF64x2UZero => 0xFD,
+            F64x2ConvertLowI32x4S => 0xFE,
+            F64x2ConvertLowI32x4U => 0xFF,
+        }
+    }
+
+    /// Encode instruction-specific operands (after the prefix + subopcode)
+    pub fn encode_operands(&self, bytes: &mut Vec<u8>) {
+        use crate::parser::encoding;
+        use SimdOp::*;
+        match self {
+            // Memory operations with memarg
+            V128Load { memarg }
+            | V128Load8x8S { memarg }
+            | V128Load8x8U { memarg }
+            | V128Load16x4S { memarg }
+            | V128Load16x4U { memarg }
+            | V128Load32x2S { memarg }
+            | V128Load32x2U { memarg }
+            | V128Load8Splat { memarg }
+            | V128Load16Splat { memarg }
+            | V128Load32Splat { memarg }
+            | V128Load64Splat { memarg }
+            | V128Store { memarg }
+            | V128Load32Zero { memarg }
+            | V128Load64Zero { memarg } => {
+                encoding::write_vu32(bytes, memarg.align);
+                encoding::write_vu32(bytes, memarg.offset);
+            }
+            // Load/store lane: memarg + lane
+            V128Load8Lane { memarg, lane }
+            | V128Load16Lane { memarg, lane }
+            | V128Load32Lane { memarg, lane }
+            | V128Load64Lane { memarg, lane }
+            | V128Store8Lane { memarg, lane }
+            | V128Store16Lane { memarg, lane }
+            | V128Store32Lane { memarg, lane }
+            | V128Store64Lane { memarg, lane } => {
+                encoding::write_vu32(bytes, memarg.align);
+                encoding::write_vu32(bytes, memarg.offset);
+                bytes.push(*lane);
+            }
+            // V128 const: 16 raw bytes
+            V128Const { value } => {
+                bytes.extend(value);
+            }
+            // Shuffle: 16 lane indices
+            I8x16Shuffle { lanes } => {
+                bytes.extend(lanes);
+            }
+            // Lane extraction/replacement: single lane byte
+            I8x16ExtractLaneS { lane }
+            | I8x16ExtractLaneU { lane }
+            | I8x16ReplaceLane { lane }
+            | I16x8ExtractLaneS { lane }
+            | I16x8ExtractLaneU { lane }
+            | I16x8ReplaceLane { lane }
+            | I32x4ExtractLane { lane }
+            | I32x4ReplaceLane { lane }
+            | I64x2ExtractLane { lane }
+            | I64x2ReplaceLane { lane }
+            | F32x4ExtractLane { lane }
+            | F32x4ReplaceLane { lane }
+            | F64x2ExtractLane { lane }
+            | F64x2ReplaceLane { lane } => {
+                bytes.push(*lane);
+            }
+            // All other SIMD ops have no additional operands
+            _ => {}
+        }
+    }
+}
+
+impl fmt::Display for SimdOp {
+    /// Formats only the operands (mnemonic is written by InstructionKind::fmt)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use SimdOp::*;
+        match self {
+            V128Const { value } => {
+                // Display as 4 i32 lanes (little-endian), matching wabt format
+                for i in 0..4 {
+                    let lane = u32::from_le_bytes([value[i * 4], value[i * 4 + 1], value[i * 4 + 2], value[i * 4 + 3]]);
+                    write!(f, " 0x{lane:08x}")?;
+                }
+                Ok(())
+            }
+            I8x16Shuffle { lanes } => {
+                // Display as 4 i32 lanes in hex, matching wabt format
+                for i in 0..4 {
+                    let lane = u32::from_le_bytes([lanes[i * 4], lanes[i * 4 + 1], lanes[i * 4 + 2], lanes[i * 4 + 3]]);
+                    write!(f, " 0x{lane:08x}")?;
+                }
+                Ok(())
+            }
+            // Lane operations
+            I8x16ExtractLaneS { lane }
+            | I8x16ExtractLaneU { lane }
+            | I8x16ReplaceLane { lane }
+            | I16x8ExtractLaneS { lane }
+            | I16x8ExtractLaneU { lane }
+            | I16x8ReplaceLane { lane }
+            | I32x4ExtractLane { lane }
+            | I32x4ReplaceLane { lane }
+            | I64x2ExtractLane { lane }
+            | I64x2ReplaceLane { lane }
+            | F32x4ExtractLane { lane }
+            | F32x4ReplaceLane { lane }
+            | F64x2ExtractLane { lane }
+            | F64x2ReplaceLane { lane } => write!(f, " {lane}"),
+            // Memory operations with memarg
+            V128Load { memarg }
+            | V128Load8x8S { memarg }
+            | V128Load8x8U { memarg }
+            | V128Load16x4S { memarg }
+            | V128Load16x4U { memarg }
+            | V128Load32x2S { memarg }
+            | V128Load32x2U { memarg }
+            | V128Load8Splat { memarg }
+            | V128Load16Splat { memarg }
+            | V128Load32Splat { memarg }
+            | V128Load64Splat { memarg }
+            | V128Store { memarg }
+            | V128Load32Zero { memarg }
+            | V128Load64Zero { memarg } => write!(f, " {} {}", memarg.align, memarg.offset),
+            // Load/store lane: memarg + lane
+            V128Load8Lane { memarg, lane }
+            | V128Load16Lane { memarg, lane }
+            | V128Load32Lane { memarg, lane }
+            | V128Load64Lane { memarg, lane }
+            | V128Store8Lane { memarg, lane }
+            | V128Store16Lane { memarg, lane }
+            | V128Store32Lane { memarg, lane }
+            | V128Store64Lane { memarg, lane } => {
+                write!(f, " {} {} {lane}", memarg.align, memarg.offset)
+            }
+            // All other SIMD ops have no operands
+            _ => Ok(()),
         }
     }
 }
@@ -653,12 +1566,7 @@ impl fmt::Display for InstructionKind {
             }
             F32Const { value } => write!(f, " {}", value.to_hex()),
             F64Const { value } => write!(f, " {}", value.to_hex()),
-            V128Const { value } => {
-                for byte in value {
-                    write!(f, " {byte:#02x}")?;
-                }
-                Ok(())
-            }
+            Simd(op) => op.fmt(f),
             // Memory instructions with memarg
             I32Load { memarg }
             | I64Load { memarg }
@@ -682,9 +1590,7 @@ impl fmt::Display for InstructionKind {
             | I32Store16 { memarg }
             | I64Store8 { memarg }
             | I64Store16 { memarg }
-            | I64Store32 { memarg }
-            | V128Load { memarg }
-            | V128Store { memarg } => {
+            | I64Store32 { memarg } => {
                 // Always display align and offset values (align as log2)
                 write!(f, " {} {}", memarg.align, memarg.offset)
             }

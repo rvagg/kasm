@@ -1,7 +1,7 @@
 //! Instruction decoding from binary format
 
 use super::super::limits;
-use super::{BlockType, ByteRange, Instruction, InstructionKind, MemArg};
+use super::{BlockType, ByteRange, Instruction, InstructionKind, MemArg, SimdOp};
 use crate::parser::encoding;
 use crate::parser::module::ValueType;
 use crate::parser::reader::Reader;
@@ -529,26 +529,396 @@ fn decode_0xfc(subopcode: u32, reader: &mut Reader) -> Result<InstructionKind, D
 
 /// Decode 0xFD prefix instructions (SIMD)
 fn decode_0xfd(subopcode: u32, reader: &mut Reader) -> Result<InstructionKind, DecodeError> {
-    use InstructionKind::*;
+    let op = match subopcode {
+        // Memory operations with MemArg
+        0x00 => SimdOp::V128Load {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x01 => SimdOp::V128Load8x8S {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x02 => SimdOp::V128Load8x8U {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x03 => SimdOp::V128Load16x4S {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x04 => SimdOp::V128Load16x4U {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x05 => SimdOp::V128Load32x2S {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x06 => SimdOp::V128Load32x2U {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x07 => SimdOp::V128Load8Splat {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x08 => SimdOp::V128Load16Splat {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x09 => SimdOp::V128Load32Splat {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x0A => SimdOp::V128Load64Splat {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x0B => SimdOp::V128Store {
+            memarg: MemArg::decode(reader)?,
+        },
 
-    match subopcode {
-        0x00 => Ok(V128Load {
-            memarg: MemArg::decode(reader)?,
-        }),
-        0x0B => Ok(V128Store {
-            memarg: MemArg::decode(reader)?,
-        }),
+        // V128Const: 16 raw bytes
         0x0C => {
-            // V128Const
             let mut value = [0u8; 16];
             for byte in &mut value {
                 *byte = reader.read_byte()?;
             }
-            Ok(V128Const { value })
+            SimdOp::V128Const { value }
         }
-        // Additional SIMD instructions would go here
-        _ => Err(DecodeError::UnknownInstruction(0xFD, subopcode)),
-    }
+
+        // I8x16Shuffle: 16 lane bytes
+        0x0D => {
+            let mut lanes = [0u8; 16];
+            for lane in &mut lanes {
+                *lane = reader.read_byte()?;
+            }
+            SimdOp::I8x16Shuffle { lanes }
+        }
+
+        // Splat and swizzle (no operands)
+        0x0E => SimdOp::I8x16Swizzle,
+        0x0F => SimdOp::I8x16Splat,
+        0x10 => SimdOp::I16x8Splat,
+        0x11 => SimdOp::I32x4Splat,
+        0x12 => SimdOp::I64x2Splat,
+        0x13 => SimdOp::F32x4Splat,
+        0x14 => SimdOp::F64x2Splat,
+
+        // Lane extract/replace (1 lane byte)
+        0x15 => SimdOp::I8x16ExtractLaneS {
+            lane: reader.read_byte()?,
+        },
+        0x16 => SimdOp::I8x16ExtractLaneU {
+            lane: reader.read_byte()?,
+        },
+        0x17 => SimdOp::I8x16ReplaceLane {
+            lane: reader.read_byte()?,
+        },
+        0x18 => SimdOp::I16x8ExtractLaneS {
+            lane: reader.read_byte()?,
+        },
+        0x19 => SimdOp::I16x8ExtractLaneU {
+            lane: reader.read_byte()?,
+        },
+        0x1A => SimdOp::I16x8ReplaceLane {
+            lane: reader.read_byte()?,
+        },
+        0x1B => SimdOp::I32x4ExtractLane {
+            lane: reader.read_byte()?,
+        },
+        0x1C => SimdOp::I32x4ReplaceLane {
+            lane: reader.read_byte()?,
+        },
+        0x1D => SimdOp::I64x2ExtractLane {
+            lane: reader.read_byte()?,
+        },
+        0x1E => SimdOp::I64x2ReplaceLane {
+            lane: reader.read_byte()?,
+        },
+        0x1F => SimdOp::F32x4ExtractLane {
+            lane: reader.read_byte()?,
+        },
+        0x20 => SimdOp::F32x4ReplaceLane {
+            lane: reader.read_byte()?,
+        },
+        0x21 => SimdOp::F64x2ExtractLane {
+            lane: reader.read_byte()?,
+        },
+        0x22 => SimdOp::F64x2ReplaceLane {
+            lane: reader.read_byte()?,
+        },
+
+        // i8x16 comparisons
+        0x23 => SimdOp::I8x16Eq,
+        0x24 => SimdOp::I8x16Ne,
+        0x25 => SimdOp::I8x16LtS,
+        0x26 => SimdOp::I8x16LtU,
+        0x27 => SimdOp::I8x16GtS,
+        0x28 => SimdOp::I8x16GtU,
+        0x29 => SimdOp::I8x16LeS,
+        0x2A => SimdOp::I8x16LeU,
+        0x2B => SimdOp::I8x16GeS,
+        0x2C => SimdOp::I8x16GeU,
+
+        // i16x8 comparisons
+        0x2D => SimdOp::I16x8Eq,
+        0x2E => SimdOp::I16x8Ne,
+        0x2F => SimdOp::I16x8LtS,
+        0x30 => SimdOp::I16x8LtU,
+        0x31 => SimdOp::I16x8GtS,
+        0x32 => SimdOp::I16x8GtU,
+        0x33 => SimdOp::I16x8LeS,
+        0x34 => SimdOp::I16x8LeU,
+        0x35 => SimdOp::I16x8GeS,
+        0x36 => SimdOp::I16x8GeU,
+
+        // i32x4 comparisons
+        0x37 => SimdOp::I32x4Eq,
+        0x38 => SimdOp::I32x4Ne,
+        0x39 => SimdOp::I32x4LtS,
+        0x3A => SimdOp::I32x4LtU,
+        0x3B => SimdOp::I32x4GtS,
+        0x3C => SimdOp::I32x4GtU,
+        0x3D => SimdOp::I32x4LeS,
+        0x3E => SimdOp::I32x4LeU,
+        0x3F => SimdOp::I32x4GeS,
+        0x40 => SimdOp::I32x4GeU,
+
+        // f32x4 comparisons
+        0x41 => SimdOp::F32x4Eq,
+        0x42 => SimdOp::F32x4Ne,
+        0x43 => SimdOp::F32x4Lt,
+        0x44 => SimdOp::F32x4Gt,
+        0x45 => SimdOp::F32x4Le,
+        0x46 => SimdOp::F32x4Ge,
+
+        // f64x2 comparisons
+        0x47 => SimdOp::F64x2Eq,
+        0x48 => SimdOp::F64x2Ne,
+        0x49 => SimdOp::F64x2Lt,
+        0x4A => SimdOp::F64x2Gt,
+        0x4B => SimdOp::F64x2Le,
+        0x4C => SimdOp::F64x2Ge,
+
+        // v128 bitwise
+        0x4D => SimdOp::V128Not,
+        0x4E => SimdOp::V128And,
+        0x4F => SimdOp::V128AndNot,
+        0x50 => SimdOp::V128Or,
+        0x51 => SimdOp::V128Xor,
+        0x52 => SimdOp::V128Bitselect,
+        0x53 => SimdOp::V128AnyTrue,
+
+        // Load/store lane (MemArg + 1 lane byte)
+        0x54 => SimdOp::V128Load8Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+        0x55 => SimdOp::V128Load16Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+        0x56 => SimdOp::V128Load32Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+        0x57 => SimdOp::V128Load64Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+        0x58 => SimdOp::V128Store8Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+        0x59 => SimdOp::V128Store16Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+        0x5A => SimdOp::V128Store32Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+        0x5B => SimdOp::V128Store64Lane {
+            memarg: MemArg::decode(reader)?,
+            lane: reader.read_byte()?,
+        },
+
+        // Load zero
+        0x5C => SimdOp::V128Load32Zero {
+            memarg: MemArg::decode(reader)?,
+        },
+        0x5D => SimdOp::V128Load64Zero {
+            memarg: MemArg::decode(reader)?,
+        },
+
+        // Conversions
+        0x5E => SimdOp::F32x4DemoteF64x2Zero,
+        0x5F => SimdOp::F64x2PromoteLowF32x4,
+
+        // i8x16 operations (0x60-0x7B)
+        // f32x4 and f64x2 rounding ops are interleaved here per the spec —
+        // they were added later and assigned to gaps in this opcode range.
+        0x60 => SimdOp::I8x16Abs,
+        0x61 => SimdOp::I8x16Neg,
+        0x62 => SimdOp::I8x16Popcnt,
+        0x63 => SimdOp::I8x16AllTrue,
+        0x64 => SimdOp::I8x16Bitmask,
+        0x65 => SimdOp::I8x16NarrowI16x8S,
+        0x66 => SimdOp::I8x16NarrowI16x8U,
+        0x67 => SimdOp::F32x4Ceil,
+        0x68 => SimdOp::F32x4Floor,
+        0x69 => SimdOp::F32x4Trunc,
+        0x6A => SimdOp::F32x4Nearest,
+        0x6B => SimdOp::I8x16Shl,
+        0x6C => SimdOp::I8x16ShrS,
+        0x6D => SimdOp::I8x16ShrU,
+        0x6E => SimdOp::I8x16Add,
+        0x6F => SimdOp::I8x16AddSatS,
+        0x70 => SimdOp::I8x16AddSatU,
+        0x71 => SimdOp::I8x16Sub,
+        0x72 => SimdOp::I8x16SubSatS,
+        0x73 => SimdOp::I8x16SubSatU,
+        0x74 => SimdOp::F64x2Ceil,
+        0x75 => SimdOp::F64x2Floor,
+        0x76 => SimdOp::I8x16MinS,
+        0x77 => SimdOp::I8x16MinU,
+        0x78 => SimdOp::I8x16MaxS,
+        0x79 => SimdOp::I8x16MaxU,
+        0x7A => SimdOp::F64x2Trunc,
+        0x7B => SimdOp::I8x16AvgrU,
+
+        // Pairwise extension
+        0x7C => SimdOp::I16x8ExtAddPairwiseI8x16S,
+        0x7D => SimdOp::I16x8ExtAddPairwiseI8x16U,
+        0x7E => SimdOp::I32x4ExtAddPairwiseI16x8S,
+        0x7F => SimdOp::I32x4ExtAddPairwiseI16x8U,
+
+        // i16x8 operations (0x80-0x9B, with f64x2.nearest at 0x94)
+        0x80 => SimdOp::I16x8Abs,
+        0x81 => SimdOp::I16x8Neg,
+        0x82 => SimdOp::I16x8Q15MulrSatS,
+        0x83 => SimdOp::I16x8AllTrue,
+        0x84 => SimdOp::I16x8Bitmask,
+        0x85 => SimdOp::I16x8NarrowI32x4S,
+        0x86 => SimdOp::I16x8NarrowI32x4U,
+        0x87 => SimdOp::I16x8ExtendLowI8x16S,
+        0x88 => SimdOp::I16x8ExtendHighI8x16S,
+        0x89 => SimdOp::I16x8ExtendLowI8x16U,
+        0x8A => SimdOp::I16x8ExtendHighI8x16U,
+        0x8B => SimdOp::I16x8Shl,
+        0x8C => SimdOp::I16x8ShrS,
+        0x8D => SimdOp::I16x8ShrU,
+        0x8E => SimdOp::I16x8Add,
+        0x8F => SimdOp::I16x8AddSatS,
+        0x90 => SimdOp::I16x8AddSatU,
+        0x91 => SimdOp::I16x8Sub,
+        0x92 => SimdOp::I16x8SubSatS,
+        0x93 => SimdOp::I16x8SubSatU,
+        0x94 => SimdOp::F64x2Nearest,
+        0x95 => SimdOp::I16x8Mul,
+        0x96 => SimdOp::I16x8MinS,
+        0x97 => SimdOp::I16x8MinU,
+        0x98 => SimdOp::I16x8MaxS,
+        0x99 => SimdOp::I16x8MaxU,
+        // 0x9A reserved
+        0x9B => SimdOp::I16x8AvgrU,
+        0x9C => SimdOp::I16x8ExtMulLowI8x16S,
+        0x9D => SimdOp::I16x8ExtMulHighI8x16S,
+        0x9E => SimdOp::I16x8ExtMulLowI8x16U,
+        0x9F => SimdOp::I16x8ExtMulHighI8x16U,
+
+        // i32x4 operations
+        0xA0 => SimdOp::I32x4Abs,
+        0xA1 => SimdOp::I32x4Neg,
+        // 0xA2 reserved
+        0xA3 => SimdOp::I32x4AllTrue,
+        0xA4 => SimdOp::I32x4Bitmask,
+        // 0xA5-0xA6 reserved
+        0xA7 => SimdOp::I32x4ExtendLowI16x8S,
+        0xA8 => SimdOp::I32x4ExtendHighI16x8S,
+        0xA9 => SimdOp::I32x4ExtendLowI16x8U,
+        0xAA => SimdOp::I32x4ExtendHighI16x8U,
+        0xAB => SimdOp::I32x4Shl,
+        0xAC => SimdOp::I32x4ShrS,
+        0xAD => SimdOp::I32x4ShrU,
+        0xAE => SimdOp::I32x4Add,
+        // 0xAF-0xB0 reserved
+        0xB1 => SimdOp::I32x4Sub,
+        // 0xB2-0xB4 reserved
+        0xB5 => SimdOp::I32x4Mul,
+        0xB6 => SimdOp::I32x4MinS,
+        0xB7 => SimdOp::I32x4MinU,
+        0xB8 => SimdOp::I32x4MaxS,
+        0xB9 => SimdOp::I32x4MaxU,
+        0xBA => SimdOp::I32x4DotI16x8S,
+        // 0xBB reserved
+        0xBC => SimdOp::I32x4ExtMulLowI16x8S,
+        0xBD => SimdOp::I32x4ExtMulHighI16x8S,
+        0xBE => SimdOp::I32x4ExtMulLowI16x8U,
+        0xBF => SimdOp::I32x4ExtMulHighI16x8U,
+
+        // i64x2 operations
+        0xC0 => SimdOp::I64x2Abs,
+        0xC1 => SimdOp::I64x2Neg,
+        // 0xC2 reserved
+        0xC3 => SimdOp::I64x2AllTrue,
+        0xC4 => SimdOp::I64x2Bitmask,
+        // 0xC5-0xC6 reserved
+        0xC7 => SimdOp::I64x2ExtendLowI32x4S,
+        0xC8 => SimdOp::I64x2ExtendHighI32x4S,
+        0xC9 => SimdOp::I64x2ExtendLowI32x4U,
+        0xCA => SimdOp::I64x2ExtendHighI32x4U,
+        0xCB => SimdOp::I64x2Shl,
+        0xCC => SimdOp::I64x2ShrS,
+        0xCD => SimdOp::I64x2ShrU,
+        0xCE => SimdOp::I64x2Add,
+        // 0xCF-0xD0 reserved
+        0xD1 => SimdOp::I64x2Sub,
+        // 0xD2-0xD4 reserved
+        0xD5 => SimdOp::I64x2Mul,
+        0xD6 => SimdOp::I64x2Eq,
+        0xD7 => SimdOp::I64x2Ne,
+        0xD8 => SimdOp::I64x2LtS,
+        0xD9 => SimdOp::I64x2GtS,
+        0xDA => SimdOp::I64x2LeS,
+        0xDB => SimdOp::I64x2GeS,
+        0xDC => SimdOp::I64x2ExtMulLowI32x4S,
+        0xDD => SimdOp::I64x2ExtMulHighI32x4S,
+        0xDE => SimdOp::I64x2ExtMulLowI32x4U,
+        0xDF => SimdOp::I64x2ExtMulHighI32x4U,
+
+        // f32x4 operations
+        0xE0 => SimdOp::F32x4Abs,
+        0xE1 => SimdOp::F32x4Neg,
+        // 0xE2 reserved
+        0xE3 => SimdOp::F32x4Sqrt,
+        0xE4 => SimdOp::F32x4Add,
+        0xE5 => SimdOp::F32x4Sub,
+        0xE6 => SimdOp::F32x4Mul,
+        0xE7 => SimdOp::F32x4Div,
+        0xE8 => SimdOp::F32x4Min,
+        0xE9 => SimdOp::F32x4Max,
+        0xEA => SimdOp::F32x4PMin,
+        0xEB => SimdOp::F32x4PMax,
+
+        // f64x2 operations
+        0xEC => SimdOp::F64x2Abs,
+        0xED => SimdOp::F64x2Neg,
+        // 0xEE reserved
+        0xEF => SimdOp::F64x2Sqrt,
+        0xF0 => SimdOp::F64x2Add,
+        0xF1 => SimdOp::F64x2Sub,
+        0xF2 => SimdOp::F64x2Mul,
+        0xF3 => SimdOp::F64x2Div,
+        0xF4 => SimdOp::F64x2Min,
+        0xF5 => SimdOp::F64x2Max,
+        0xF6 => SimdOp::F64x2PMin,
+        0xF7 => SimdOp::F64x2PMax,
+
+        // Truncation/conversion
+        0xF8 => SimdOp::I32x4TruncSatF32x4S,
+        0xF9 => SimdOp::I32x4TruncSatF32x4U,
+        0xFA => SimdOp::F32x4ConvertI32x4S,
+        0xFB => SimdOp::F32x4ConvertI32x4U,
+        0xFC => SimdOp::I32x4TruncSatF64x2SZero,
+        0xFD => SimdOp::I32x4TruncSatF64x2UZero,
+        0xFE => SimdOp::F64x2ConvertLowI32x4S,
+        0xFF => SimdOp::F64x2ConvertLowI32x4U,
+
+        _ => return Err(DecodeError::UnknownInstruction(0xFD, subopcode)),
+    };
+    Ok(InstructionKind::Simd(op))
 }
 
 /// Iterator for decoding instructions from a byte stream
@@ -727,5 +1097,464 @@ impl<'a> Iterator for InstructionIterator<'a> {
         };
 
         Some(Ok(instruction))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Returns every SimdOp variant with dummy operands.
+    fn all_simd_variants() -> Vec<SimdOp> {
+        // Compile-time exhaustiveness guard: adding a variant to SimdOp without
+        // updating this match causes a compile error. No wildcard arm — every
+        // variant must be listed explicitly.
+        #[allow(unused)]
+        fn _assert_exhaustive(op: &SimdOp) {
+            match op {
+                // Memory operations (memarg / memarg+lane)
+                SimdOp::V128Load { .. } | SimdOp::V128Load8x8S { .. }
+                | SimdOp::V128Load8x8U { .. } | SimdOp::V128Load16x4S { .. }
+                | SimdOp::V128Load16x4U { .. } | SimdOp::V128Load32x2S { .. }
+                | SimdOp::V128Load32x2U { .. } | SimdOp::V128Load8Splat { .. }
+                | SimdOp::V128Load16Splat { .. } | SimdOp::V128Load32Splat { .. }
+                | SimdOp::V128Load64Splat { .. } | SimdOp::V128Store { .. }
+                | SimdOp::V128Load32Zero { .. } | SimdOp::V128Load64Zero { .. }
+                | SimdOp::V128Load8Lane { .. } | SimdOp::V128Load16Lane { .. }
+                | SimdOp::V128Load32Lane { .. } | SimdOp::V128Load64Lane { .. }
+                | SimdOp::V128Store8Lane { .. } | SimdOp::V128Store16Lane { .. }
+                | SimdOp::V128Store32Lane { .. } | SimdOp::V128Store64Lane { .. }
+                // Const, shuffle, lane ops
+                | SimdOp::V128Const { .. } | SimdOp::I8x16Shuffle { .. }
+                | SimdOp::I8x16ExtractLaneS { .. } | SimdOp::I8x16ExtractLaneU { .. }
+                | SimdOp::I8x16ReplaceLane { .. } | SimdOp::I16x8ExtractLaneS { .. }
+                | SimdOp::I16x8ExtractLaneU { .. } | SimdOp::I16x8ReplaceLane { .. }
+                | SimdOp::I32x4ExtractLane { .. } | SimdOp::I32x4ReplaceLane { .. }
+                | SimdOp::I64x2ExtractLane { .. } | SimdOp::I64x2ReplaceLane { .. }
+                | SimdOp::F32x4ExtractLane { .. } | SimdOp::F32x4ReplaceLane { .. }
+                | SimdOp::F64x2ExtractLane { .. } | SimdOp::F64x2ReplaceLane { .. }
+                // All unit variants
+                | SimdOp::I8x16Swizzle | SimdOp::I8x16Splat | SimdOp::I16x8Splat
+                | SimdOp::I32x4Splat | SimdOp::I64x2Splat | SimdOp::F32x4Splat
+                | SimdOp::F64x2Splat
+                | SimdOp::I8x16Eq | SimdOp::I8x16Ne | SimdOp::I8x16LtS | SimdOp::I8x16LtU
+                | SimdOp::I8x16GtS | SimdOp::I8x16GtU | SimdOp::I8x16LeS | SimdOp::I8x16LeU
+                | SimdOp::I8x16GeS | SimdOp::I8x16GeU
+                | SimdOp::I16x8Eq | SimdOp::I16x8Ne | SimdOp::I16x8LtS | SimdOp::I16x8LtU
+                | SimdOp::I16x8GtS | SimdOp::I16x8GtU | SimdOp::I16x8LeS | SimdOp::I16x8LeU
+                | SimdOp::I16x8GeS | SimdOp::I16x8GeU
+                | SimdOp::I32x4Eq | SimdOp::I32x4Ne | SimdOp::I32x4LtS | SimdOp::I32x4LtU
+                | SimdOp::I32x4GtS | SimdOp::I32x4GtU | SimdOp::I32x4LeS | SimdOp::I32x4LeU
+                | SimdOp::I32x4GeS | SimdOp::I32x4GeU
+                | SimdOp::I64x2Eq | SimdOp::I64x2Ne | SimdOp::I64x2LtS | SimdOp::I64x2GtS
+                | SimdOp::I64x2LeS | SimdOp::I64x2GeS
+                | SimdOp::F32x4Eq | SimdOp::F32x4Ne | SimdOp::F32x4Lt | SimdOp::F32x4Gt
+                | SimdOp::F32x4Le | SimdOp::F32x4Ge
+                | SimdOp::F64x2Eq | SimdOp::F64x2Ne | SimdOp::F64x2Lt | SimdOp::F64x2Gt
+                | SimdOp::F64x2Le | SimdOp::F64x2Ge
+                | SimdOp::V128Not | SimdOp::V128And | SimdOp::V128AndNot | SimdOp::V128Or
+                | SimdOp::V128Xor | SimdOp::V128Bitselect | SimdOp::V128AnyTrue
+                | SimdOp::I8x16Abs | SimdOp::I8x16Neg | SimdOp::I8x16Popcnt
+                | SimdOp::I8x16AllTrue | SimdOp::I8x16Bitmask
+                | SimdOp::I8x16NarrowI16x8S | SimdOp::I8x16NarrowI16x8U
+                | SimdOp::F32x4Ceil | SimdOp::F32x4Floor | SimdOp::F32x4Trunc
+                | SimdOp::F32x4Nearest
+                | SimdOp::I8x16Shl | SimdOp::I8x16ShrS | SimdOp::I8x16ShrU
+                | SimdOp::I8x16Add | SimdOp::I8x16AddSatS | SimdOp::I8x16AddSatU
+                | SimdOp::I8x16Sub | SimdOp::I8x16SubSatS | SimdOp::I8x16SubSatU
+                | SimdOp::F64x2Ceil | SimdOp::F64x2Floor
+                | SimdOp::I8x16MinS | SimdOp::I8x16MinU | SimdOp::I8x16MaxS
+                | SimdOp::I8x16MaxU | SimdOp::F64x2Trunc | SimdOp::I8x16AvgrU
+                | SimdOp::I16x8ExtAddPairwiseI8x16S | SimdOp::I16x8ExtAddPairwiseI8x16U
+                | SimdOp::I32x4ExtAddPairwiseI16x8S | SimdOp::I32x4ExtAddPairwiseI16x8U
+                | SimdOp::I16x8Abs | SimdOp::I16x8Neg | SimdOp::I16x8Q15MulrSatS
+                | SimdOp::I16x8AllTrue | SimdOp::I16x8Bitmask
+                | SimdOp::I16x8NarrowI32x4S | SimdOp::I16x8NarrowI32x4U
+                | SimdOp::I16x8ExtendLowI8x16S | SimdOp::I16x8ExtendHighI8x16S
+                | SimdOp::I16x8ExtendLowI8x16U | SimdOp::I16x8ExtendHighI8x16U
+                | SimdOp::I16x8Shl | SimdOp::I16x8ShrS | SimdOp::I16x8ShrU
+                | SimdOp::I16x8Add | SimdOp::I16x8AddSatS | SimdOp::I16x8AddSatU
+                | SimdOp::I16x8Sub | SimdOp::I16x8SubSatS | SimdOp::I16x8SubSatU
+                | SimdOp::F64x2Nearest | SimdOp::I16x8Mul
+                | SimdOp::I16x8MinS | SimdOp::I16x8MinU | SimdOp::I16x8MaxS
+                | SimdOp::I16x8MaxU | SimdOp::I16x8AvgrU
+                | SimdOp::I16x8ExtMulLowI8x16S | SimdOp::I16x8ExtMulHighI8x16S
+                | SimdOp::I16x8ExtMulLowI8x16U | SimdOp::I16x8ExtMulHighI8x16U
+                | SimdOp::I32x4Abs | SimdOp::I32x4Neg | SimdOp::I32x4AllTrue
+                | SimdOp::I32x4Bitmask
+                | SimdOp::I32x4ExtendLowI16x8S | SimdOp::I32x4ExtendHighI16x8S
+                | SimdOp::I32x4ExtendLowI16x8U | SimdOp::I32x4ExtendHighI16x8U
+                | SimdOp::I32x4Shl | SimdOp::I32x4ShrS | SimdOp::I32x4ShrU
+                | SimdOp::I32x4Add | SimdOp::I32x4Sub | SimdOp::I32x4Mul
+                | SimdOp::I32x4MinS | SimdOp::I32x4MinU | SimdOp::I32x4MaxS
+                | SimdOp::I32x4MaxU | SimdOp::I32x4DotI16x8S
+                | SimdOp::I32x4ExtMulLowI16x8S | SimdOp::I32x4ExtMulHighI16x8S
+                | SimdOp::I32x4ExtMulLowI16x8U | SimdOp::I32x4ExtMulHighI16x8U
+                | SimdOp::I64x2Abs | SimdOp::I64x2Neg | SimdOp::I64x2AllTrue
+                | SimdOp::I64x2Bitmask
+                | SimdOp::I64x2ExtendLowI32x4S | SimdOp::I64x2ExtendHighI32x4S
+                | SimdOp::I64x2ExtendLowI32x4U | SimdOp::I64x2ExtendHighI32x4U
+                | SimdOp::I64x2Shl | SimdOp::I64x2ShrS | SimdOp::I64x2ShrU
+                | SimdOp::I64x2Add | SimdOp::I64x2Sub | SimdOp::I64x2Mul
+                | SimdOp::I64x2ExtMulLowI32x4S | SimdOp::I64x2ExtMulHighI32x4S
+                | SimdOp::I64x2ExtMulLowI32x4U | SimdOp::I64x2ExtMulHighI32x4U
+                | SimdOp::F32x4Abs | SimdOp::F32x4Neg | SimdOp::F32x4Sqrt
+                | SimdOp::F32x4Add | SimdOp::F32x4Sub | SimdOp::F32x4Mul
+                | SimdOp::F32x4Div | SimdOp::F32x4Min | SimdOp::F32x4Max
+                | SimdOp::F32x4PMin | SimdOp::F32x4PMax
+                | SimdOp::F64x2Abs | SimdOp::F64x2Neg | SimdOp::F64x2Sqrt
+                | SimdOp::F64x2Add | SimdOp::F64x2Sub | SimdOp::F64x2Mul
+                | SimdOp::F64x2Div | SimdOp::F64x2Min | SimdOp::F64x2Max
+                | SimdOp::F64x2PMin | SimdOp::F64x2PMax
+                | SimdOp::I32x4TruncSatF32x4S | SimdOp::I32x4TruncSatF32x4U
+                | SimdOp::F32x4ConvertI32x4S | SimdOp::F32x4ConvertI32x4U
+                | SimdOp::I32x4TruncSatF64x2SZero | SimdOp::I32x4TruncSatF64x2UZero
+                | SimdOp::F64x2ConvertLowI32x4S | SimdOp::F64x2ConvertLowI32x4U
+                | SimdOp::F32x4DemoteF64x2Zero | SimdOp::F64x2PromoteLowF32x4
+                => {}
+            }
+        }
+
+        let m = MemArg { align: 0, offset: 0 };
+
+        vec![
+            // Memory (memarg only)
+            SimdOp::V128Load { memarg: m },
+            SimdOp::V128Load8x8S { memarg: m },
+            SimdOp::V128Load8x8U { memarg: m },
+            SimdOp::V128Load16x4S { memarg: m },
+            SimdOp::V128Load16x4U { memarg: m },
+            SimdOp::V128Load32x2S { memarg: m },
+            SimdOp::V128Load32x2U { memarg: m },
+            SimdOp::V128Load8Splat { memarg: m },
+            SimdOp::V128Load16Splat { memarg: m },
+            SimdOp::V128Load32Splat { memarg: m },
+            SimdOp::V128Load64Splat { memarg: m },
+            SimdOp::V128Store { memarg: m },
+            SimdOp::V128Load32Zero { memarg: m },
+            SimdOp::V128Load64Zero { memarg: m },
+            // Memory + lane
+            SimdOp::V128Load8Lane { memarg: m, lane: 0 },
+            SimdOp::V128Load16Lane { memarg: m, lane: 0 },
+            SimdOp::V128Load32Lane { memarg: m, lane: 0 },
+            SimdOp::V128Load64Lane { memarg: m, lane: 0 },
+            SimdOp::V128Store8Lane { memarg: m, lane: 0 },
+            SimdOp::V128Store16Lane { memarg: m, lane: 0 },
+            SimdOp::V128Store32Lane { memarg: m, lane: 0 },
+            SimdOp::V128Store64Lane { memarg: m, lane: 0 },
+            // Const and shuffle (16-byte payloads)
+            SimdOp::V128Const { value: [0; 16] },
+            SimdOp::I8x16Shuffle { lanes: [0; 16] },
+            // Splat / swizzle (no operands)
+            SimdOp::I8x16Swizzle,
+            SimdOp::I8x16Splat,
+            SimdOp::I16x8Splat,
+            SimdOp::I32x4Splat,
+            SimdOp::I64x2Splat,
+            SimdOp::F32x4Splat,
+            SimdOp::F64x2Splat,
+            // Lane extract/replace (1-byte lane)
+            SimdOp::I8x16ExtractLaneS { lane: 0 },
+            SimdOp::I8x16ExtractLaneU { lane: 0 },
+            SimdOp::I8x16ReplaceLane { lane: 0 },
+            SimdOp::I16x8ExtractLaneS { lane: 0 },
+            SimdOp::I16x8ExtractLaneU { lane: 0 },
+            SimdOp::I16x8ReplaceLane { lane: 0 },
+            SimdOp::I32x4ExtractLane { lane: 0 },
+            SimdOp::I32x4ReplaceLane { lane: 0 },
+            SimdOp::I64x2ExtractLane { lane: 0 },
+            SimdOp::I64x2ReplaceLane { lane: 0 },
+            SimdOp::F32x4ExtractLane { lane: 0 },
+            SimdOp::F32x4ReplaceLane { lane: 0 },
+            SimdOp::F64x2ExtractLane { lane: 0 },
+            SimdOp::F64x2ReplaceLane { lane: 0 },
+            // i8x16 comparisons
+            SimdOp::I8x16Eq,
+            SimdOp::I8x16Ne,
+            SimdOp::I8x16LtS,
+            SimdOp::I8x16LtU,
+            SimdOp::I8x16GtS,
+            SimdOp::I8x16GtU,
+            SimdOp::I8x16LeS,
+            SimdOp::I8x16LeU,
+            SimdOp::I8x16GeS,
+            SimdOp::I8x16GeU,
+            // i16x8 comparisons
+            SimdOp::I16x8Eq,
+            SimdOp::I16x8Ne,
+            SimdOp::I16x8LtS,
+            SimdOp::I16x8LtU,
+            SimdOp::I16x8GtS,
+            SimdOp::I16x8GtU,
+            SimdOp::I16x8LeS,
+            SimdOp::I16x8LeU,
+            SimdOp::I16x8GeS,
+            SimdOp::I16x8GeU,
+            // i32x4 comparisons
+            SimdOp::I32x4Eq,
+            SimdOp::I32x4Ne,
+            SimdOp::I32x4LtS,
+            SimdOp::I32x4LtU,
+            SimdOp::I32x4GtS,
+            SimdOp::I32x4GtU,
+            SimdOp::I32x4LeS,
+            SimdOp::I32x4LeU,
+            SimdOp::I32x4GeS,
+            SimdOp::I32x4GeU,
+            // f32x4 comparisons
+            SimdOp::F32x4Eq,
+            SimdOp::F32x4Ne,
+            SimdOp::F32x4Lt,
+            SimdOp::F32x4Gt,
+            SimdOp::F32x4Le,
+            SimdOp::F32x4Ge,
+            // f64x2 comparisons
+            SimdOp::F64x2Eq,
+            SimdOp::F64x2Ne,
+            SimdOp::F64x2Lt,
+            SimdOp::F64x2Gt,
+            SimdOp::F64x2Le,
+            SimdOp::F64x2Ge,
+            // v128 bitwise
+            SimdOp::V128Not,
+            SimdOp::V128And,
+            SimdOp::V128AndNot,
+            SimdOp::V128Or,
+            SimdOp::V128Xor,
+            SimdOp::V128Bitselect,
+            SimdOp::V128AnyTrue,
+            // Conversions (no operands)
+            SimdOp::F32x4DemoteF64x2Zero,
+            SimdOp::F64x2PromoteLowF32x4,
+            // i8x16 operations
+            SimdOp::I8x16Abs,
+            SimdOp::I8x16Neg,
+            SimdOp::I8x16Popcnt,
+            SimdOp::I8x16AllTrue,
+            SimdOp::I8x16Bitmask,
+            SimdOp::I8x16NarrowI16x8S,
+            SimdOp::I8x16NarrowI16x8U,
+            SimdOp::F32x4Ceil,
+            SimdOp::F32x4Floor,
+            SimdOp::F32x4Trunc,
+            SimdOp::F32x4Nearest,
+            SimdOp::I8x16Shl,
+            SimdOp::I8x16ShrS,
+            SimdOp::I8x16ShrU,
+            SimdOp::I8x16Add,
+            SimdOp::I8x16AddSatS,
+            SimdOp::I8x16AddSatU,
+            SimdOp::I8x16Sub,
+            SimdOp::I8x16SubSatS,
+            SimdOp::I8x16SubSatU,
+            SimdOp::F64x2Ceil,
+            SimdOp::F64x2Floor,
+            SimdOp::I8x16MinS,
+            SimdOp::I8x16MinU,
+            SimdOp::I8x16MaxS,
+            SimdOp::I8x16MaxU,
+            SimdOp::F64x2Trunc,
+            SimdOp::I8x16AvgrU,
+            // Pairwise extension
+            SimdOp::I16x8ExtAddPairwiseI8x16S,
+            SimdOp::I16x8ExtAddPairwiseI8x16U,
+            SimdOp::I32x4ExtAddPairwiseI16x8S,
+            SimdOp::I32x4ExtAddPairwiseI16x8U,
+            // i16x8 operations
+            SimdOp::I16x8Abs,
+            SimdOp::I16x8Neg,
+            SimdOp::I16x8Q15MulrSatS,
+            SimdOp::I16x8AllTrue,
+            SimdOp::I16x8Bitmask,
+            SimdOp::I16x8NarrowI32x4S,
+            SimdOp::I16x8NarrowI32x4U,
+            SimdOp::I16x8ExtendLowI8x16S,
+            SimdOp::I16x8ExtendHighI8x16S,
+            SimdOp::I16x8ExtendLowI8x16U,
+            SimdOp::I16x8ExtendHighI8x16U,
+            SimdOp::I16x8Shl,
+            SimdOp::I16x8ShrS,
+            SimdOp::I16x8ShrU,
+            SimdOp::I16x8Add,
+            SimdOp::I16x8AddSatS,
+            SimdOp::I16x8AddSatU,
+            SimdOp::I16x8Sub,
+            SimdOp::I16x8SubSatS,
+            SimdOp::I16x8SubSatU,
+            SimdOp::F64x2Nearest,
+            SimdOp::I16x8Mul,
+            SimdOp::I16x8MinS,
+            SimdOp::I16x8MinU,
+            SimdOp::I16x8MaxS,
+            SimdOp::I16x8MaxU,
+            SimdOp::I16x8AvgrU,
+            SimdOp::I16x8ExtMulLowI8x16S,
+            SimdOp::I16x8ExtMulHighI8x16S,
+            SimdOp::I16x8ExtMulLowI8x16U,
+            SimdOp::I16x8ExtMulHighI8x16U,
+            // i32x4 operations
+            SimdOp::I32x4Abs,
+            SimdOp::I32x4Neg,
+            SimdOp::I32x4AllTrue,
+            SimdOp::I32x4Bitmask,
+            SimdOp::I32x4ExtendLowI16x8S,
+            SimdOp::I32x4ExtendHighI16x8S,
+            SimdOp::I32x4ExtendLowI16x8U,
+            SimdOp::I32x4ExtendHighI16x8U,
+            SimdOp::I32x4Shl,
+            SimdOp::I32x4ShrS,
+            SimdOp::I32x4ShrU,
+            SimdOp::I32x4Add,
+            SimdOp::I32x4Sub,
+            SimdOp::I32x4Mul,
+            SimdOp::I32x4MinS,
+            SimdOp::I32x4MinU,
+            SimdOp::I32x4MaxS,
+            SimdOp::I32x4MaxU,
+            SimdOp::I32x4DotI16x8S,
+            SimdOp::I32x4ExtMulLowI16x8S,
+            SimdOp::I32x4ExtMulHighI16x8S,
+            SimdOp::I32x4ExtMulLowI16x8U,
+            SimdOp::I32x4ExtMulHighI16x8U,
+            // i64x2 operations
+            SimdOp::I64x2Abs,
+            SimdOp::I64x2Neg,
+            SimdOp::I64x2AllTrue,
+            SimdOp::I64x2Bitmask,
+            SimdOp::I64x2ExtendLowI32x4S,
+            SimdOp::I64x2ExtendHighI32x4S,
+            SimdOp::I64x2ExtendLowI32x4U,
+            SimdOp::I64x2ExtendHighI32x4U,
+            SimdOp::I64x2Shl,
+            SimdOp::I64x2ShrS,
+            SimdOp::I64x2ShrU,
+            SimdOp::I64x2Add,
+            SimdOp::I64x2Sub,
+            SimdOp::I64x2Mul,
+            SimdOp::I64x2Eq,
+            SimdOp::I64x2Ne,
+            SimdOp::I64x2LtS,
+            SimdOp::I64x2GtS,
+            SimdOp::I64x2LeS,
+            SimdOp::I64x2GeS,
+            SimdOp::I64x2ExtMulLowI32x4S,
+            SimdOp::I64x2ExtMulHighI32x4S,
+            SimdOp::I64x2ExtMulLowI32x4U,
+            SimdOp::I64x2ExtMulHighI32x4U,
+            // f32x4 operations
+            SimdOp::F32x4Abs,
+            SimdOp::F32x4Neg,
+            SimdOp::F32x4Sqrt,
+            SimdOp::F32x4Add,
+            SimdOp::F32x4Sub,
+            SimdOp::F32x4Mul,
+            SimdOp::F32x4Div,
+            SimdOp::F32x4Min,
+            SimdOp::F32x4Max,
+            SimdOp::F32x4PMin,
+            SimdOp::F32x4PMax,
+            // f64x2 operations
+            SimdOp::F64x2Abs,
+            SimdOp::F64x2Neg,
+            SimdOp::F64x2Sqrt,
+            SimdOp::F64x2Add,
+            SimdOp::F64x2Sub,
+            SimdOp::F64x2Mul,
+            SimdOp::F64x2Div,
+            SimdOp::F64x2Min,
+            SimdOp::F64x2Max,
+            SimdOp::F64x2PMin,
+            SimdOp::F64x2PMax,
+            // Truncation/conversion
+            SimdOp::I32x4TruncSatF32x4S,
+            SimdOp::I32x4TruncSatF32x4U,
+            SimdOp::F32x4ConvertI32x4S,
+            SimdOp::F32x4ConvertI32x4U,
+            SimdOp::I32x4TruncSatF64x2SZero,
+            SimdOp::I32x4TruncSatF64x2UZero,
+            SimdOp::F64x2ConvertLowI32x4S,
+            SimdOp::F64x2ConvertLowI32x4U,
+        ]
+    }
+
+    #[test]
+    fn simd_subopcode_roundtrip() {
+        let variants = all_simd_variants();
+        assert_eq!(
+            variants.len(),
+            236,
+            "Variant count changed. Update all_simd_variants() and _assert_exhaustive().",
+        );
+
+        // Verify no duplicate subopcodes (catches copy-paste errors in subopcode())
+        let mut seen_opcodes = std::collections::HashMap::new();
+        for op in &variants {
+            let code = op.subopcode();
+            if let Some(prev_mnemonic) = seen_opcodes.insert(code, op.mnemonic()) {
+                panic!(
+                    "Duplicate subopcode 0x{:02X}: {} and {}",
+                    code,
+                    prev_mnemonic,
+                    op.mnemonic()
+                );
+            }
+        }
+
+        // Round-trip: encode operands → decode via decode_0xfd → verify same subopcode
+        for op in &variants {
+            let original_subopcode = op.subopcode();
+            let original_mnemonic = op.mnemonic();
+
+            // Encode operands only (subopcode is passed separately to decode_0xfd)
+            let mut operand_bytes = Vec::new();
+            op.encode_operands(&mut operand_bytes);
+
+            // Decode through the real decoder
+            let mut reader = Reader::new(operand_bytes);
+            let decoded = decode_0xfd(original_subopcode, &mut reader).unwrap_or_else(|e| {
+                panic!(
+                    "decode_0xfd failed for {} (0x{:02X}): {:?}",
+                    original_mnemonic, original_subopcode, e
+                )
+            });
+
+            // Extract the SimdOp and verify subopcode matches
+            let decoded_op = match decoded {
+                InstructionKind::Simd(op) => op,
+                other => panic!(
+                    "Expected Simd variant for {} (0x{:02X}), got {:?}",
+                    original_mnemonic, original_subopcode, other
+                ),
+            };
+
+            assert_eq!(
+                decoded_op.subopcode(),
+                original_subopcode,
+                "Subopcode drift for {}: encode says 0x{:02X}, decode produces {} (0x{:02X})",
+                original_mnemonic,
+                original_subopcode,
+                decoded_op.mnemonic(),
+                decoded_op.subopcode()
+            );
+
+            // Also verify mnemonic matches (catches variant name mismatches)
+            assert_eq!(
+                decoded_op.mnemonic(),
+                original_mnemonic,
+                "Mnemonic drift at subopcode 0x{:02X}: encode says {}, decode produces {}",
+                original_subopcode,
+                original_mnemonic,
+                decoded_op.mnemonic()
+            );
+
+            // Verify all operand bytes were consumed
+            assert!(
+                !reader.has_at_least(1),
+                "{} (0x{:02X}): {} unconsumed byte(s) after decode",
+                original_mnemonic,
+                original_subopcode,
+                reader.remaining()
+            );
+        }
     }
 }

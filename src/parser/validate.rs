@@ -1,5 +1,5 @@
 use super::module::{ElementMode, FunctionType, GlobalType, ValueType, ValueType::*};
-use crate::parser::instruction::{BlockType, Instruction, InstructionKind};
+use crate::parser::instruction::{BlockType, Instruction, InstructionKind, SimdOp};
 use MaybeValue::{Unknown, Val};
 use thiserror::Error;
 
@@ -79,6 +79,9 @@ pub enum ValidationError {
 
     #[error("invalid result arity")]
     InvalidResultArity,
+
+    #[error("invalid lane index")]
+    InvalidLaneIndex,
 }
 
 pub trait Validator {
@@ -148,6 +151,7 @@ impl Validator for ConstantExpressionValidator<'_> {
             | RefNull { .. }
             | RefFunc { .. }
             | GlobalGet { .. }
+            | Simd(SimdOp::V128Const { .. })
             | End => {}
             _ => return Err(ValidationError::ConstantExpressionRequired),
         }
@@ -191,6 +195,9 @@ impl Validator for ConstantExpressionValidator<'_> {
                 }
                 Ok(())
             }
+            Simd(SimdOp::V128Const { .. }) => (self.return_type == V128)
+                .then_some(())
+                .ok_or(ValidationError::TypeMismatch),
             GlobalGet { global_idx } => {
                 let value_type = self.global(*global_idx)?.value_type;
                 if value_type == self.return_type {
@@ -476,6 +483,416 @@ impl<'a> CodeValidator<'a> {
 
     fn get_type(&self, ti: u32) -> Result<&FunctionType, ValidationError> {
         self.module.types.get(ti).ok_or(ValidationError::UnknownFunctionType)
+    }
+
+    /// Validate a SIMD instruction's stack effects, memory alignment, and lane bounds.
+    /// Stack pushes/pops occur before alignment and lane checks. This is fine because
+    /// any validation error rejects the entire function — partial stack state is discarded.
+    fn validate_simd(&mut self, op: &SimdOp) -> Result<(), ValidationError> {
+        use SimdOp::*;
+        let v = Val(V128);
+        let i32v = Val(I32_VALUE);
+        let i64v = Val(I64_VALUE);
+        let f32v = Val(F32_VALUE);
+        let f64v = Val(F64_VALUE);
+
+        match op {
+            // [i32] → [v128] : loads (pop address, push result)
+            V128Load { memarg } => {
+                self.validate_memory_exists()?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 4)
+            }
+            V128Load8x8S { memarg }
+            | V128Load8x8U { memarg }
+            | V128Load16x4S { memarg }
+            | V128Load16x4U { memarg }
+            | V128Load32x2S { memarg }
+            | V128Load32x2U { memarg }
+            | V128Load64Splat { memarg } => {
+                self.validate_memory_exists()?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 3)
+            }
+            V128Load32Splat { memarg } | V128Load32Zero { memarg } => {
+                self.validate_memory_exists()?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 2)
+            }
+            V128Load16Splat { memarg } => {
+                self.validate_memory_exists()?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 1)
+            }
+            V128Load8Splat { memarg } => {
+                self.validate_memory_exists()?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 0)
+            }
+            V128Load64Zero { memarg } => {
+                self.validate_memory_exists()?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 3)
+            }
+
+            // [i32 v128] → [] : stores (pop v128 value, pop i32 address)
+            V128Store { memarg } => {
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 4)
+            }
+
+            // [i32 v128] → [v128] : load lane (pop v128, pop i32, push v128)
+            V128Load8Lane { memarg, lane } => {
+                validate_lane_index(*lane, 16)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 0)
+            }
+            V128Load16Lane { memarg, lane } => {
+                validate_lane_index(*lane, 8)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 1)
+            }
+            V128Load32Lane { memarg, lane } => {
+                validate_lane_index(*lane, 4)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 2)
+            }
+            V128Load64Lane { memarg, lane } => {
+                validate_lane_index(*lane, 2)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 3)
+            }
+
+            // [i32 v128] → [] : store lane (pop v128, pop i32)
+            V128Store8Lane { memarg, lane } => {
+                validate_lane_index(*lane, 16)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 0)
+            }
+            V128Store16Lane { memarg, lane } => {
+                validate_lane_index(*lane, 8)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 1)
+            }
+            V128Store32Lane { memarg, lane } => {
+                validate_lane_index(*lane, 4)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 2)
+            }
+            V128Store64Lane { memarg, lane } => {
+                validate_lane_index(*lane, 2)?;
+                self.validate_memory_exists()?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(i32v).ok_or(ValidationError::TypeMismatch)?;
+                check_alignment(memarg, 3)
+            }
+
+            // [] → [v128] : constant
+            V128Const { .. } => self.push_val(v).ok_or(ValidationError::TypeMismatch),
+
+            // [v128 v128] → [v128] : shuffle (lane indices must be 0-31)
+            I8x16Shuffle { lanes } => {
+                for &lane in lanes.iter() {
+                    if lane >= 32 {
+                        return Err(ValidationError::InvalidLaneIndex);
+                    }
+                }
+                self.sig_binary(v.clone(), v.clone(), v)
+            }
+
+            // [v128 v128] → [v128] : swizzle, binary arithmetic, comparisons,
+            // narrow, extmul, dot, q15mulr, add_sat, sub_sat, avgr
+            I8x16Swizzle
+            | I8x16Eq
+            | I8x16Ne
+            | I8x16LtS
+            | I8x16LtU
+            | I8x16GtS
+            | I8x16GtU
+            | I8x16LeS
+            | I8x16LeU
+            | I8x16GeS
+            | I8x16GeU
+            | I16x8Eq
+            | I16x8Ne
+            | I16x8LtS
+            | I16x8LtU
+            | I16x8GtS
+            | I16x8GtU
+            | I16x8LeS
+            | I16x8LeU
+            | I16x8GeS
+            | I16x8GeU
+            | I32x4Eq
+            | I32x4Ne
+            | I32x4LtS
+            | I32x4LtU
+            | I32x4GtS
+            | I32x4GtU
+            | I32x4LeS
+            | I32x4LeU
+            | I32x4GeS
+            | I32x4GeU
+            | I64x2Eq
+            | I64x2Ne
+            | I64x2LtS
+            | I64x2GtS
+            | I64x2LeS
+            | I64x2GeS
+            | F32x4Eq
+            | F32x4Ne
+            | F32x4Lt
+            | F32x4Gt
+            | F32x4Le
+            | F32x4Ge
+            | F64x2Eq
+            | F64x2Ne
+            | F64x2Lt
+            | F64x2Gt
+            | F64x2Le
+            | F64x2Ge
+            | V128And
+            | V128AndNot
+            | V128Or
+            | V128Xor
+            | I8x16NarrowI16x8S
+            | I8x16NarrowI16x8U
+            | I16x8NarrowI32x4S
+            | I16x8NarrowI32x4U
+            | I8x16Add
+            | I8x16AddSatS
+            | I8x16AddSatU
+            | I8x16Sub
+            | I8x16SubSatS
+            | I8x16SubSatU
+            | I8x16MinS
+            | I8x16MinU
+            | I8x16MaxS
+            | I8x16MaxU
+            | I8x16AvgrU
+            | I16x8Add
+            | I16x8AddSatS
+            | I16x8AddSatU
+            | I16x8Sub
+            | I16x8SubSatS
+            | I16x8SubSatU
+            | I16x8Mul
+            | I16x8MinS
+            | I16x8MinU
+            | I16x8MaxS
+            | I16x8MaxU
+            | I16x8AvgrU
+            | I16x8Q15MulrSatS
+            | I16x8ExtMulLowI8x16S
+            | I16x8ExtMulHighI8x16S
+            | I16x8ExtMulLowI8x16U
+            | I16x8ExtMulHighI8x16U
+            | I32x4Add
+            | I32x4Sub
+            | I32x4Mul
+            | I32x4MinS
+            | I32x4MinU
+            | I32x4MaxS
+            | I32x4MaxU
+            | I32x4DotI16x8S
+            | I32x4ExtMulLowI16x8S
+            | I32x4ExtMulHighI16x8S
+            | I32x4ExtMulLowI16x8U
+            | I32x4ExtMulHighI16x8U
+            | I64x2Add
+            | I64x2Sub
+            | I64x2Mul
+            | I64x2ExtMulLowI32x4S
+            | I64x2ExtMulHighI32x4S
+            | I64x2ExtMulLowI32x4U
+            | I64x2ExtMulHighI32x4U
+            | F32x4Add
+            | F32x4Sub
+            | F32x4Mul
+            | F32x4Div
+            | F32x4Min
+            | F32x4Max
+            | F32x4PMin
+            | F32x4PMax
+            | F64x2Add
+            | F64x2Sub
+            | F64x2Mul
+            | F64x2Div
+            | F64x2Min
+            | F64x2Max
+            | F64x2PMin
+            | F64x2PMax => self.sig_binary(v.clone(), v.clone(), v),
+
+            // [v128 v128 v128] → [v128] : bitselect
+            V128Bitselect => {
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.pop_expected(v.clone()).ok_or(ValidationError::TypeMismatch)?;
+                self.push_val(v).ok_or(ValidationError::TypeMismatch)
+            }
+
+            // [v128] → [v128] : unary v128→v128 (abs, neg, extend, convert, etc.)
+            V128Not
+            | I8x16Abs
+            | I8x16Neg
+            | I8x16Popcnt
+            | I16x8Abs
+            | I16x8Neg
+            | I16x8ExtendLowI8x16S
+            | I16x8ExtendHighI8x16S
+            | I16x8ExtendLowI8x16U
+            | I16x8ExtendHighI8x16U
+            | I16x8ExtAddPairwiseI8x16S
+            | I16x8ExtAddPairwiseI8x16U
+            | I32x4Abs
+            | I32x4Neg
+            | I32x4ExtendLowI16x8S
+            | I32x4ExtendHighI16x8S
+            | I32x4ExtendLowI16x8U
+            | I32x4ExtendHighI16x8U
+            | I32x4ExtAddPairwiseI16x8S
+            | I32x4ExtAddPairwiseI16x8U
+            | I64x2Abs
+            | I64x2Neg
+            | I64x2ExtendLowI32x4S
+            | I64x2ExtendHighI32x4S
+            | I64x2ExtendLowI32x4U
+            | I64x2ExtendHighI32x4U
+            | F32x4Abs
+            | F32x4Neg
+            | F32x4Sqrt
+            | F32x4Ceil
+            | F32x4Floor
+            | F32x4Trunc
+            | F32x4Nearest
+            | F64x2Abs
+            | F64x2Neg
+            | F64x2Sqrt
+            | F64x2Ceil
+            | F64x2Floor
+            | F64x2Trunc
+            | F64x2Nearest
+            | I32x4TruncSatF32x4S
+            | I32x4TruncSatF32x4U
+            | F32x4ConvertI32x4S
+            | F32x4ConvertI32x4U
+            | I32x4TruncSatF64x2SZero
+            | I32x4TruncSatF64x2UZero
+            | F64x2ConvertLowI32x4S
+            | F64x2ConvertLowI32x4U
+            | F32x4DemoteF64x2Zero
+            | F64x2PromoteLowF32x4 => self.sig_unary(v.clone(), v),
+
+            // [v128] → [i32] : test/bitmask
+            V128AnyTrue | I8x16AllTrue | I8x16Bitmask | I16x8AllTrue | I16x8Bitmask | I32x4AllTrue | I32x4Bitmask
+            | I64x2AllTrue | I64x2Bitmask => self.sig_unary(v, i32v),
+
+            // [v128] → [i32] : extract lane to i32 (with lane bounds check)
+            I8x16ExtractLaneS { lane } | I8x16ExtractLaneU { lane } => {
+                validate_lane_index(*lane, 16)?;
+                self.sig_unary(v, i32v)
+            }
+            I16x8ExtractLaneS { lane } | I16x8ExtractLaneU { lane } => {
+                validate_lane_index(*lane, 8)?;
+                self.sig_unary(v, i32v)
+            }
+            I32x4ExtractLane { lane } => {
+                validate_lane_index(*lane, 4)?;
+                self.sig_unary(v, i32v)
+            }
+
+            // [v128] → [i64] : extract i64 lane
+            I64x2ExtractLane { lane } => {
+                validate_lane_index(*lane, 2)?;
+                self.sig_unary(v, i64v)
+            }
+
+            // [v128] → [f32] : extract f32 lane
+            F32x4ExtractLane { lane } => {
+                validate_lane_index(*lane, 4)?;
+                self.sig_unary(v, f32v)
+            }
+
+            // [v128] → [f64] : extract f64 lane
+            F64x2ExtractLane { lane } => {
+                validate_lane_index(*lane, 2)?;
+                self.sig_unary(v, f64v)
+            }
+
+            // [v128 i32] → [v128] : shifts
+            I8x16Shl | I8x16ShrS | I8x16ShrU | I16x8Shl | I16x8ShrS | I16x8ShrU | I32x4Shl | I32x4ShrS | I32x4ShrU
+            | I64x2Shl | I64x2ShrS | I64x2ShrU => self.sig_binary(i32v, v.clone(), v),
+
+            // [v128 i32] → [v128] : replace lane (i32 replacement value)
+            I8x16ReplaceLane { lane } => {
+                validate_lane_index(*lane, 16)?;
+                self.sig_binary(i32v, v.clone(), v)
+            }
+            I16x8ReplaceLane { lane } => {
+                validate_lane_index(*lane, 8)?;
+                self.sig_binary(i32v, v.clone(), v)
+            }
+            I32x4ReplaceLane { lane } => {
+                validate_lane_index(*lane, 4)?;
+                self.sig_binary(i32v, v.clone(), v)
+            }
+
+            // [v128 i64] → [v128] : i64 replace lane
+            I64x2ReplaceLane { lane } => {
+                validate_lane_index(*lane, 2)?;
+                self.sig_binary(i64v, v.clone(), v)
+            }
+
+            // [v128 f32] → [v128] : f32 replace lane
+            F32x4ReplaceLane { lane } => {
+                validate_lane_index(*lane, 4)?;
+                self.sig_binary(f32v, v.clone(), v)
+            }
+
+            // [v128 f64] → [v128] : f64 replace lane
+            F64x2ReplaceLane { lane } => {
+                validate_lane_index(*lane, 2)?;
+                self.sig_binary(f64v, v.clone(), v)
+            }
+
+            // [i32] → [v128] : splat from i32
+            I8x16Splat | I16x8Splat | I32x4Splat => self.sig_unary(i32v, v),
+
+            // [i64] → [v128] : splat from i64
+            I64x2Splat => self.sig_unary(i64v, v),
+
+            // [f32] → [v128] : splat from f32
+            F32x4Splat => self.sig_unary(f32v, v),
+
+            // [f64] → [v128] : splat from f64
+            F64x2Splat => self.sig_unary(f64v, v),
+        }
     }
 }
 
@@ -1256,7 +1673,7 @@ impl Validator for CodeValidator<'_> {
                 Ok(())
             }
 
-            _ => Err(ValidationError::UnimplementedInstruction),
+            Simd(op) => self.validate_simd(op),
         }
     }
 
@@ -1295,6 +1712,13 @@ impl Validator for CodeValidator<'_> {
 fn check_alignment(memarg: &crate::parser::instruction::MemArg, align_exponent: u32) -> Result<(), ValidationError> {
     if memarg.align > align_exponent {
         return Err(ValidationError::BadAlignment);
+    }
+    Ok(())
+}
+
+fn validate_lane_index(lane: u8, num_lanes: u8) -> Result<(), ValidationError> {
+    if lane >= num_lanes {
+        return Err(ValidationError::InvalidLaneIndex);
     }
     Ok(())
 }

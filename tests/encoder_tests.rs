@@ -913,6 +913,36 @@ mod tests {
         round_trip_spec_fixture("bulk");
     }
 
+    #[test]
+    fn round_trip_simd_fixtures() {
+        let mut failures = Vec::new();
+        let mut count = 0;
+        for entry in std::fs::read_dir("tests/spec").unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+            if name.starts_with("simd_") {
+                count += 1;
+                if let Err(e) = std::panic::catch_unwind(|| round_trip_spec_fixture(&name)) {
+                    let msg = e
+                        .downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| e.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    failures.push(format!("{name}: {msg}"));
+                }
+            }
+        }
+        assert!(count > 0, "no simd_* fixtures found");
+        if !failures.is_empty() {
+            panic!(
+                "{}/{} SIMD fixtures failed:\n  {}",
+                failures.len(),
+                count,
+                failures.join("\n  ")
+            );
+        }
+    }
+
     // =======================================================================
     // Negative tests
     // =======================================================================

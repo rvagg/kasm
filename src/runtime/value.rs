@@ -16,6 +16,8 @@ pub enum Value {
     FuncRef(Option<FuncAddr>),
     /// External reference - either null or an external reference index
     ExternRef(Option<u32>),
+    /// 128-bit SIMD value stored as raw bytes in little-endian order
+    V128([u8; 16]),
 }
 
 impl Value {
@@ -28,6 +30,7 @@ impl Value {
             Value::F64(_) => ValueType::F64,
             Value::FuncRef(_) => ValueType::FuncRef,
             Value::ExternRef(_) => ValueType::ExternRef,
+            Value::V128(_) => ValueType::V128,
         }
     }
 
@@ -59,6 +62,13 @@ impl Value {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::F64(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_v128(&self) -> Option<[u8; 16]> {
+        match self {
+            Value::V128(v) => Some(*v),
             _ => None,
         }
     }
@@ -227,6 +237,7 @@ impl Value {
             "f32" => Self::parse_f32(value),
             "f64" => Self::parse_f64(value),
             "funcref" | "externref" => Self::parse_ref(value, typ),
+            "v128" => Err("v128 requires lane-based parsing".into()),
             t => Err(format!("Unknown value type: {t}")),
         }
     }
@@ -282,6 +293,103 @@ impl Value {
                 };
                 ("externref".to_string(), value_str)
             }
+            Value::V128(bytes) => {
+                // Flat 32-char hex matching spec test JSON format for value comparison.
+                // Distinct from SimdOp::V128Const display which uses 4 i32 lanes for disassembly.
+                let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                ("v128".to_string(), hex)
+            }
+        }
+    }
+
+    /// Create a V128 value from lane type and lane value strings (used in tests)
+    pub fn from_v128_lanes(lane_type: &str, values: &[String]) -> Result<Self, String> {
+        let mut bytes = [0u8; 16];
+        match lane_type {
+            "i8" => {
+                if values.len() != 16 {
+                    return Err("i8 lanes require 16 values".into());
+                }
+                for (i, v) in values.iter().enumerate() {
+                    let bits: u8 = v.parse().map_err(|e| format!("bad i8 lane: {e}"))?;
+                    bytes[i] = bits;
+                }
+            }
+            "i16" => {
+                if values.len() != 8 {
+                    return Err("i16 lanes require 8 values".into());
+                }
+                for (i, v) in values.iter().enumerate() {
+                    let bits: u16 = v.parse().map_err(|e| format!("bad i16 lane: {e}"))?;
+                    bytes[i * 2..i * 2 + 2].copy_from_slice(&bits.to_le_bytes());
+                }
+            }
+            "i32" => {
+                if values.len() != 4 {
+                    return Err("i32 lanes require 4 values".into());
+                }
+                for (i, v) in values.iter().enumerate() {
+                    let bits: u32 = v.parse().map_err(|e| format!("bad i32 lane: {e}"))?;
+                    bytes[i * 4..i * 4 + 4].copy_from_slice(&bits.to_le_bytes());
+                }
+            }
+            "i64" => {
+                if values.len() != 2 {
+                    return Err("i64 lanes require 2 values".into());
+                }
+                for (i, v) in values.iter().enumerate() {
+                    let bits: u64 = v.parse().map_err(|e| format!("bad i64 lane: {e}"))?;
+                    bytes[i * 8..i * 8 + 8].copy_from_slice(&bits.to_le_bytes());
+                }
+            }
+            "f32" => {
+                if values.len() != 4 {
+                    return Err("f32 lanes require 4 values".into());
+                }
+                for (i, v) in values.iter().enumerate() {
+                    // f32 values in spec tests are encoded as their u32 bit pattern
+                    let bits: u32 = v.parse().map_err(|e| format!("bad f32 lane: {e}"))?;
+                    bytes[i * 4..i * 4 + 4].copy_from_slice(&bits.to_le_bytes());
+                }
+            }
+            "f64" => {
+                if values.len() != 2 {
+                    return Err("f64 lanes require 2 values".into());
+                }
+                for (i, v) in values.iter().enumerate() {
+                    // f64 values in spec tests are encoded as their u64 bit pattern
+                    let bits: u64 = v.parse().map_err(|e| format!("bad f64 lane: {e}"))?;
+                    bytes[i * 8..i * 8 + 8].copy_from_slice(&bits.to_le_bytes());
+                }
+            }
+            _ => return Err(format!("unknown v128 lane type: {lane_type}")),
+        }
+        Ok(Value::V128(bytes))
+    }
+
+    /// Convert V128 to lane type and lane value strings for test comparison
+    pub fn to_v128_lanes(&self, lane_type: &str) -> Result<Vec<String>, String> {
+        match self {
+            Value::V128(bytes) => match lane_type {
+                "i8" => Ok((0..16).map(|i| bytes[i].to_string()).collect()),
+                "i16" => Ok((0..8)
+                    .map(|i| u16::from_le_bytes([bytes[i * 2], bytes[i * 2 + 1]]).to_string())
+                    .collect()),
+                "i32" => Ok((0..4)
+                    .map(|i| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap()).to_string())
+                    .collect()),
+                "i64" => Ok((0..2)
+                    .map(|i| u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap()).to_string())
+                    .collect()),
+                "f32" => Ok((0..4)
+                    .map(|i| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap()).to_string())
+                    .collect()),
+                "f64" => Ok((0..2)
+                    .map(|i| u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap()).to_string())
+                    .collect()),
+                _ => Err(format!("unknown v128 lane type: {lane_type}")),
+            },
+            _ => Err("not a v128 value".into()),
         }
     }
 }
@@ -297,6 +405,11 @@ impl fmt::Display for Value {
             Value::FuncRef(Some(FuncAddr(idx))) => write!(f, "funcref:{}", idx),
             Value::ExternRef(None) => write!(f, "externref:null"),
             Value::ExternRef(Some(idx)) => write!(f, "externref:{}", idx),
+            Value::V128(bytes) => {
+                // Flat hex for debug/diagnostic output; matches to_strings() format
+                let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                write!(f, "v128:{hex}")
+            }
         }
     }
 }

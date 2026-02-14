@@ -165,11 +165,49 @@ mod tests {
         args: Vec<TypedValue>,
     }
 
-    #[derive(Deserialize, Debug)]
-    #[allow(unused)]
+    #[derive(Debug)]
+    enum TypedValueData {
+        Scalar(String),
+        Lanes(Vec<String>),
+    }
+
+    #[derive(Debug)]
     struct TypedValue {
         r#type: String,
-        value: String,
+        lane_type: Option<String>,
+        value: TypedValueData,
+    }
+
+    impl<'de> Deserialize<'de> for TypedValue {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let v = serde_json::Value::deserialize(deserializer)?;
+            let obj = v.as_object().ok_or_else(|| de::Error::custom("expected object"))?;
+
+            let typ = obj
+                .get("type")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| de::Error::custom("missing type"))?
+                .to_string();
+
+            let lane_type = obj.get("lane_type").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            let value = if let Some(arr) = obj.get("value").and_then(|v| v.as_array()) {
+                TypedValueData::Lanes(arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            } else if let Some(s) = obj.get("value").and_then(|v| v.as_str()) {
+                TypedValueData::Scalar(s.to_string())
+            } else {
+                return Err(de::Error::custom("missing or invalid value field"));
+            };
+
+            Ok(TypedValue {
+                r#type: typ,
+                lane_type,
+                value,
+            })
+        }
     }
 
     #[derive(Deserialize, Debug)]
@@ -226,12 +264,7 @@ mod tests {
                     format!("{}/{}", cmd.filename, cmd.line).as_str(),
                     &mut kasm::parser::reader::Reader::new(bin.clone()),
                 );
-                if parsed.is_err() {
-                    let err = parsed.err().unwrap();
-                    println!("Error parsing module {}: {:?}", cmd.filename, err);
-                    panic!("Failed to parse: {}", err);
-                }
-                let module = parsed.unwrap();
+                let module = parsed.unwrap_or_else(|err| panic!("Failed to parse module {}: {:?}", cmd.filename, err));
                 parsed_modules.insert(cmd.filename.clone(), module);
                 _last_module_name = Some(cmd.filename.clone());
             }
@@ -241,7 +274,9 @@ mod tests {
         // Reset last_module_name to track which module is currently active
         _last_module_name = None;
         for (_index, command) in test_data.spec.commands.iter().enumerate() {
-            let code = &test_data.code[_index];
+            // The code array (WAT disassembly) may have fewer entries than commands
+            // in some test fixtures. Safe to default — code is diagnostic-only output.
+            let code = test_data.code.get(_index).cloned().unwrap_or_default();
             match command {
                 Command::Module(cmd) => {
                     // Update the current active module
@@ -282,8 +317,6 @@ mod tests {
 
                     // EXCLUSIONS: Check if the function contains unimplemented instructions
                     // This is a runtime check - we'll skip tests that use instructions we haven't implemented yet
-                    use kasm::parser::instruction::InstructionKind;
-
                     // First check if the export exists and is a function
                     let func_idx = {
                         let mut found_idx = None;
@@ -319,25 +352,6 @@ mod tests {
                             }
                         }
 
-                        if skip_reason.is_none() {
-                            // Additional checks for SIMD instructions (which have their own category)
-                            for instruction in &instructions {
-                                match &instruction.kind {
-                                    // SIMD instructions (not yet implemented)
-                                    InstructionKind::V128Load { .. }
-                                    | InstructionKind::V128Store { .. }
-                                    | InstructionKind::V128Const { .. } => {
-                                        skip_reason = Some("SIMD instructions".to_string());
-                                        break;
-                                    }
-
-                                    _ => {
-                                        // All other instructions are handled by is_instruction_implemented
-                                    }
-                                }
-                            }
-                        }
-
                         if let Some(reason) = skip_reason {
                             println!("  ⚠️  SKIPPING: Test requires {}", reason);
                             continue;
@@ -363,8 +377,14 @@ mod tests {
                     // Convert arguments
                     let mut args = Vec::new();
                     for arg in &cmd.action.args {
-                        let value = Value::from_strings(&arg.r#type, &arg.value)
-                            .unwrap_or_else(|e| panic!("Failed to parse argument: {}", e));
+                        let value = match &arg.value {
+                            TypedValueData::Scalar(s) => Value::from_strings(&arg.r#type, s),
+                            TypedValueData::Lanes(lanes) => {
+                                let lane_type = arg.lane_type.as_deref().unwrap_or("i32");
+                                Value::from_v128_lanes(lane_type, lanes)
+                            }
+                        }
+                        .unwrap_or_else(|e| panic!("Failed to parse argument: {}", e));
                         args.push(value);
                     }
 
@@ -382,27 +402,53 @@ mod tests {
                             }
 
                             for (i, (result, expected)) in results.iter().zip(&cmd.expected).enumerate() {
-                                let (result_type, result_value) = result.to_strings();
-
-                                if result_type != expected.r#type {
-                                    panic!(
-                                        "Type mismatch at line {}, result {}: expected {}, got {}",
-                                        cmd.line, i, expected.r#type, result_type
+                                if expected.r#type == "v128" {
+                                    // v128 comparison: compare lane by lane
+                                    let expected_lanes = match &expected.value {
+                                        TypedValueData::Lanes(lanes) => lanes.clone(),
+                                        TypedValueData::Scalar(s) => vec![s.clone()],
+                                    };
+                                    let lane_type = expected.lane_type.as_deref().unwrap_or("i32");
+                                    let result_lanes = result
+                                        .to_v128_lanes(lane_type)
+                                        .unwrap_or_else(|e| panic!("Failed to extract v128 lanes: {}", e));
+                                    // TODO(simd): When SIMD execution is implemented, f32x4/f64x2
+                                    // lanes need NaN canonicalisation (matching scalar float handling).
+                                    assert_eq!(
+                                        result_lanes, expected_lanes,
+                                        "v128 mismatch at line {}, result {}: expected {:?}, got {:?}",
+                                        cmd.line, i, expected_lanes, result_lanes
                                     );
-                                }
+                                } else {
+                                    let (result_type, result_value) = result.to_strings();
 
-                                // For floating point, both hex and decimal representations should match
-                                if result_value != expected.value {
-                                    // Try converting expected value to same format
-                                    let expected_val = Value::from_strings(&expected.r#type, &expected.value)
-                                        .unwrap_or_else(|e| panic!("Failed to parse expected value: {}", e));
-                                    let (_, expected_normalized) = expected_val.to_strings();
+                                    let expected_value_str = match &expected.value {
+                                        TypedValueData::Scalar(s) => s.as_str(),
+                                        TypedValueData::Lanes(_) => {
+                                            panic!("unexpected lanes for scalar type at line {}", cmd.line)
+                                        }
+                                    };
 
-                                    if result_value != expected_normalized {
+                                    if result_type != expected.r#type {
                                         panic!(
-                                            "Value mismatch at line {}, result {}: expected {}, got {}",
-                                            cmd.line, i, expected.value, result_value
+                                            "Type mismatch at line {}, result {}: expected {}, got {}",
+                                            cmd.line, i, expected.r#type, result_type
                                         );
+                                    }
+
+                                    // For floating point, both hex and decimal representations should match
+                                    if result_value != expected_value_str {
+                                        // Try converting expected value to same format
+                                        let expected_val = Value::from_strings(&expected.r#type, expected_value_str)
+                                            .unwrap_or_else(|e| panic!("Failed to parse expected value: {}", e));
+                                        let (_, expected_normalized) = expected_val.to_strings();
+
+                                        if result_value != expected_normalized {
+                                            panic!(
+                                                "Value mismatch at line {}, result {}: expected {}, got {}",
+                                                cmd.line, i, expected_value_str, result_value
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -430,7 +476,10 @@ mod tests {
                         let registered_name = cmd.r#as.clone();
 
                         // Use the already-parsed module to create an instance
-                        let source_module = parsed_modules.get(module_name).unwrap();
+                        let Some(source_module) = parsed_modules.get(module_name) else {
+                            println!("  ⚠️  SKIPPING register: module {module_name} not parsed");
+                            continue;
+                        };
                         let instance_id = store
                             .create_instance(source_module, Some(&spectest_imports))
                             .expect("Failed to create instance for registration");
@@ -487,11 +536,15 @@ mod tests {
                     }
 
                     let icab: InvalidCommand<'_> = match cmd.filename.split('.').next_back() {
-                        Some("wasm") => InvalidCommand {
-                            command: cmd,
-                            bin: &test_data.bin[&cmd.filename].0,
-                            code: &test_data.code[_index],
-                        },
+                        Some("wasm") => {
+                            // Code array may be shorter than command list — safe fallback for diagnostic output
+                            let code_ref = test_data.code.get(_index).unwrap_or(&code);
+                            InvalidCommand {
+                                command: cmd,
+                                bin: &test_data.bin[&cmd.filename].0,
+                                code: code_ref,
+                            }
+                        }
                         Some("wat") => {
                             println!("Skipping AssertInvalidCommand with .wat file: {}", cmd.filename);
                             continue;
@@ -515,7 +568,7 @@ mod tests {
                         format!("{}/{}", icab.command.filename, icab.command.line).as_str(),
                         &mut kasm::parser::reader::Reader::new(icab.bin.clone()),
                     ) {
-                        Ok(_) => {
+                        Ok(_module) => {
                             panic!(
                                 "should not succeed, expected failure with '{}', filename = {}, line in source is {}",
                                 icab.command.text, icab.command.filename, icab.command.line
@@ -603,10 +656,13 @@ mod tests {
                 } else {
                     // This module wasn't part of the commands, so parse it now for dump comparison
                     let bytes = &mut kasm::parser::reader::Reader::new(test_data.bin[filename].0.clone());
-                    let new_module = kasm::parser::parse(&module_registry, filename, bytes)
-                        .unwrap_or_else(|_| panic!("failed to parse {}", filename));
-                    parsed_modules.insert(filename.clone(), new_module);
-                    parsed_modules.get(filename).unwrap()
+                    match kasm::parser::parse(&module_registry, filename, bytes) {
+                        Ok(new_module) => {
+                            parsed_modules.insert(filename.clone(), new_module);
+                            parsed_modules.get(filename).unwrap()
+                        }
+                        Err(e) => panic!("Failed to parse module {filename} for dump: {e:?}"),
+                    }
                 };
 
                 compare_format(

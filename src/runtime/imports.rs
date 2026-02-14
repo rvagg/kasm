@@ -137,11 +137,7 @@ pub fn default_value_for_type(value_type: ValueType) -> Result<Value, RuntimeErr
         ValueType::F64 => Value::F64(0.0),
         ValueType::FuncRef => Value::FuncRef(None),
         ValueType::ExternRef => Value::ExternRef(None),
-        ValueType::V128 => {
-            return Err(RuntimeError::UnimplementedInstruction(
-                "V128 type not yet supported".to_string(),
-            ));
-        }
+        ValueType::V128 => Value::V128([0u8; 16]),
     })
 }
 
