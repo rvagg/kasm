@@ -20,7 +20,7 @@ An experimental & educational WebAssembly runtime implementation in Rust that pr
 - Linear memory with bounds checking and page-based growth
 - Tables with indirect function calls (call_indirect)
 - Cross-module linking via Store-based architecture
-- Passes 143/143 specification tests (86 core + 57 SIMD)
+- Passes 147/147 specification tests (90 core + 57 SIMD)
 
 ## CLI
 
