@@ -82,6 +82,16 @@ impl Stack {
             })
     }
 
+    /// Pop a v128 value
+    pub fn pop_v128(&mut self) -> Result<[u8; 16], RuntimeError> {
+        self.pop_typed(ValueType::V128)?
+            .as_v128()
+            .ok_or(RuntimeError::TypeMismatch {
+                expected: "v128".to_string(),
+                actual: "non-v128".to_string(),
+            })
+    }
+
     /// Get the current stack depth
     pub fn depth(&self) -> usize {
         self.values.len()

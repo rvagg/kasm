@@ -223,6 +223,49 @@ mod tests {
         disassemble: String,
     }
 
+    /// Check whether a result lane value (raw bit pattern) is a canonical NaN
+    fn v128_lane_is_canonical_nan(lane_bits: &str, lane_type: &str) -> bool {
+        match lane_type {
+            "f32" => {
+                let bits: u32 = match lane_bits.parse() {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                bits == 0x7fc00000 || bits == 0xffc00000
+            }
+            "f64" => {
+                let bits: u64 = match lane_bits.parse() {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                bits == 0x7ff8000000000000 || bits == 0xfff8000000000000
+            }
+            _ => false,
+        }
+    }
+
+    /// Check whether a result lane value (raw bit pattern) is any arithmetic NaN
+    /// (quiet bit set, any payload — includes canonical NaN)
+    fn v128_lane_is_arithmetic_nan(lane_bits: &str, lane_type: &str) -> bool {
+        match lane_type {
+            "f32" => {
+                let bits: u32 = match lane_bits.parse() {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                f32::from_bits(bits).is_nan() && (bits & 0x00400000) != 0
+            }
+            "f64" => {
+                let bits: u64 = match lane_bits.parse() {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                f64::from_bits(bits).is_nan() && (bits & 0x0008000000000000) != 0
+            }
+            _ => false,
+        }
+    }
+
     // Define a parameterized test
     #[rstest]
     fn test_with_file(#[files("tests/spec/*.json")] path: PathBuf) {
@@ -412,13 +455,18 @@ mod tests {
                                     let result_lanes = result
                                         .to_v128_lanes(lane_type)
                                         .unwrap_or_else(|e| panic!("Failed to extract v128 lanes: {}", e));
-                                    // TODO(simd): When SIMD execution is implemented, f32x4/f64x2
-                                    // lanes need NaN canonicalisation (matching scalar float handling).
-                                    assert_eq!(
-                                        result_lanes, expected_lanes,
-                                        "v128 mismatch at line {}, result {}: expected {:?}, got {:?}",
-                                        cmd.line, i, expected_lanes, result_lanes
-                                    );
+                                    for (j, (rl, el)) in result_lanes.iter().zip(&expected_lanes).enumerate() {
+                                        let ok = match el.as_str() {
+                                            "nan:canonical" => v128_lane_is_canonical_nan(rl, lane_type),
+                                            "nan:arithmetic" => v128_lane_is_arithmetic_nan(rl, lane_type),
+                                            _ => rl == el,
+                                        };
+                                        assert!(
+                                            ok,
+                                            "v128 lane {} mismatch at line {}, result {}: expected {}, got {}",
+                                            j, cmd.line, i, el, rl
+                                        );
+                                    }
                                 } else {
                                     let (result_type, result_value) = result.to_strings();
 
