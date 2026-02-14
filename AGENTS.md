@@ -47,20 +47,26 @@ examples/assemblyscript/  # AssemblyScript WASI examples
   assembly/         # Source files (index.ts, echo.ts, grep.ts, env.ts, std.ts)
   build/            # Compiled .wasm output (gitignored, built by check.sh)
 
+examples/commp/           # Filecoin CommP (Rust → WASI, SIMD-enabled)
+  src/lib.rs        # CommP algorithm (FR32 padding, SHA256 merkle tree)
+  src/main.rs       # CLI entry point (stdin → hex hash)
+
 benches/                # Criterion benchmarks
   modules/          # WAT modules for benchmarking
 ```
 
 ## Status
-- 191+ instructions implemented (see src/runtime/implemented.rs)
-- 86/86 core spec tests pass (21,303 assertions)
+- 427+ instructions implemented including all 236 SIMD (see src/runtime/implemented.rs)
+- 143/143 spec tests pass (86 core + 57 SIMD)
+- 704 unit tests, 82 encoder tests, 18 WASI tests
+- SIMD: all v128 operations (integer, float, bitwise, comparison, shuffle, conversion, memory)
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
 - AssemblyScript support: env.abort with UTF-16 string extraction
 - WAT parser: complete WebAssembly 1.0 text format (inline exports, structured control flow)
-- Binary encoder: Module → .wasm (all 13 sections, 81 tests including spec fixture round-trips)
+- Binary encoder: Module → .wasm (all 13 sections, 82 tests including spec fixture round-trips)
 - CLI: run/dump accept .wat natively, compile subcommand (WAT → .wasm)
 - No external `wat` crate dependency — all WAT parsing uses kasm::wat::parse()
-- Missing: SIMD (v128), filesystem operations
+- Missing: filesystem operations
 
 ## CLI
 ```bash
@@ -160,6 +166,28 @@ cargo bench --bench validation          # Parser/validation benchmarks
 
 Results saved to `target/criterion/` with HTML reports.
 
+**CommP benchmark** (real-world SIMD workload):
+
+The `examples/commp/` Rust project compiles to a SIMD-enabled WASM binary (313 SIMD instructions)
+that computes Filecoin Piece Commitments using SHA256 merkle trees.
+
+```bash
+# Regenerate benchmark file (500,000 bytes of 0x42, deterministic)
+python3 -c "import sys; sys.stdout.buffer.write(b'\x42' * 500000)" > benches/commp_bench_500k.bin
+
+# Rebuild commp with SIMD
+cd examples/commp && RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1 --release
+
+# Run benchmark
+time cat benches/commp_bench_500k.bin | target/release/kasm run examples/commp/target/wasm32-wasip1/release/commp.wasm
+```
+
+| Metric | Value |
+|--------|-------|
+| Expected hash | `c1bb8f1985dbf4bf34d06c7190d10a916d228dccd668ba87a10cb1cf0cf3b523` |
+| Baseline time | ~5.05s |
+| Throughput | ~99 KB/s |
+
 ## Adding Instructions
 1. Add to `InstructionKind` enum (src/parser/instruction/mod.rs)
 2. Add decoding in `decode_instruction()` (src/parser/instruction/decode.rs)
@@ -245,7 +273,7 @@ assert_eq!(&bytes[0..4], b"\0asm");
 **Testing strategy:** Encode stability — encode a Module to bytes A, parse A back, re-encode to bytes B, assert A == B. This avoids needing PartialEq on Module types.
 
 ```bash
-cargo test --test encoder_tests    # 80 encoder tests
+cargo test --test encoder_tests    # 82 encoder tests
 ```
 
 ## Key Files

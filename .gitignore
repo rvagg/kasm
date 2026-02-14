@@ -9,3 +9,4 @@ package-lock.json
 tests/wasi/hello.wasm
 node_modules/
 examples/commp/commp.wasm
+benches/commp_bench_500k.bin
