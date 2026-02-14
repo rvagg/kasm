@@ -263,6 +263,276 @@ pub fn get_implemented_instructions() -> HashSet<String> {
     implemented.insert("i64.trunc_sat_f64_s".to_string());
     implemented.insert("i64.trunc_sat_f64_u".to_string());
 
+    // SIMD v128 foundation
+    implemented.insert("v128.const".to_string());
+    implemented.insert("v128.load".to_string());
+    implemented.insert("v128.store".to_string());
+
+    // SIMD f32x4 operations
+    implemented.insert("f32x4.abs".to_string());
+    implemented.insert("f32x4.neg".to_string());
+    implemented.insert("f32x4.sqrt".to_string());
+    implemented.insert("f32x4.ceil".to_string());
+    implemented.insert("f32x4.floor".to_string());
+    implemented.insert("f32x4.trunc".to_string());
+    implemented.insert("f32x4.nearest".to_string());
+    implemented.insert("f32x4.add".to_string());
+    implemented.insert("f32x4.sub".to_string());
+    implemented.insert("f32x4.mul".to_string());
+    implemented.insert("f32x4.div".to_string());
+    implemented.insert("f32x4.min".to_string());
+    implemented.insert("f32x4.max".to_string());
+    implemented.insert("f32x4.pmin".to_string());
+    implemented.insert("f32x4.pmax".to_string());
+    implemented.insert("f32x4.eq".to_string());
+    implemented.insert("f32x4.ne".to_string());
+    implemented.insert("f32x4.lt".to_string());
+    implemented.insert("f32x4.gt".to_string());
+    implemented.insert("f32x4.le".to_string());
+    implemented.insert("f32x4.ge".to_string());
+
+    // SIMD f64x2 operations
+    implemented.insert("f64x2.abs".to_string());
+    implemented.insert("f64x2.neg".to_string());
+    implemented.insert("f64x2.sqrt".to_string());
+    implemented.insert("f64x2.ceil".to_string());
+    implemented.insert("f64x2.floor".to_string());
+    implemented.insert("f64x2.trunc".to_string());
+    implemented.insert("f64x2.nearest".to_string());
+    implemented.insert("f64x2.add".to_string());
+    implemented.insert("f64x2.sub".to_string());
+    implemented.insert("f64x2.mul".to_string());
+    implemented.insert("f64x2.div".to_string());
+    implemented.insert("f64x2.min".to_string());
+    implemented.insert("f64x2.max".to_string());
+    implemented.insert("f64x2.pmin".to_string());
+    implemented.insert("f64x2.pmax".to_string());
+    implemented.insert("f64x2.eq".to_string());
+    implemented.insert("f64x2.ne".to_string());
+    implemented.insert("f64x2.lt".to_string());
+    implemented.insert("f64x2.gt".to_string());
+    implemented.insert("f64x2.le".to_string());
+    implemented.insert("f64x2.ge".to_string());
+
+    // SIMD memory operations
+    implemented.insert("v128.load8x8_s".to_string());
+    implemented.insert("v128.load8x8_u".to_string());
+    implemented.insert("v128.load16x4_s".to_string());
+    implemented.insert("v128.load16x4_u".to_string());
+    implemented.insert("v128.load32x2_s".to_string());
+    implemented.insert("v128.load32x2_u".to_string());
+    implemented.insert("v128.load8_splat".to_string());
+    implemented.insert("v128.load16_splat".to_string());
+    implemented.insert("v128.load32_splat".to_string());
+    implemented.insert("v128.load64_splat".to_string());
+    implemented.insert("v128.load32_zero".to_string());
+    implemented.insert("v128.load64_zero".to_string());
+    implemented.insert("v128.load8_lane".to_string());
+    implemented.insert("v128.load16_lane".to_string());
+    implemented.insert("v128.load32_lane".to_string());
+    implemented.insert("v128.load64_lane".to_string());
+    implemented.insert("v128.store8_lane".to_string());
+    implemented.insert("v128.store16_lane".to_string());
+    implemented.insert("v128.store32_lane".to_string());
+    implemented.insert("v128.store64_lane".to_string());
+
+    // SIMD shuffle/swizzle
+    implemented.insert("i8x16.shuffle".to_string());
+    implemented.insert("i8x16.swizzle".to_string());
+
+    // SIMD splat
+    implemented.insert("i8x16.splat".to_string());
+    implemented.insert("i16x8.splat".to_string());
+    implemented.insert("i32x4.splat".to_string());
+    implemented.insert("i64x2.splat".to_string());
+    implemented.insert("f32x4.splat".to_string());
+    implemented.insert("f64x2.splat".to_string());
+
+    // SIMD extract/replace lane
+    implemented.insert("i8x16.extract_lane_s".to_string());
+    implemented.insert("i8x16.extract_lane_u".to_string());
+    implemented.insert("i8x16.replace_lane".to_string());
+    implemented.insert("i16x8.extract_lane_s".to_string());
+    implemented.insert("i16x8.extract_lane_u".to_string());
+    implemented.insert("i16x8.replace_lane".to_string());
+    implemented.insert("i32x4.extract_lane".to_string());
+    implemented.insert("i32x4.replace_lane".to_string());
+    implemented.insert("i64x2.extract_lane".to_string());
+    implemented.insert("i64x2.replace_lane".to_string());
+    implemented.insert("f32x4.extract_lane".to_string());
+    implemented.insert("f32x4.replace_lane".to_string());
+    implemented.insert("f64x2.extract_lane".to_string());
+    implemented.insert("f64x2.replace_lane".to_string());
+
+    // SIMD i8x16 comparisons
+    implemented.insert("i8x16.eq".to_string());
+    implemented.insert("i8x16.ne".to_string());
+    implemented.insert("i8x16.lt_s".to_string());
+    implemented.insert("i8x16.lt_u".to_string());
+    implemented.insert("i8x16.gt_s".to_string());
+    implemented.insert("i8x16.gt_u".to_string());
+    implemented.insert("i8x16.le_s".to_string());
+    implemented.insert("i8x16.le_u".to_string());
+    implemented.insert("i8x16.ge_s".to_string());
+    implemented.insert("i8x16.ge_u".to_string());
+
+    // SIMD i16x8 comparisons
+    implemented.insert("i16x8.eq".to_string());
+    implemented.insert("i16x8.ne".to_string());
+    implemented.insert("i16x8.lt_s".to_string());
+    implemented.insert("i16x8.lt_u".to_string());
+    implemented.insert("i16x8.gt_s".to_string());
+    implemented.insert("i16x8.gt_u".to_string());
+    implemented.insert("i16x8.le_s".to_string());
+    implemented.insert("i16x8.le_u".to_string());
+    implemented.insert("i16x8.ge_s".to_string());
+    implemented.insert("i16x8.ge_u".to_string());
+
+    // SIMD i32x4 comparisons
+    implemented.insert("i32x4.eq".to_string());
+    implemented.insert("i32x4.ne".to_string());
+    implemented.insert("i32x4.lt_s".to_string());
+    implemented.insert("i32x4.lt_u".to_string());
+    implemented.insert("i32x4.gt_s".to_string());
+    implemented.insert("i32x4.gt_u".to_string());
+    implemented.insert("i32x4.le_s".to_string());
+    implemented.insert("i32x4.le_u".to_string());
+    implemented.insert("i32x4.ge_s".to_string());
+    implemented.insert("i32x4.ge_u".to_string());
+
+    // SIMD i64x2 comparisons
+    implemented.insert("i64x2.eq".to_string());
+    implemented.insert("i64x2.ne".to_string());
+    implemented.insert("i64x2.lt_s".to_string());
+    implemented.insert("i64x2.gt_s".to_string());
+    implemented.insert("i64x2.le_s".to_string());
+    implemented.insert("i64x2.ge_s".to_string());
+
+    // SIMD v128 bitwise
+    implemented.insert("v128.not".to_string());
+    implemented.insert("v128.and".to_string());
+    implemented.insert("v128.andnot".to_string());
+    implemented.insert("v128.or".to_string());
+    implemented.insert("v128.xor".to_string());
+    implemented.insert("v128.bitselect".to_string());
+    implemented.insert("v128.any_true".to_string());
+
+    // SIMD i8x16 operations
+    implemented.insert("i8x16.abs".to_string());
+    implemented.insert("i8x16.neg".to_string());
+    implemented.insert("i8x16.popcnt".to_string());
+    implemented.insert("i8x16.all_true".to_string());
+    implemented.insert("i8x16.bitmask".to_string());
+    implemented.insert("i8x16.narrow_i16x8_s".to_string());
+    implemented.insert("i8x16.narrow_i16x8_u".to_string());
+    implemented.insert("i8x16.shl".to_string());
+    implemented.insert("i8x16.shr_s".to_string());
+    implemented.insert("i8x16.shr_u".to_string());
+    implemented.insert("i8x16.add".to_string());
+    implemented.insert("i8x16.add_sat_s".to_string());
+    implemented.insert("i8x16.add_sat_u".to_string());
+    implemented.insert("i8x16.sub".to_string());
+    implemented.insert("i8x16.sub_sat_s".to_string());
+    implemented.insert("i8x16.sub_sat_u".to_string());
+    implemented.insert("i8x16.min_s".to_string());
+    implemented.insert("i8x16.min_u".to_string());
+    implemented.insert("i8x16.max_s".to_string());
+    implemented.insert("i8x16.max_u".to_string());
+    implemented.insert("i8x16.avgr_u".to_string());
+
+    // SIMD i16x8 operations
+    implemented.insert("i16x8.abs".to_string());
+    implemented.insert("i16x8.neg".to_string());
+    implemented.insert("i16x8.q15mulr_sat_s".to_string());
+    implemented.insert("i16x8.all_true".to_string());
+    implemented.insert("i16x8.bitmask".to_string());
+    implemented.insert("i16x8.narrow_i32x4_s".to_string());
+    implemented.insert("i16x8.narrow_i32x4_u".to_string());
+    implemented.insert("i16x8.extend_low_i8x16_s".to_string());
+    implemented.insert("i16x8.extend_high_i8x16_s".to_string());
+    implemented.insert("i16x8.extend_low_i8x16_u".to_string());
+    implemented.insert("i16x8.extend_high_i8x16_u".to_string());
+    implemented.insert("i16x8.shl".to_string());
+    implemented.insert("i16x8.shr_s".to_string());
+    implemented.insert("i16x8.shr_u".to_string());
+    implemented.insert("i16x8.add".to_string());
+    implemented.insert("i16x8.add_sat_s".to_string());
+    implemented.insert("i16x8.add_sat_u".to_string());
+    implemented.insert("i16x8.sub".to_string());
+    implemented.insert("i16x8.sub_sat_s".to_string());
+    implemented.insert("i16x8.sub_sat_u".to_string());
+    implemented.insert("i16x8.mul".to_string());
+    implemented.insert("i16x8.min_s".to_string());
+    implemented.insert("i16x8.min_u".to_string());
+    implemented.insert("i16x8.max_s".to_string());
+    implemented.insert("i16x8.max_u".to_string());
+    implemented.insert("i16x8.avgr_u".to_string());
+    implemented.insert("i16x8.extmul_low_i8x16_s".to_string());
+    implemented.insert("i16x8.extmul_high_i8x16_s".to_string());
+    implemented.insert("i16x8.extmul_low_i8x16_u".to_string());
+    implemented.insert("i16x8.extmul_high_i8x16_u".to_string());
+    implemented.insert("i16x8.extadd_pairwise_i8x16_s".to_string());
+    implemented.insert("i16x8.extadd_pairwise_i8x16_u".to_string());
+
+    // SIMD i32x4 operations
+    implemented.insert("i32x4.abs".to_string());
+    implemented.insert("i32x4.neg".to_string());
+    implemented.insert("i32x4.all_true".to_string());
+    implemented.insert("i32x4.bitmask".to_string());
+    implemented.insert("i32x4.extend_low_i16x8_s".to_string());
+    implemented.insert("i32x4.extend_high_i16x8_s".to_string());
+    implemented.insert("i32x4.extend_low_i16x8_u".to_string());
+    implemented.insert("i32x4.extend_high_i16x8_u".to_string());
+    implemented.insert("i32x4.shl".to_string());
+    implemented.insert("i32x4.shr_s".to_string());
+    implemented.insert("i32x4.shr_u".to_string());
+    implemented.insert("i32x4.add".to_string());
+    implemented.insert("i32x4.sub".to_string());
+    implemented.insert("i32x4.mul".to_string());
+    implemented.insert("i32x4.min_s".to_string());
+    implemented.insert("i32x4.min_u".to_string());
+    implemented.insert("i32x4.max_s".to_string());
+    implemented.insert("i32x4.max_u".to_string());
+    implemented.insert("i32x4.dot_i16x8_s".to_string());
+    implemented.insert("i32x4.extmul_low_i16x8_s".to_string());
+    implemented.insert("i32x4.extmul_high_i16x8_s".to_string());
+    implemented.insert("i32x4.extmul_low_i16x8_u".to_string());
+    implemented.insert("i32x4.extmul_high_i16x8_u".to_string());
+    implemented.insert("i32x4.extadd_pairwise_i16x8_s".to_string());
+    implemented.insert("i32x4.extadd_pairwise_i16x8_u".to_string());
+
+    // SIMD i64x2 operations
+    implemented.insert("i64x2.abs".to_string());
+    implemented.insert("i64x2.neg".to_string());
+    implemented.insert("i64x2.all_true".to_string());
+    implemented.insert("i64x2.bitmask".to_string());
+    implemented.insert("i64x2.extend_low_i32x4_s".to_string());
+    implemented.insert("i64x2.extend_high_i32x4_s".to_string());
+    implemented.insert("i64x2.extend_low_i32x4_u".to_string());
+    implemented.insert("i64x2.extend_high_i32x4_u".to_string());
+    implemented.insert("i64x2.shl".to_string());
+    implemented.insert("i64x2.shr_s".to_string());
+    implemented.insert("i64x2.shr_u".to_string());
+    implemented.insert("i64x2.add".to_string());
+    implemented.insert("i64x2.sub".to_string());
+    implemented.insert("i64x2.mul".to_string());
+    implemented.insert("i64x2.extmul_low_i32x4_s".to_string());
+    implemented.insert("i64x2.extmul_high_i32x4_s".to_string());
+    implemented.insert("i64x2.extmul_low_i32x4_u".to_string());
+    implemented.insert("i64x2.extmul_high_i32x4_u".to_string());
+
+    // SIMD conversion operations
+    implemented.insert("i32x4.trunc_sat_f32x4_s".to_string());
+    implemented.insert("i32x4.trunc_sat_f32x4_u".to_string());
+    implemented.insert("f32x4.convert_i32x4_s".to_string());
+    implemented.insert("f32x4.convert_i32x4_u".to_string());
+    implemented.insert("i32x4.trunc_sat_f64x2_s_zero".to_string());
+    implemented.insert("i32x4.trunc_sat_f64x2_u_zero".to_string());
+    implemented.insert("f64x2.convert_low_i32x4_s".to_string());
+    implemented.insert("f64x2.convert_low_i32x4_u".to_string());
+    implemented.insert("f32x4.demote_f64x2_zero".to_string());
+    implemented.insert("f64x2.promote_low_f32x4".to_string());
+
     implemented
 }
 

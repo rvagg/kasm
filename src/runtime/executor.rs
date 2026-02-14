@@ -2471,7 +2471,354 @@ impl<'a> Executor<'a> {
             }
 
             // SIMD instructions
-            Simd(_op) => Err(RuntimeError::Trap("SIMD instructions not yet implemented".to_string())),
+            Simd(op) => {
+                macro_rules! simd_mem {
+                    (load $fn:ident($memarg:expr)) => {{
+                        let memory = self
+                            .memories
+                            .first()
+                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                        let mem_guard = memory
+                            .lock()
+                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                        ops::simd::$fn(&mut self.stack, &mem_guard, $memarg)?;
+                        Ok(BlockEnd::Normal)
+                    }};
+                    (store $fn:ident($memarg:expr)) => {{
+                        let memory = self
+                            .memories
+                            .first()
+                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                        let mut mem_guard = memory
+                            .lock()
+                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                        ops::simd::$fn(&mut self.stack, &mut mem_guard, $memarg)?;
+                        Ok(BlockEnd::Normal)
+                    }};
+                }
+                // Dispatch stack-only SIMD ops via macro to avoid rustfmt bloat
+                macro_rules! simd_op {
+                    ($fn:ident) => {{
+                        ops::simd::$fn(&mut self.stack)?;
+                        Ok(BlockEnd::Normal)
+                    }};
+                }
+                // Dispatch SIMD ops that take a lane index
+                macro_rules! simd_lane_op {
+                    ($fn:ident, $lane:expr) => {{
+                        ops::simd::$fn(&mut self.stack, $lane)?;
+                        Ok(BlockEnd::Normal)
+                    }};
+                }
+                // Dispatch SIMD load-lane ops (memarg + lane + v128 + i32 on stack)
+                macro_rules! simd_mem_lane {
+                    (load $fn:ident($memarg:expr, $lane:expr)) => {{
+                        let memory = self
+                            .memories
+                            .first()
+                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                        let mem_guard = memory
+                            .lock()
+                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                        ops::simd::$fn(&mut self.stack, &mem_guard, $memarg, *$lane)?;
+                        Ok(BlockEnd::Normal)
+                    }};
+                    (store $fn:ident($memarg:expr, $lane:expr)) => {{
+                        let memory = self
+                            .memories
+                            .first()
+                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
+                        let mut mem_guard = memory
+                            .lock()
+                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                        ops::simd::$fn(&mut self.stack, &mut mem_guard, $memarg, *$lane)?;
+                        Ok(BlockEnd::Normal)
+                    }};
+                }
+                match op {
+                    // Constant
+                    SimdOp::V128Const { value } => {
+                        self.stack.push(Value::V128(*value));
+                        Ok(BlockEnd::Normal)
+                    }
+
+                    // Memory load/store
+                    SimdOp::V128Load { memarg } => simd_mem!(load v128_load(memarg)),
+                    SimdOp::V128Load8x8S { memarg } => simd_mem!(load v128_load8x8_s(memarg)),
+                    SimdOp::V128Load8x8U { memarg } => simd_mem!(load v128_load8x8_u(memarg)),
+                    SimdOp::V128Load16x4S { memarg } => simd_mem!(load v128_load16x4_s(memarg)),
+                    SimdOp::V128Load16x4U { memarg } => simd_mem!(load v128_load16x4_u(memarg)),
+                    SimdOp::V128Load32x2S { memarg } => simd_mem!(load v128_load32x2_s(memarg)),
+                    SimdOp::V128Load32x2U { memarg } => simd_mem!(load v128_load32x2_u(memarg)),
+                    SimdOp::V128Load8Splat { memarg } => simd_mem!(load v128_load8_splat(memarg)),
+                    SimdOp::V128Load16Splat { memarg } => simd_mem!(load v128_load16_splat(memarg)),
+                    SimdOp::V128Load32Splat { memarg } => simd_mem!(load v128_load32_splat(memarg)),
+                    SimdOp::V128Load64Splat { memarg } => simd_mem!(load v128_load64_splat(memarg)),
+                    SimdOp::V128Load32Zero { memarg } => simd_mem!(load v128_load32_zero(memarg)),
+                    SimdOp::V128Load64Zero { memarg } => simd_mem!(load v128_load64_zero(memarg)),
+                    SimdOp::V128Store { memarg } => simd_mem!(store v128_store(memarg)),
+
+                    // Memory load/store lane
+                    SimdOp::V128Load8Lane { memarg, lane } => simd_mem_lane!(load v128_load8_lane(memarg, lane)),
+                    SimdOp::V128Load16Lane { memarg, lane } => simd_mem_lane!(load v128_load16_lane(memarg, lane)),
+                    SimdOp::V128Load32Lane { memarg, lane } => simd_mem_lane!(load v128_load32_lane(memarg, lane)),
+                    SimdOp::V128Load64Lane { memarg, lane } => simd_mem_lane!(load v128_load64_lane(memarg, lane)),
+                    SimdOp::V128Store8Lane { memarg, lane } => simd_mem_lane!(store v128_store8_lane(memarg, lane)),
+                    SimdOp::V128Store16Lane { memarg, lane } => simd_mem_lane!(store v128_store16_lane(memarg, lane)),
+                    SimdOp::V128Store32Lane { memarg, lane } => simd_mem_lane!(store v128_store32_lane(memarg, lane)),
+                    SimdOp::V128Store64Lane { memarg, lane } => simd_mem_lane!(store v128_store64_lane(memarg, lane)),
+
+                    // Shuffle and swizzle
+                    SimdOp::I8x16Shuffle { lanes } => {
+                        ops::simd::i8x16_shuffle(&mut self.stack, lanes)?;
+                        Ok(BlockEnd::Normal)
+                    }
+                    SimdOp::I8x16Swizzle => simd_op!(i8x16_swizzle),
+
+                    // Splat
+                    SimdOp::I8x16Splat => simd_op!(i8x16_splat),
+                    SimdOp::I16x8Splat => simd_op!(i16x8_splat),
+                    SimdOp::I32x4Splat => simd_op!(i32x4_splat),
+                    SimdOp::I64x2Splat => simd_op!(i64x2_splat),
+                    SimdOp::F32x4Splat => simd_op!(f32x4_splat),
+                    SimdOp::F64x2Splat => simd_op!(f64x2_splat),
+
+                    // Lane extraction
+                    SimdOp::I8x16ExtractLaneS { lane } => simd_lane_op!(i8x16_extract_lane_s, *lane),
+                    SimdOp::I8x16ExtractLaneU { lane } => simd_lane_op!(i8x16_extract_lane_u, *lane),
+                    SimdOp::I8x16ReplaceLane { lane } => simd_lane_op!(i8x16_replace_lane, *lane),
+                    SimdOp::I16x8ExtractLaneS { lane } => simd_lane_op!(i16x8_extract_lane_s, *lane),
+                    SimdOp::I16x8ExtractLaneU { lane } => simd_lane_op!(i16x8_extract_lane_u, *lane),
+                    SimdOp::I16x8ReplaceLane { lane } => simd_lane_op!(i16x8_replace_lane, *lane),
+                    SimdOp::I32x4ExtractLane { lane } => simd_lane_op!(i32x4_extract_lane, *lane),
+                    SimdOp::I32x4ReplaceLane { lane } => simd_lane_op!(i32x4_replace_lane, *lane),
+                    SimdOp::I64x2ExtractLane { lane } => simd_lane_op!(i64x2_extract_lane, *lane),
+                    SimdOp::I64x2ReplaceLane { lane } => simd_lane_op!(i64x2_replace_lane, *lane),
+                    SimdOp::F32x4ExtractLane { lane } => simd_lane_op!(f32x4_extract_lane, *lane),
+                    SimdOp::F32x4ReplaceLane { lane } => simd_lane_op!(f32x4_replace_lane, *lane),
+                    SimdOp::F64x2ExtractLane { lane } => simd_lane_op!(f64x2_extract_lane, *lane),
+                    SimdOp::F64x2ReplaceLane { lane } => simd_lane_op!(f64x2_replace_lane, *lane),
+
+                    // i8x16 comparisons
+                    SimdOp::I8x16Eq => simd_op!(i8x16_eq),
+                    SimdOp::I8x16Ne => simd_op!(i8x16_ne),
+                    SimdOp::I8x16LtS => simd_op!(i8x16_lt_s),
+                    SimdOp::I8x16LtU => simd_op!(i8x16_lt_u),
+                    SimdOp::I8x16GtS => simd_op!(i8x16_gt_s),
+                    SimdOp::I8x16GtU => simd_op!(i8x16_gt_u),
+                    SimdOp::I8x16LeS => simd_op!(i8x16_le_s),
+                    SimdOp::I8x16LeU => simd_op!(i8x16_le_u),
+                    SimdOp::I8x16GeS => simd_op!(i8x16_ge_s),
+                    SimdOp::I8x16GeU => simd_op!(i8x16_ge_u),
+
+                    // i16x8 comparisons
+                    SimdOp::I16x8Eq => simd_op!(i16x8_eq),
+                    SimdOp::I16x8Ne => simd_op!(i16x8_ne),
+                    SimdOp::I16x8LtS => simd_op!(i16x8_lt_s),
+                    SimdOp::I16x8LtU => simd_op!(i16x8_lt_u),
+                    SimdOp::I16x8GtS => simd_op!(i16x8_gt_s),
+                    SimdOp::I16x8GtU => simd_op!(i16x8_gt_u),
+                    SimdOp::I16x8LeS => simd_op!(i16x8_le_s),
+                    SimdOp::I16x8LeU => simd_op!(i16x8_le_u),
+                    SimdOp::I16x8GeS => simd_op!(i16x8_ge_s),
+                    SimdOp::I16x8GeU => simd_op!(i16x8_ge_u),
+
+                    // i32x4 comparisons
+                    SimdOp::I32x4Eq => simd_op!(i32x4_eq),
+                    SimdOp::I32x4Ne => simd_op!(i32x4_ne),
+                    SimdOp::I32x4LtS => simd_op!(i32x4_lt_s),
+                    SimdOp::I32x4LtU => simd_op!(i32x4_lt_u),
+                    SimdOp::I32x4GtS => simd_op!(i32x4_gt_s),
+                    SimdOp::I32x4GtU => simd_op!(i32x4_gt_u),
+                    SimdOp::I32x4LeS => simd_op!(i32x4_le_s),
+                    SimdOp::I32x4LeU => simd_op!(i32x4_le_u),
+                    SimdOp::I32x4GeS => simd_op!(i32x4_ge_s),
+                    SimdOp::I32x4GeU => simd_op!(i32x4_ge_u),
+
+                    // i64x2 comparisons
+                    SimdOp::I64x2Eq => simd_op!(i64x2_eq),
+                    SimdOp::I64x2Ne => simd_op!(i64x2_ne),
+                    SimdOp::I64x2LtS => simd_op!(i64x2_lt_s),
+                    SimdOp::I64x2GtS => simd_op!(i64x2_gt_s),
+                    SimdOp::I64x2LeS => simd_op!(i64x2_le_s),
+                    SimdOp::I64x2GeS => simd_op!(i64x2_ge_s),
+
+                    // f32x4 comparisons
+                    SimdOp::F32x4Eq => simd_op!(f32x4_eq),
+                    SimdOp::F32x4Ne => simd_op!(f32x4_ne),
+                    SimdOp::F32x4Lt => simd_op!(f32x4_lt),
+                    SimdOp::F32x4Gt => simd_op!(f32x4_gt),
+                    SimdOp::F32x4Le => simd_op!(f32x4_le),
+                    SimdOp::F32x4Ge => simd_op!(f32x4_ge),
+
+                    // f64x2 comparisons
+                    SimdOp::F64x2Eq => simd_op!(f64x2_eq),
+                    SimdOp::F64x2Ne => simd_op!(f64x2_ne),
+                    SimdOp::F64x2Lt => simd_op!(f64x2_lt),
+                    SimdOp::F64x2Gt => simd_op!(f64x2_gt),
+                    SimdOp::F64x2Le => simd_op!(f64x2_le),
+                    SimdOp::F64x2Ge => simd_op!(f64x2_ge),
+
+                    // v128 bitwise
+                    SimdOp::V128Not => simd_op!(v128_not),
+                    SimdOp::V128And => simd_op!(v128_and),
+                    SimdOp::V128AndNot => simd_op!(v128_andnot),
+                    SimdOp::V128Or => simd_op!(v128_or),
+                    SimdOp::V128Xor => simd_op!(v128_xor),
+                    SimdOp::V128Bitselect => simd_op!(v128_bitselect),
+                    SimdOp::V128AnyTrue => simd_op!(v128_any_true),
+
+                    // i8x16 operations
+                    SimdOp::I8x16Abs => simd_op!(i8x16_abs),
+                    SimdOp::I8x16Neg => simd_op!(i8x16_neg),
+                    SimdOp::I8x16Popcnt => simd_op!(i8x16_popcnt),
+                    SimdOp::I8x16AllTrue => simd_op!(i8x16_all_true),
+                    SimdOp::I8x16Bitmask => simd_op!(i8x16_bitmask),
+                    SimdOp::I8x16NarrowI16x8S => simd_op!(i8x16_narrow_i16x8_s),
+                    SimdOp::I8x16NarrowI16x8U => simd_op!(i8x16_narrow_i16x8_u),
+                    SimdOp::I8x16Shl => simd_op!(i8x16_shl),
+                    SimdOp::I8x16ShrS => simd_op!(i8x16_shr_s),
+                    SimdOp::I8x16ShrU => simd_op!(i8x16_shr_u),
+                    SimdOp::I8x16Add => simd_op!(i8x16_add),
+                    SimdOp::I8x16AddSatS => simd_op!(i8x16_add_sat_s),
+                    SimdOp::I8x16AddSatU => simd_op!(i8x16_add_sat_u),
+                    SimdOp::I8x16Sub => simd_op!(i8x16_sub),
+                    SimdOp::I8x16SubSatS => simd_op!(i8x16_sub_sat_s),
+                    SimdOp::I8x16SubSatU => simd_op!(i8x16_sub_sat_u),
+                    SimdOp::I8x16MinS => simd_op!(i8x16_min_s),
+                    SimdOp::I8x16MinU => simd_op!(i8x16_min_u),
+                    SimdOp::I8x16MaxS => simd_op!(i8x16_max_s),
+                    SimdOp::I8x16MaxU => simd_op!(i8x16_max_u),
+                    SimdOp::I8x16AvgrU => simd_op!(i8x16_avgr_u),
+
+                    // i16x8 operations
+                    SimdOp::I16x8ExtAddPairwiseI8x16S => simd_op!(i16x8_extadd_pairwise_i8x16_s),
+                    SimdOp::I16x8ExtAddPairwiseI8x16U => simd_op!(i16x8_extadd_pairwise_i8x16_u),
+                    SimdOp::I16x8Abs => simd_op!(i16x8_abs),
+                    SimdOp::I16x8Neg => simd_op!(i16x8_neg),
+                    SimdOp::I16x8Q15MulrSatS => simd_op!(i16x8_q15mulr_sat_s),
+                    SimdOp::I16x8AllTrue => simd_op!(i16x8_all_true),
+                    SimdOp::I16x8Bitmask => simd_op!(i16x8_bitmask),
+                    SimdOp::I16x8NarrowI32x4S => simd_op!(i16x8_narrow_i32x4_s),
+                    SimdOp::I16x8NarrowI32x4U => simd_op!(i16x8_narrow_i32x4_u),
+                    SimdOp::I16x8ExtendLowI8x16S => simd_op!(i16x8_extend_low_i8x16_s),
+                    SimdOp::I16x8ExtendHighI8x16S => simd_op!(i16x8_extend_high_i8x16_s),
+                    SimdOp::I16x8ExtendLowI8x16U => simd_op!(i16x8_extend_low_i8x16_u),
+                    SimdOp::I16x8ExtendHighI8x16U => simd_op!(i16x8_extend_high_i8x16_u),
+                    SimdOp::I16x8Shl => simd_op!(i16x8_shl),
+                    SimdOp::I16x8ShrS => simd_op!(i16x8_shr_s),
+                    SimdOp::I16x8ShrU => simd_op!(i16x8_shr_u),
+                    SimdOp::I16x8Add => simd_op!(i16x8_add),
+                    SimdOp::I16x8AddSatS => simd_op!(i16x8_add_sat_s),
+                    SimdOp::I16x8AddSatU => simd_op!(i16x8_add_sat_u),
+                    SimdOp::I16x8Sub => simd_op!(i16x8_sub),
+                    SimdOp::I16x8SubSatS => simd_op!(i16x8_sub_sat_s),
+                    SimdOp::I16x8SubSatU => simd_op!(i16x8_sub_sat_u),
+                    SimdOp::I16x8Mul => simd_op!(i16x8_mul),
+                    SimdOp::I16x8MinS => simd_op!(i16x8_min_s),
+                    SimdOp::I16x8MinU => simd_op!(i16x8_min_u),
+                    SimdOp::I16x8MaxS => simd_op!(i16x8_max_s),
+                    SimdOp::I16x8MaxU => simd_op!(i16x8_max_u),
+                    SimdOp::I16x8AvgrU => simd_op!(i16x8_avgr_u),
+                    SimdOp::I16x8ExtMulLowI8x16S => simd_op!(i16x8_extmul_low_i8x16_s),
+                    SimdOp::I16x8ExtMulHighI8x16S => simd_op!(i16x8_extmul_high_i8x16_s),
+                    SimdOp::I16x8ExtMulLowI8x16U => simd_op!(i16x8_extmul_low_i8x16_u),
+                    SimdOp::I16x8ExtMulHighI8x16U => simd_op!(i16x8_extmul_high_i8x16_u),
+
+                    // i32x4 operations
+                    SimdOp::I32x4ExtAddPairwiseI16x8S => simd_op!(i32x4_extadd_pairwise_i16x8_s),
+                    SimdOp::I32x4ExtAddPairwiseI16x8U => simd_op!(i32x4_extadd_pairwise_i16x8_u),
+                    SimdOp::I32x4Abs => simd_op!(i32x4_abs),
+                    SimdOp::I32x4Neg => simd_op!(i32x4_neg),
+                    SimdOp::I32x4AllTrue => simd_op!(i32x4_all_true),
+                    SimdOp::I32x4Bitmask => simd_op!(i32x4_bitmask),
+                    SimdOp::I32x4ExtendLowI16x8S => simd_op!(i32x4_extend_low_i16x8_s),
+                    SimdOp::I32x4ExtendHighI16x8S => simd_op!(i32x4_extend_high_i16x8_s),
+                    SimdOp::I32x4ExtendLowI16x8U => simd_op!(i32x4_extend_low_i16x8_u),
+                    SimdOp::I32x4ExtendHighI16x8U => simd_op!(i32x4_extend_high_i16x8_u),
+                    SimdOp::I32x4Shl => simd_op!(i32x4_shl),
+                    SimdOp::I32x4ShrS => simd_op!(i32x4_shr_s),
+                    SimdOp::I32x4ShrU => simd_op!(i32x4_shr_u),
+                    SimdOp::I32x4Add => simd_op!(i32x4_add),
+                    SimdOp::I32x4Sub => simd_op!(i32x4_sub),
+                    SimdOp::I32x4Mul => simd_op!(i32x4_mul),
+                    SimdOp::I32x4MinS => simd_op!(i32x4_min_s),
+                    SimdOp::I32x4MinU => simd_op!(i32x4_min_u),
+                    SimdOp::I32x4MaxS => simd_op!(i32x4_max_s),
+                    SimdOp::I32x4MaxU => simd_op!(i32x4_max_u),
+                    SimdOp::I32x4DotI16x8S => simd_op!(i32x4_dot_i16x8_s),
+                    SimdOp::I32x4ExtMulLowI16x8S => simd_op!(i32x4_extmul_low_i16x8_s),
+                    SimdOp::I32x4ExtMulHighI16x8S => simd_op!(i32x4_extmul_high_i16x8_s),
+                    SimdOp::I32x4ExtMulLowI16x8U => simd_op!(i32x4_extmul_low_i16x8_u),
+                    SimdOp::I32x4ExtMulHighI16x8U => simd_op!(i32x4_extmul_high_i16x8_u),
+
+                    // i64x2 operations
+                    SimdOp::I64x2Abs => simd_op!(i64x2_abs),
+                    SimdOp::I64x2Neg => simd_op!(i64x2_neg),
+                    SimdOp::I64x2AllTrue => simd_op!(i64x2_all_true),
+                    SimdOp::I64x2Bitmask => simd_op!(i64x2_bitmask),
+                    SimdOp::I64x2ExtendLowI32x4S => simd_op!(i64x2_extend_low_i32x4_s),
+                    SimdOp::I64x2ExtendHighI32x4S => simd_op!(i64x2_extend_high_i32x4_s),
+                    SimdOp::I64x2ExtendLowI32x4U => simd_op!(i64x2_extend_low_i32x4_u),
+                    SimdOp::I64x2ExtendHighI32x4U => simd_op!(i64x2_extend_high_i32x4_u),
+                    SimdOp::I64x2Shl => simd_op!(i64x2_shl),
+                    SimdOp::I64x2ShrS => simd_op!(i64x2_shr_s),
+                    SimdOp::I64x2ShrU => simd_op!(i64x2_shr_u),
+                    SimdOp::I64x2Add => simd_op!(i64x2_add),
+                    SimdOp::I64x2Sub => simd_op!(i64x2_sub),
+                    SimdOp::I64x2Mul => simd_op!(i64x2_mul),
+                    SimdOp::I64x2ExtMulLowI32x4S => simd_op!(i64x2_extmul_low_i32x4_s),
+                    SimdOp::I64x2ExtMulHighI32x4S => simd_op!(i64x2_extmul_high_i32x4_s),
+                    SimdOp::I64x2ExtMulLowI32x4U => simd_op!(i64x2_extmul_low_i32x4_u),
+                    SimdOp::I64x2ExtMulHighI32x4U => simd_op!(i64x2_extmul_high_i32x4_u),
+
+                    // f32x4 operations
+                    SimdOp::F32x4Abs => simd_op!(f32x4_abs),
+                    SimdOp::F32x4Neg => simd_op!(f32x4_neg),
+                    SimdOp::F32x4Sqrt => simd_op!(f32x4_sqrt),
+                    SimdOp::F32x4Ceil => simd_op!(f32x4_ceil),
+                    SimdOp::F32x4Floor => simd_op!(f32x4_floor),
+                    SimdOp::F32x4Trunc => simd_op!(f32x4_trunc),
+                    SimdOp::F32x4Nearest => simd_op!(f32x4_nearest),
+                    SimdOp::F32x4Add => simd_op!(f32x4_add),
+                    SimdOp::F32x4Sub => simd_op!(f32x4_sub),
+                    SimdOp::F32x4Mul => simd_op!(f32x4_mul),
+                    SimdOp::F32x4Div => simd_op!(f32x4_div),
+                    SimdOp::F32x4Min => simd_op!(f32x4_min),
+                    SimdOp::F32x4Max => simd_op!(f32x4_max),
+                    SimdOp::F32x4PMin => simd_op!(f32x4_pmin),
+                    SimdOp::F32x4PMax => simd_op!(f32x4_pmax),
+
+                    // f64x2 operations
+                    SimdOp::F64x2Abs => simd_op!(f64x2_abs),
+                    SimdOp::F64x2Neg => simd_op!(f64x2_neg),
+                    SimdOp::F64x2Sqrt => simd_op!(f64x2_sqrt),
+                    SimdOp::F64x2Ceil => simd_op!(f64x2_ceil),
+                    SimdOp::F64x2Floor => simd_op!(f64x2_floor),
+                    SimdOp::F64x2Trunc => simd_op!(f64x2_trunc),
+                    SimdOp::F64x2Nearest => simd_op!(f64x2_nearest),
+                    SimdOp::F64x2Add => simd_op!(f64x2_add),
+                    SimdOp::F64x2Sub => simd_op!(f64x2_sub),
+                    SimdOp::F64x2Mul => simd_op!(f64x2_mul),
+                    SimdOp::F64x2Div => simd_op!(f64x2_div),
+                    SimdOp::F64x2Min => simd_op!(f64x2_min),
+                    SimdOp::F64x2Max => simd_op!(f64x2_max),
+                    SimdOp::F64x2PMin => simd_op!(f64x2_pmin),
+                    SimdOp::F64x2PMax => simd_op!(f64x2_pmax),
+
+                    // Truncation/conversion
+                    SimdOp::I32x4TruncSatF32x4S => simd_op!(i32x4_trunc_sat_f32x4_s),
+                    SimdOp::I32x4TruncSatF32x4U => simd_op!(i32x4_trunc_sat_f32x4_u),
+                    SimdOp::F32x4ConvertI32x4S => simd_op!(f32x4_convert_i32x4_s),
+                    SimdOp::F32x4ConvertI32x4U => simd_op!(f32x4_convert_i32x4_u),
+                    SimdOp::I32x4TruncSatF64x2SZero => simd_op!(i32x4_trunc_sat_f64x2_s_zero),
+                    SimdOp::I32x4TruncSatF64x2UZero => simd_op!(i32x4_trunc_sat_f64x2_u_zero),
+                    SimdOp::F64x2ConvertLowI32x4S => simd_op!(f64x2_convert_low_i32x4_s),
+                    SimdOp::F64x2ConvertLowI32x4U => simd_op!(f64x2_convert_low_i32x4_u),
+                    SimdOp::F32x4DemoteF64x2Zero => simd_op!(f32x4_demote_f64x2_zero),
+                    SimdOp::F64x2PromoteLowF32x4 => simd_op!(f64x2_promote_low_f32x4),
+                }
+            }
 
             // ----------------------------------------------------------------
             // Unimplemented instructions
