@@ -57,7 +57,7 @@ benches/                # Criterion benchmarks
 
 ## Status
 - 427+ instructions implemented including all 236 SIMD (see src/runtime/implemented.rs)
-- 143/143 spec tests pass (86 core + 57 SIMD)
+- 147/147 spec tests pass (90 core + 57 SIMD)
 - 704 unit tests, 82 encoder tests, 18 WASI tests
 - SIMD: all v128 operations (integer, float, bitwise, comparison, shuffle, conversion, memory)
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
