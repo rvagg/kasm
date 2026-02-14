@@ -20,7 +20,7 @@ thiserror = "2.0.18"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-proptest = "1.9"
+proptest = "1.10"
 
 [[bench]]
 name = "validation"
