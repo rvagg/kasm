@@ -41,8 +41,8 @@ Binary merkle tree with SHA256-trunc254 internal nodes
 - **SHA256-heavy**: Good stress test for interpreter performance
 - **Streaming input**: Processes stdin in 8KB chunks
 - **Pure Rust**: No external dependencies beyond `sha2` crate
-- **No SIMD**: Compiled without SIMD instructions for maximum portability
-- **Compact WASM**: ~61KB release binary
+- **SIMD-enabled**: Compiled with `+simd128` for SIMD-accelerated SHA256
+- **Compact WASM**: ~67KB release binary
 
 ## Test Vectors
 
@@ -60,7 +60,7 @@ From the [reference implementation](https://github.com/filecoin-project/go-fil-c
 # Native (for testing)
 cargo test --release
 
-# WASI target
+# WASI target (with SIMD)
 rustup target add wasm32-wasip1
-cargo build --target wasm32-wasip1 --release
+RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1 --release
 ```
