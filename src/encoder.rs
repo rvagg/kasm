@@ -2,7 +2,7 @@
 ///
 /// This is the conceptual inverse of [`crate::parser::parse`]. Given a parsed
 /// Module (from either the binary parser or the WAT text parser), it produces
-/// the binary encoding as specified by the WebAssembly 1.0 specification.
+/// the binary encoding as specified by the WebAssembly 2.0 specification.
 ///
 /// # Binary format overview
 ///

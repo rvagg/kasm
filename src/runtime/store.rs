@@ -396,10 +396,9 @@ impl<'a> Store<'a> {
                         import.module, import.name
                     )));
                 }
-                let actual_limits = tbl.limits();
                 validate_import_limits(
-                    actual_limits.min,
-                    actual_limits.max,
+                    tbl.size(),
+                    tbl.limits().max,
                     &expected_table_type.limits,
                     &import.module,
                     &import.name,

@@ -77,11 +77,19 @@ pub fn parse(
         }
     }
 
-    // TODO: this check is duplicated in code section read
     if unit.functions.functions.len() != unit.code.code.len() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "function and code section have inconsistent lengths",
+        )
+        .into());
+    }
+
+    // Validate data count matches actual data segments
+    if unit.data_count.has_position() && unit.data_count.count as usize != unit.data.data.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "data count and data section have inconsistent lengths",
         )
         .into());
     }
@@ -522,7 +530,6 @@ fn read_section_code(
     let count = bytes.read_vu32()?;
     bytes.validate_item_count_in_section(count, section_end)?;
 
-    // TODO: this check is duplicated after the section read loop
     if count != module.functions.functions.len() as u32 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

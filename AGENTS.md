@@ -65,12 +65,12 @@ benches/                # Criterion benchmarks
 
 ## Status
 - 427+ instructions implemented including all 236 SIMD
-- 147/147 spec tests pass (90 core + 57 SIMD) via native .wast runner
-- 725 unit tests, 82 encoder tests, 147 dump tests, 147 wast tests, 18 WASI tests
+- 148/148 spec tests pass (90 core + 58 SIMD) via native .wast runner, pinned to wg-2.0 tag
+- 725 unit tests, 82 encoder tests, 148 dump tests, 148 wast tests, 18 WASI tests
 - SIMD: all v128 operations (integer, float, bitwise, comparison, shuffle, conversion, memory)
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
 - AssemblyScript support: env.abort with UTF-16 string extraction
-- WAT parser: complete WebAssembly 1.0 text format (inline exports, structured control flow)
+- WAT parser: complete WebAssembly 2.0 text format (inline exports, structured control flow)
 - Binary encoder: Module → .wasm (all 13 sections, 82 tests including spec fixture round-trips)
 - CLI: run/dump accept .wat natively, compile subcommand (WAT → .wasm)
 - No external `wat` crate dependency — all WAT parsing uses kasm::wat::parse()
@@ -203,14 +203,15 @@ time cat benches/commp_bench_500k.bin | target/release/kasm run examples/commp/t
 4. Run `./check.sh`
 
 ## Test Infrastructure
-- **tests/wast_tests.rs** - Native .wast spec test runner (147/147 passing):
+- **tests/wast_tests.rs** - Native .wast spec test runner (148/148 passing):
   - Parses .wast files directly via `kasm::wast::parse_script()`
   - All assertion types: assert_return, assert_trap, assert_invalid, assert_malformed,
     assert_unlinkable, assert_uninstantiable, assert_exhaustion
   - Creates spectest imports (globals, table, memory, print functions)
   - Error message equivalences with narrow, justified mappings
-  - Spec .wast files: `tests/spec/wast/` (90 core) + `tests/spec/wast/simd/` (57 SIMD)
-- **tests/dump_tests.rs** - Module display format tests (147 fixtures):
+  - Spec .wast files: `tests/spec/wast/` (90 core) + `tests/spec/wast/simd/` (58 SIMD)
+  - Pinned to `wg-2.0` tag (W3C Working Group 2.0, 2025-08-28)
+- **tests/dump_tests.rs** - Module display format tests (148 fixtures):
   - Compares `Module::to_string()` against wasm-objdump reference output
   - Tests Header, Details, and Disassemble formats
 - **tests/encoder_tests.rs** - Encoder round-trip tests (82 tests):
@@ -223,14 +224,14 @@ time cat benches/commp_bench_500k.bin | target/release/kasm run examples/commp/t
   - Regenerate: `WAST2JSON=... WASM_OBJDUMP=... node tests/compile_test.mjs --batch <wast-dir> tests/spec`
 
 ```bash
-cargo test --test wast_tests           # 147 spec tests
-cargo test --test dump_tests           # 147 dump format tests
+cargo test --test wast_tests           # 148 spec tests
+cargo test --test dump_tests           # 148 dump format tests
 cargo test --test encoder_tests        # 82 encoder tests
 cargo test --test wasi_tests           # 18 WASI tests
 ```
 
 ## WAT Parser
-The `src/wat/` module provides a complete WebAssembly 1.0 text format parser.
+The `src/wat/` module provides a complete WebAssembly 2.0 text format parser.
 
 ```rust
 use kasm::wat::parse;
@@ -254,7 +255,7 @@ let module = parse(source).unwrap();
 - Start function
 - Element segments: active, passive, declarative modes
 - Data segments: active (with offset), passive modes
-- All WASM 1.0 instructions including control flow, numeric, memory ops
+- All WebAssembly 2.0 instructions including control flow, numeric, memory, SIMD ops
 
 **Parser architecture:**
 1. **Lexer** (`lexer.rs`): Iterator-based tokenisation

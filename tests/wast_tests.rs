@@ -245,6 +245,21 @@ mod tests {
             ),
             ("unknown label", &["br_table requires at least one label"]),
             // ================================================================
+            // Binary format: duplicate code sections — spec detects as
+            // section ordering violation, we detect as count mismatch
+            // because the first code section's count != function count
+            // ================================================================
+            (
+                "unexpected content after last section",
+                &["function and code section have inconsistent lengths"],
+            ),
+            // ================================================================
+            // Binary format: oversize alignment exponent (2^32+) in memop
+            // flags — spec treats as binary malformation, we report at
+            // validation as alignment exceeding natural width
+            // ================================================================
+            ("malformed memop flags", &["alignment must not be larger than natural"]),
+            // ================================================================
             // SIMD-specific
             // ================================================================
             // Shuffle with non-integer lane values: extra tokens remain after
