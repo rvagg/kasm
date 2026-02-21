@@ -188,7 +188,7 @@ impl Reader {
             }
         }
 
-        String::from_utf8(v).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid utf-8 sequence"))
+        String::from_utf8(v).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "malformed UTF-8 encoding"))
     }
 
     pub fn read_u8vec(&mut self) -> Result<Vec<u8>, io::Error> {

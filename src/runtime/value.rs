@@ -20,6 +20,15 @@ pub enum Value {
     V128([u8; 16]),
 }
 
+/// Parse a lane value string as u64, handling both unsigned and signed representations.
+/// Wrapping values (e.g. negative i8 stored as large u64) are preserved as-is; the caller
+/// truncates to lane width via `as u8`/`as u16`/etc.
+fn parse_lane_u64(s: &str) -> Result<u64, String> {
+    s.parse::<u64>()
+        .or_else(|_| s.parse::<i64>().map(|v| v as u64))
+        .map_err(|e| e.to_string())
+}
+
 impl Value {
     /// Get the WebAssembly type of this value
     pub fn typ(&self) -> ValueType {
@@ -311,7 +320,7 @@ impl Value {
                     return Err("i8 lanes require 16 values".into());
                 }
                 for (i, v) in values.iter().enumerate() {
-                    let bits: u8 = v.parse().map_err(|e| format!("bad i8 lane: {e}"))?;
+                    let bits = parse_lane_u64(v).map_err(|e| format!("bad i8 lane: {e}"))? as u8;
                     bytes[i] = bits;
                 }
             }
@@ -320,7 +329,7 @@ impl Value {
                     return Err("i16 lanes require 8 values".into());
                 }
                 for (i, v) in values.iter().enumerate() {
-                    let bits: u16 = v.parse().map_err(|e| format!("bad i16 lane: {e}"))?;
+                    let bits = parse_lane_u64(v).map_err(|e| format!("bad i16 lane: {e}"))? as u16;
                     bytes[i * 2..i * 2 + 2].copy_from_slice(&bits.to_le_bytes());
                 }
             }
@@ -329,7 +338,7 @@ impl Value {
                     return Err("i32 lanes require 4 values".into());
                 }
                 for (i, v) in values.iter().enumerate() {
-                    let bits: u32 = v.parse().map_err(|e| format!("bad i32 lane: {e}"))?;
+                    let bits = parse_lane_u64(v).map_err(|e| format!("bad i32 lane: {e}"))? as u32;
                     bytes[i * 4..i * 4 + 4].copy_from_slice(&bits.to_le_bytes());
                 }
             }
@@ -338,7 +347,7 @@ impl Value {
                     return Err("i64 lanes require 2 values".into());
                 }
                 for (i, v) in values.iter().enumerate() {
-                    let bits: u64 = v.parse().map_err(|e| format!("bad i64 lane: {e}"))?;
+                    let bits = parse_lane_u64(v).map_err(|e| format!("bad i64 lane: {e}"))?;
                     bytes[i * 8..i * 8 + 8].copy_from_slice(&bits.to_le_bytes());
                 }
             }

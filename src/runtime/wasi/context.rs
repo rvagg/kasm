@@ -209,10 +209,8 @@ impl WasiContext {
         let memory_ref = self.memory.borrow();
         let shared_memory = memory_ref
             .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("WASI memory not bound".to_string()))?;
-        let memory = shared_memory
-            .lock()
-            .map_err(|_| RuntimeError::MemoryError("Failed to lock memory".to_string()))?;
+            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
+        let memory = shared_memory.borrow();
         memory.read_u32(addr)
     }
 
@@ -221,10 +219,8 @@ impl WasiContext {
         let memory_ref = self.memory.borrow();
         let shared_memory = memory_ref
             .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("WASI memory not bound".to_string()))?;
-        let mut memory = shared_memory
-            .lock()
-            .map_err(|_| RuntimeError::MemoryError("Failed to lock memory".to_string()))?;
+            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
+        let mut memory = shared_memory.borrow_mut();
         memory.write_u32(addr, value)
     }
 
@@ -233,10 +229,8 @@ impl WasiContext {
         let memory_ref = self.memory.borrow();
         let shared_memory = memory_ref
             .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("WASI memory not bound".to_string()))?;
-        let memory = shared_memory
-            .lock()
-            .map_err(|_| RuntimeError::MemoryError("Failed to lock memory".to_string()))?;
+            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
+        let memory = shared_memory.borrow();
         memory.read_bytes(addr, len)
     }
 
@@ -245,10 +239,8 @@ impl WasiContext {
         let memory_ref = self.memory.borrow();
         let shared_memory = memory_ref
             .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("WASI memory not bound".to_string()))?;
-        let mut memory = shared_memory
-            .lock()
-            .map_err(|_| RuntimeError::MemoryError("Failed to lock memory".to_string()))?;
+            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
+        let mut memory = shared_memory.borrow_mut();
         memory.write_bytes(addr, bytes)
     }
 
@@ -589,7 +581,9 @@ impl Default for WasiContextBuilder {
 mod tests {
     use super::*;
     use crate::runtime::Memory;
+    use std::cell::RefCell;
     use std::io::Cursor;
+    use std::rc::Rc;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -613,7 +607,7 @@ mod tests {
         assert!(!ctx.has_memory());
 
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         assert!(ctx.has_memory());
@@ -624,7 +618,7 @@ mod tests {
         let ctx = WasiContext::builder().build();
 
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         // Write and read back
@@ -638,7 +632,7 @@ mod tests {
         let ctx = WasiContext::builder().build();
 
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         let data = b"Hello, WASI!";
@@ -680,7 +674,7 @@ mod tests {
 
         // Bind memory
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         // Set up iovec in memory: {ptr: 100, len: 13}
@@ -707,7 +701,7 @@ mod tests {
 
         // Bind memory
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         // Set up iovec in memory: {ptr: 100, len: 64}
@@ -732,7 +726,7 @@ mod tests {
 
         // Bind memory
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         // Set up iovec
@@ -750,7 +744,7 @@ mod tests {
 
         // Bind memory
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         ctx.write_u32(0, 100).unwrap();

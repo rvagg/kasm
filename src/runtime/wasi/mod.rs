@@ -486,9 +486,9 @@ fn wasi_path_open(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, Run
     // Read path from memory
     let path_bytes = ctx
         .read_bytes(path_ptr, path_len as usize)
-        .map_err(|_| RuntimeError::MemoryError("Failed to read path".to_string()))?;
+        .map_err(|_| RuntimeError::MemoryError("failed to read path".to_string()))?;
     let path =
-        std::str::from_utf8(&path_bytes).map_err(|_| RuntimeError::MemoryError("Invalid UTF-8 path".to_string()))?;
+        std::str::from_utf8(&path_bytes).map_err(|_| RuntimeError::MemoryError("invalid utf-8 path".to_string()))?;
 
     // Resolve path relative to preopen dir
     let resolved = match ctx.resolve_path(dir_fd, path) {
@@ -612,7 +612,8 @@ fn wasi_proc_exit(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, Run
 mod tests {
     use super::*;
     use crate::runtime::Memory;
-    use std::sync::Mutex;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn test_create_wasi_imports() {
@@ -666,7 +667,7 @@ mod tests {
 
         // Bind memory
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         let args = vec![Value::I32(0), Value::I32(4)]; // argc_ptr=0, argv_buf_size_ptr=4
@@ -686,7 +687,7 @@ mod tests {
 
         // Bind memory
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         // argv_ptr = 0, argv_buf_ptr = 100

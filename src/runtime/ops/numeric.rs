@@ -393,7 +393,7 @@ pub fn f32_abs(stack: &mut Stack) -> Result<(), RuntimeError> {
 /// Note: Flips sign bit, including for NaN and infinity
 pub fn f32_neg(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f32()?;
-    stack.push(Value::F32(-value));
+    stack.push(Value::F32(f32::from_bits(value.to_bits() ^ 0x80000000)));
     Ok(())
 }
 
@@ -485,7 +485,7 @@ pub fn f64_abs(stack: &mut Stack) -> Result<(), RuntimeError> {
 /// Note: Flips sign bit, including for NaN and infinity
 pub fn f64_neg(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f64()?;
-    stack.push(Value::F64(-value));
+    stack.push(Value::F64(f64::from_bits(value.to_bits() ^ (1u64 << 63))));
     Ok(())
 }
 
@@ -939,7 +939,7 @@ mod tests {
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 0 })
                 .inst(InstructionKind::I32DivS)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
 
         #[test]
@@ -948,7 +948,7 @@ mod tests {
                 .inst(InstructionKind::I32Const { value: i32::MIN })
                 .inst(InstructionKind::I32Const { value: -1 })
                 .inst(InstructionKind::I32DivS)
-                .expect_error("Integer overflow");
+                .expect_error("integer overflow");
         }
 
         #[test]
@@ -1069,7 +1069,7 @@ mod tests {
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 0 })
                 .inst(InstructionKind::I32DivU)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
 
         #[test]
@@ -1108,7 +1108,7 @@ mod tests {
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 0 })
                 .inst(InstructionKind::I32RemS)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
 
         #[test]
@@ -1137,7 +1137,7 @@ mod tests {
                 .inst(InstructionKind::I32Const { value: 42 })
                 .inst(InstructionKind::I32Const { value: 0 })
                 .inst(InstructionKind::I32RemU)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
 
         #[test]
@@ -1283,7 +1283,7 @@ mod tests {
                 .inst(InstructionKind::I64Const { value: i64::MIN })
                 .inst(InstructionKind::I64Const { value: -1 })
                 .inst(InstructionKind::I64DivS)
-                .expect_error("Integer overflow");
+                .expect_error("integer overflow");
         }
 
         #[test]
@@ -1292,7 +1292,7 @@ mod tests {
                 .inst(InstructionKind::I64Const { value: 42 })
                 .inst(InstructionKind::I64Const { value: 0 })
                 .inst(InstructionKind::I64DivS)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
 
         #[test]
@@ -1331,7 +1331,7 @@ mod tests {
                 .inst(InstructionKind::I64Const { value: 42 })
                 .inst(InstructionKind::I64Const { value: 0 })
                 .inst(InstructionKind::I64DivU)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
 
         #[test]
@@ -1360,7 +1360,7 @@ mod tests {
                 .inst(InstructionKind::I64Const { value: 42 })
                 .inst(InstructionKind::I64Const { value: 0 })
                 .inst(InstructionKind::I64RemS)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
 
         #[test]
@@ -1389,7 +1389,7 @@ mod tests {
                 .inst(InstructionKind::I64Const { value: 42 })
                 .inst(InstructionKind::I64Const { value: 0 })
                 .inst(InstructionKind::I64RemU)
-                .expect_error("Division by zero");
+                .expect_error("integer divide by zero");
         }
     }
 
@@ -1894,7 +1894,7 @@ mod tests {
             .inst(InstructionKind::I32Const { value: 42 })
             .inst(InstructionKind::I32Const { value: 0 })
             .inst(InstructionKind::I32DivS)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]
@@ -1904,7 +1904,7 @@ mod tests {
             .inst(InstructionKind::I32Const { value: i32::MIN })
             .inst(InstructionKind::I32Const { value: -1 })
             .inst(InstructionKind::I32DivS)
-            .expect_error("Integer overflow");
+            .expect_error("integer overflow");
     }
 
     #[test]
@@ -1998,7 +1998,7 @@ mod tests {
             .inst(InstructionKind::I32Const { value: 42 })
             .inst(InstructionKind::I32Const { value: 0 })
             .inst(InstructionKind::I32RemU)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]
@@ -2007,7 +2007,7 @@ mod tests {
             .inst(InstructionKind::I32Const { value: 42 })
             .inst(InstructionKind::I32Const { value: 0 })
             .inst(InstructionKind::I32DivU)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]
@@ -2047,7 +2047,7 @@ mod tests {
             .inst(InstructionKind::I32Const { value: 42 })
             .inst(InstructionKind::I32Const { value: 0 })
             .inst(InstructionKind::I32RemS)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]
@@ -2118,7 +2118,7 @@ mod tests {
             .inst(InstructionKind::I64Const { value: i64::MIN })
             .inst(InstructionKind::I64Const { value: -1 })
             .inst(InstructionKind::I64DivS)
-            .expect_error("Integer overflow");
+            .expect_error("integer overflow");
     }
 
     #[test]
@@ -2159,7 +2159,7 @@ mod tests {
             .inst(InstructionKind::I64Const { value: 42 })
             .inst(InstructionKind::I64Const { value: 0 })
             .inst(InstructionKind::I64DivS)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]
@@ -2168,7 +2168,7 @@ mod tests {
             .inst(InstructionKind::I64Const { value: 42 })
             .inst(InstructionKind::I64Const { value: 0 })
             .inst(InstructionKind::I64DivU)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]
@@ -2177,7 +2177,7 @@ mod tests {
             .inst(InstructionKind::I64Const { value: 42 })
             .inst(InstructionKind::I64Const { value: 0 })
             .inst(InstructionKind::I64RemS)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]
@@ -2186,7 +2186,7 @@ mod tests {
             .inst(InstructionKind::I64Const { value: 42 })
             .inst(InstructionKind::I64Const { value: 0 })
             .inst(InstructionKind::I64RemU)
-            .expect_error("Division by zero");
+            .expect_error("integer divide by zero");
     }
 
     #[test]

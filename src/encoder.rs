@@ -29,10 +29,12 @@
 use std::fmt;
 
 use crate::parser::encoding::{
-    DATA_ACTIVE, DATA_ACTIVE_EXPLICIT, DATA_PASSIVE, DESC_FUNC, DESC_GLOBAL, DESC_MEMORY, DESC_TABLE, ELEMKIND_FUNCREF,
-    OP_END, SECTION_CODE, SECTION_CUSTOM, SECTION_DATA, SECTION_DATA_COUNT, SECTION_ELEMENT, SECTION_EXPORT,
-    SECTION_FUNCTION, SECTION_GLOBAL, SECTION_IMPORT, SECTION_MEMORY, SECTION_START, SECTION_TABLE, SECTION_TYPE,
-    TYPE_FUNC, write_vu1, write_vu32,
+    DATA_ACTIVE, DATA_ACTIVE_EXPLICIT, DATA_PASSIVE, DESC_FUNC, DESC_GLOBAL, DESC_MEMORY, DESC_TABLE,
+    ELEM_ACTIVE_EXPRS, ELEM_ACTIVE_FUNCS, ELEM_ACTIVE_TABLE_EXPRS, ELEM_ACTIVE_TABLE_FUNCS, ELEM_DECLARATIVE_EXPRS,
+    ELEM_DECLARATIVE_FUNCS, ELEM_PASSIVE_EXPRS, ELEM_PASSIVE_FUNCS, ELEMKIND_FUNCREF, OP_END, SECTION_CODE,
+    SECTION_CUSTOM, SECTION_DATA, SECTION_DATA_COUNT, SECTION_ELEMENT, SECTION_EXPORT, SECTION_FUNCTION,
+    SECTION_GLOBAL, SECTION_IMPORT, SECTION_MEMORY, SECTION_START, SECTION_TABLE, SECTION_TYPE, TYPE_FUNC, write_vu1,
+    write_vu32,
 };
 use crate::parser::module::{CustomSection, DataMode, ElementMode, ExportIndex, ExternalKind, Module, RefType};
 
@@ -332,8 +334,8 @@ fn encode_element_section(buf: &mut Vec<u8>, module: &Module) -> Result<(), Enco
         write_vu32(&mut contents, elem.flags);
 
         match elem.flags {
-            // Flag 0: active, implicit table 0, elemkind=funcref, func indices
-            0 => {
+            // Active, implicit table 0, elemkind=funcref, func indices
+            ELEM_ACTIVE_FUNCS => {
                 if let ElementMode::Active { offset, .. } = &elem.mode {
                     emit_expression(&mut contents, offset);
                 }
@@ -342,16 +344,16 @@ fn encode_element_section(buf: &mut Vec<u8>, module: &Module) -> Result<(), Enco
                     emit_func_index_from_expr(&mut contents, init)?;
                 }
             }
-            // Flag 1: passive, elemkind byte, func indices
-            1 => {
+            // Passive, elemkind byte, func indices
+            ELEM_PASSIVE_FUNCS => {
                 contents.push(ELEMKIND_FUNCREF);
                 write_vu32(&mut contents, elem.init.len() as u32);
                 for init in &elem.init {
                     emit_func_index_from_expr(&mut contents, init)?;
                 }
             }
-            // Flag 2: active, explicit table, elemkind byte, func indices
-            2 => {
+            // Active, explicit table, elemkind byte, func indices
+            ELEM_ACTIVE_TABLE_FUNCS => {
                 if let ElementMode::Active { table_index, offset } = &elem.mode {
                     write_vu32(&mut contents, *table_index);
                     emit_expression(&mut contents, offset);
@@ -362,16 +364,16 @@ fn encode_element_section(buf: &mut Vec<u8>, module: &Module) -> Result<(), Enco
                     emit_func_index_from_expr(&mut contents, init)?;
                 }
             }
-            // Flag 3: declarative, elemkind byte, func indices
-            3 => {
+            // Declarative, elemkind byte, func indices
+            ELEM_DECLARATIVE_FUNCS => {
                 contents.push(ELEMKIND_FUNCREF);
                 write_vu32(&mut contents, elem.init.len() as u32);
                 for init in &elem.init {
                     emit_func_index_from_expr(&mut contents, init)?;
                 }
             }
-            // Flag 4: active, implicit table 0, expression init
-            4 => {
+            // Active, implicit table 0, expression init
+            ELEM_ACTIVE_EXPRS => {
                 if let ElementMode::Active { offset, .. } = &elem.mode {
                     emit_expression(&mut contents, offset);
                 }
@@ -380,16 +382,16 @@ fn encode_element_section(buf: &mut Vec<u8>, module: &Module) -> Result<(), Enco
                     emit_expression(&mut contents, init);
                 }
             }
-            // Flag 5: passive, reftype, expression init
-            5 => {
+            // Passive, reftype, expression init
+            ELEM_PASSIVE_EXPRS => {
                 emit_ref_type(&mut contents, &elem.ref_type);
                 write_vu32(&mut contents, elem.init.len() as u32);
                 for init in &elem.init {
                     emit_expression(&mut contents, init);
                 }
             }
-            // Flag 6: active, explicit table, reftype, expression init
-            6 => {
+            // Active, explicit table, reftype, expression init
+            ELEM_ACTIVE_TABLE_EXPRS => {
                 if let ElementMode::Active { table_index, offset } = &elem.mode {
                     write_vu32(&mut contents, *table_index);
                     emit_expression(&mut contents, offset);
@@ -400,8 +402,8 @@ fn encode_element_section(buf: &mut Vec<u8>, module: &Module) -> Result<(), Enco
                     emit_expression(&mut contents, init);
                 }
             }
-            // Flag 7: declarative, reftype, expression init
-            7 => {
+            // Declarative, reftype, expression init
+            ELEM_DECLARATIVE_EXPRS => {
                 emit_ref_type(&mut contents, &elem.ref_type);
                 write_vu32(&mut contents, elem.init.len() as u32);
                 for init in &elem.init {

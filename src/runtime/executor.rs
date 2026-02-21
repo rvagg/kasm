@@ -4,17 +4,19 @@ use super::{
     ExecutionOutcome, ExternalCallRequest, RuntimeError, Value,
     control::{Label, LabelStack, LabelType},
     frame::CallFrame,
-    imports::{ImportObject, default_value_for_type, is_global_mutable},
+    imports::{default_value_for_type, is_global_mutable},
     memory::Memory,
     ops,
     stack::Stack,
-    store::{SharedMemory, SharedTable},
+    store::{SharedGlobal, SharedMemory, SharedTable},
     table::Table,
 };
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind, SimdOp};
-use crate::parser::module::{DataMode, ExternalKind, FunctionType, Locals, Module, ValueType};
+use crate::parser::module::{DataMode, ElementMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
-use std::sync::{Arc, Mutex};
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
+use std::rc::Rc;
 
 /// Maximum call stack depth to prevent stack overflow
 const MAX_CALL_DEPTH: usize = 1000;
@@ -76,8 +78,8 @@ pub struct Executor<'a> {
     /// Memory instances (shared for cross-module access)
     /// WebAssembly 1.0 supports only 1 memory per module
     memories: Vec<SharedMemory>,
-    /// Global variable values
-    globals: Vec<Value>,
+    /// Global variable values (shared via Rc<Cell<Value>> for cross-module mutable global aliasing)
+    globals: Vec<SharedGlobal>,
     /// Table instances (shared for cross-module access)
     tables: Vec<SharedTable>,
     /// Element segments (for table.init)
@@ -96,6 +98,8 @@ pub struct Executor<'a> {
     saved_return_types: Vec<ValueType>,
     /// Optional instruction budget - execution stops when exhausted
     instruction_budget: Option<u64>,
+    /// Data segments that have been dropped (data.drop)
+    dropped_data: HashSet<u32>,
 }
 
 impl<'a> Executor<'a> {
@@ -104,56 +108,42 @@ impl<'a> Executor<'a> {
     /// # Errors
     /// - If the module has more than one memory (WebAssembly 1.0 limitation)
     /// - If memory initialisation fails
-    pub fn new(module: &'a Module, imports: Option<&ImportObject>) -> Result<Self, RuntimeError> {
-        // Create memories and tables from module definition
+    pub fn new(module: &'a Module) -> Result<Self, RuntimeError> {
         let (memories, tables) = Self::create_memories_and_tables(module)?;
-        Self::new_with_shared(module, imports, memories, tables)
-    }
 
-    /// Create a new executor with pre-provided shared memories and tables
-    ///
-    /// This is used by Store::create_instance() when memory/table imports are involved.
-    /// The memories and tables must be in the correct order: imported first, then local.
-    pub fn new_with_shared(
-        module: &'a Module,
-        imports: Option<&ImportObject>,
-        memories: Vec<SharedMemory>,
-        tables: Vec<SharedTable>,
-    ) -> Result<Self, RuntimeError> {
-        // Initialise globals from module
+        // Build shared globals (standalone mode — no Store, so each global is independent)
+        let mut globals: Vec<SharedGlobal> = Vec::new();
 
-        let mut globals = Vec::new();
-
-        // Initialise imported globals
+        // Imported globals
         for import in &module.imports.imports {
             if let ExternalKind::Global(global_type) = &import.external_kind {
-                let initial_value = if let Some(import_obj) = imports {
-                    import_obj.get_or_default(&import.module, &import.name, global_type.value_type)?
-                } else {
-                    default_value_for_type(global_type.value_type)?
-                };
-                globals.push(initial_value);
+                let initial_value = default_value_for_type(global_type.value_type)?;
+                globals.push(Rc::new(Cell::new(initial_value)));
             }
         }
 
+        // Local globals (default values, initialised later)
+        for global in &module.globals.globals {
+            let default_value = default_value_for_type(global.global_type.value_type)?;
+            globals.push(Rc::new(Cell::new(default_value)));
+        }
+
+        Self::new_with_shared(module, memories, tables, globals)
+    }
+
+    /// Create a new executor with pre-provided shared memories, tables, and globals
+    ///
+    /// This is used by Store::create_instance(). All shared resources must be in the
+    /// correct order: imported first, then local.
+    pub fn new_with_shared(
+        module: &'a Module,
+        memories: Vec<SharedMemory>,
+        tables: Vec<SharedTable>,
+        globals: Vec<SharedGlobal>,
+    ) -> Result<Self, RuntimeError> {
         // Store the module's global definitions for later initialisation
         // Init expressions can contain ref.func, so they must be evaluated after function_addresses are linked
         let module_globals = module.globals.globals.clone();
-
-        // Create module's own globals with default values for now
-        // They will be initialised with their init expressions after linking
-        for global in &module_globals {
-            let default_value = match global.global_type.value_type {
-                ValueType::I32 => Value::I32(0),
-                ValueType::I64 => Value::I64(0),
-                ValueType::F32 => Value::F32(0.0),
-                ValueType::F64 => Value::F64(0.0),
-                ValueType::FuncRef => Value::FuncRef(None),
-                ValueType::ExternRef => Value::ExternRef(None),
-                ValueType::V128 => Value::V128([0u8; 16]),
-            };
-            globals.push(default_value);
-        }
 
         // Count imported functions (they come first in the index space, but have no local bodies)
         let num_imported_functions = module
@@ -182,6 +172,7 @@ impl<'a> Executor<'a> {
             saved_contexts: None,           // For resumable execution
             saved_return_types: Vec::new(), // For resumable execution
             instruction_budget: None,       // No budget limit by default
+            dropped_data: HashSet::new(),
         };
 
         // Note: Globals and element segments are NOT initialised here because their init
@@ -205,15 +196,12 @@ impl<'a> Executor<'a> {
         } else {
             // WebAssembly 1.0: Only one memory allowed per module
             if module.memory.memory.len() > 1 {
-                return Err(RuntimeError::MemoryError(format!(
-                    "WebAssembly 1.0 only supports one memory per module, found {}",
-                    module.memory.memory.len()
-                )));
+                return Err(RuntimeError::MemoryError("multiple memories not supported".to_string()));
             }
 
             let mem_def = &module.memory.memory[0];
             match Memory::new(mem_def.limits.min, mem_def.limits.max) {
-                Ok(memory) => vec![Arc::new(Mutex::new(memory))],
+                Ok(memory) => vec![Rc::new(RefCell::new(memory))],
                 Err(e) => return Err(e),
             }
         };
@@ -226,14 +214,14 @@ impl<'a> Executor<'a> {
             if let ExternalKind::Table(table_type) = &import.external_kind {
                 // Create default table for import
                 let table = Table::new(table_type.ref_type, table_type.limits)?;
-                tables.push(Arc::new(Mutex::new(table)));
+                tables.push(Rc::new(RefCell::new(table)));
             }
         }
 
         // Then, add locally defined tables
         for table_type in &module.table.tables {
             let table = Table::new(table_type.ref_type, table_type.limits)?;
-            tables.push(Arc::new(Mutex::new(table)));
+            tables.push(Rc::new(RefCell::new(table)));
         }
 
         Ok((memories, tables))
@@ -268,8 +256,8 @@ impl<'a> Executor<'a> {
                 self.evaluate_const_expr(&global.init)?
             };
 
-            // Update the global value
-            self.globals[global_idx] = initial_value;
+            // Update the global value via the shared cell
+            self.globals[global_idx].set(initial_value);
         }
 
         Ok(())
@@ -280,8 +268,6 @@ impl<'a> Executor<'a> {
     /// This must be called after function_addresses have been linked, as element
     /// segments can contain ref.func instructions that need the address mapping.
     pub(super) fn initialise_element_segments(&mut self) -> Result<(), RuntimeError> {
-        use crate::parser::module::ElementMode;
-
         // Process each element segment
         for element in &self.module.elements.elements {
             // Evaluate init expressions to get values
@@ -297,7 +283,7 @@ impl<'a> Executor<'a> {
                     let offset_val = self.evaluate_const_expr(offset)?;
                     let start_idx = match offset_val {
                         Value::I32(v) => v as u32,
-                        _ => return Err(RuntimeError::InvalidConstExpr("Element offset must be i32".to_string())),
+                        _ => return Err(RuntimeError::InvalidConstExpr("element offset must be i32".to_string())),
                     };
 
                     // Check table exists
@@ -308,17 +294,19 @@ impl<'a> Executor<'a> {
 
                     // Initialize table with element values
                     {
-                        let mut table_guard = table
-                            .lock()
-                            .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                        let mut table_guard = table.borrow_mut();
                         table_guard.init(start_idx, &values, 0, values.len() as u32)?;
                     }
 
-                    // Store segment for potential table.init usage later
-                    self.element_segments.push(values);
+                    // Active segments are dropped after instantiation per spec
+                    self.element_segments.push(Vec::new());
                 }
-                ElementMode::Passive | ElementMode::Declarative => {
-                    // Store for later use with table.init
+                ElementMode::Declarative => {
+                    // Declarative segments are dropped immediately per spec
+                    self.element_segments.push(Vec::new());
+                }
+                ElementMode::Passive => {
+                    // Passive segments are available for table.init
                     self.element_segments.push(values);
                 }
             }
@@ -330,20 +318,20 @@ impl<'a> Executor<'a> {
     /// Initialise memory with data from data sections
     fn initialise_data_sections(&mut self) -> Result<(), RuntimeError> {
         // Process each data segment
-        for data_segment in &self.module.data.data {
+        for (seg_idx, data_segment) in self.module.data.data.iter().enumerate() {
             match &data_segment.mode {
                 DataMode::Active { memory_index, offset } => {
                     // Check memory index is valid (WebAssembly 1.0 only supports one memory)
                     if *memory_index != 0 {
                         return Err(RuntimeError::MemoryError(format!(
-                            "Invalid memory index {} in data segment",
+                            "invalid memory index {} in data segment",
                             memory_index
                         )));
                     }
 
                     // Check we have a memory
                     let memory = self.memories.first().ok_or_else(|| {
-                        RuntimeError::MemoryError("Data segment requires memory but none exists".to_string())
+                        RuntimeError::MemoryError("data segment requires memory but none exists".to_string())
                     })?;
 
                     // Evaluate the offset expression to get the starting address
@@ -355,36 +343,31 @@ impl<'a> Executor<'a> {
                         Value::I32(v) => v as u32,
                         _ => {
                             return Err(RuntimeError::MemoryError(
-                                "Data segment offset must be an i32".to_string(),
+                                "data segment offset must be an i32".to_string(),
                             ));
                         }
                     };
 
                     // Write the data to memory
-                    let mut mem_guard = memory
-                        .lock()
-                        .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                    let mut mem_guard = memory.borrow_mut();
                     let data = &data_segment.init;
 
                     // Check if the data fits in memory
                     let end_addr = offset_addr as usize + data.len();
                     let memory_size_bytes = (mem_guard.size() as usize) * 65536; // Convert pages to bytes
                     if end_addr > memory_size_bytes {
-                        return Err(RuntimeError::MemoryError(format!(
-                            "Data segment at offset {} with length {} exceeds memory size {} bytes",
-                            offset_addr,
-                            data.len(),
-                            memory_size_bytes
-                        )));
+                        return Err(RuntimeError::MemoryError("out of bounds memory access".to_string()));
                     }
 
                     // Copy the data into memory using the shared helper
                     ops::memory::copy_to_memory(&mut mem_guard, offset_addr, data)?;
+
+                    // Active segments are logically dropped after initialisation
+                    self.dropped_data.insert(seg_idx as u32);
                 }
                 DataMode::Passive => {
                     // Passive data segments are not automatically initialised
                     // They're used with memory.init instruction
-                    // For now, we skip them
                 }
             }
         }
@@ -397,7 +380,7 @@ impl<'a> Executor<'a> {
         // Constant expressions are limited to a small set of instructions
         // They must end with an End instruction
         if instructions.is_empty() {
-            return Err(RuntimeError::InvalidConstExpr("Empty constant expression".to_string()));
+            return Err(RuntimeError::InvalidConstExpr("empty constant expression".to_string()));
         }
 
         // Check that the last instruction is End
@@ -405,7 +388,7 @@ impl<'a> Executor<'a> {
             Some(inst) if matches!(inst.kind, InstructionKind::End) => {}
             _ => {
                 return Err(RuntimeError::InvalidConstExpr(
-                    "Constant expression must end with End instruction".to_string(),
+                    "constant expression must end with end instruction".to_string(),
                 ));
             }
         }
@@ -418,17 +401,17 @@ impl<'a> Executor<'a> {
                 InstructionKind::F32Const { value } => Ok(Value::F32(*value)),
                 InstructionKind::F64Const { value } => Ok(Value::F64(*value)),
                 InstructionKind::GlobalGet { global_idx } => {
-                    // Get the global value
+                    // Get the global value from the shared cell
                     if (*global_idx as usize) >= self.globals.len() {
                         return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
                     }
-                    Ok(self.globals[*global_idx as usize])
+                    Ok(self.globals[*global_idx as usize].get())
                 }
                 InstructionKind::RefNull { ref_type } => match ref_type {
                     ValueType::FuncRef => Ok(Value::FuncRef(None)),
                     ValueType::ExternRef => Ok(Value::ExternRef(None)),
                     _ => Err(RuntimeError::InvalidConstExpr(format!(
-                        "Invalid reference type for ref.null: {:?}",
+                        "invalid reference type for ref.null: {:?}",
                         ref_type
                     ))),
                 },
@@ -448,19 +431,19 @@ impl<'a> Executor<'a> {
                     Ok(Value::FuncRef(Some(func_addr)))
                 }
                 _ => Err(RuntimeError::InvalidConstExpr(format!(
-                    "Unsupported instruction in constant expression: {:?}",
+                    "unsupported instruction in constant expression: {:?}",
                     instructions[0].kind
                 ))),
             }
         } else if instructions.len() == 1 && matches!(instructions[0].kind, InstructionKind::End) {
             // Just an End instruction - this shouldn't happen in valid WebAssembly
             Err(RuntimeError::InvalidConstExpr(
-                "Constant expression cannot be just End".to_string(),
+                "constant expression cannot be just end".to_string(),
             ))
         } else {
             // TODO: Support more complex constant expressions (e.g., i32.add with two consts)
             Err(RuntimeError::InvalidConstExpr(format!(
-                "Unsupported constant expression with {} instructions",
+                "unsupported constant expression with {} instructions",
                 instructions.len()
             )))
         }
@@ -470,7 +453,7 @@ impl<'a> Executor<'a> {
     fn push_call_frame(&mut self, func_idx: u32, args: Vec<Value>, return_arity: usize) -> Result<(), RuntimeError> {
         // Check call stack depth
         if self.call_stack.len() >= MAX_CALL_DEPTH {
-            return Err(RuntimeError::Trap("call stack exhausted".to_string()));
+            return Err(RuntimeError::CallStackOverflow);
         }
 
         // Calculate the number of imported functions
@@ -591,7 +574,7 @@ impl<'a> Executor<'a> {
     pub fn get_global(&self, global_idx: u32) -> Result<Value, RuntimeError> {
         self.globals
             .get(global_idx as usize)
-            .cloned()
+            .map(|g| g.get())
             .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))
     }
 
@@ -649,7 +632,7 @@ impl<'a> Executor<'a> {
         if global_idx as usize >= self.globals.len() {
             return Err(RuntimeError::GlobalIndexOutOfBounds(global_idx));
         }
-        self.globals[global_idx as usize] = value;
+        self.globals[global_idx as usize].set(value);
         Ok(())
     }
 
@@ -704,6 +687,9 @@ impl<'a> Executor<'a> {
             }
         }
 
+        // Save call stack depth so we can restore on error
+        let saved_call_depth = self.call_stack.len();
+
         // Create initial call frame
         let initial_frame = CallFrame {
             function_idx: 0,
@@ -725,7 +711,15 @@ impl<'a> Executor<'a> {
             on_complete: ContextCompletion::ReturnFunction,
         }];
 
-        self.run_execution_loop(contexts, return_types.to_vec())
+        let result = self.run_execution_loop(contexts, return_types.to_vec());
+
+        // On error, restore call stack to pre-call state
+        if result.is_err() {
+            self.call_stack.truncate(saved_call_depth);
+            self.stack.clear();
+        }
+
+        result
     }
 
     /// Resume execution after an external call completes
@@ -999,12 +993,14 @@ impl<'a> Executor<'a> {
                         .tables
                         .get(*table_idx as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                    let table_guard = table
-                        .lock()
-                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                    let table_guard = table.borrow();
 
                     // Get function reference from table
-                    let func_ref = table_guard.get(table_elem_idx)?;
+                    // Spec: call_indirect OOB is "undefined element", not "out of bounds table access"
+                    let func_ref = table_guard.get(table_elem_idx).map_err(|e| match e {
+                        RuntimeError::TableIndexOutOfBounds(_) => RuntimeError::UndefinedElement(table_elem_idx),
+                        other => other,
+                    })?;
 
                     // Extract function address from reference
                     let func_addr = match func_ref {
@@ -1219,16 +1215,13 @@ impl<'a> Executor<'a> {
     fn execute_plain_instruction(&mut self, inst: &Instruction) -> Result<BlockEnd, RuntimeError> {
         use InstructionKind::*;
 
-        // Helper macro for memory operations with mutex locking
         macro_rules! with_memory {
             (load $op:ident($memarg:expr)) => {{
                 let memory = self
                     .memories
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                let mem_guard = memory
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                let mem_guard = memory.borrow();
                 ops::memory::$op(&mut self.stack, &mem_guard, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
@@ -1236,10 +1229,8 @@ impl<'a> Executor<'a> {
                 let memory = self
                     .memories
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                let mut mem_guard = memory
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                let mut mem_guard = memory.borrow_mut();
                 ops::memory::$op(&mut self.stack, &mut mem_guard, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
@@ -1247,10 +1238,8 @@ impl<'a> Executor<'a> {
                 let memory = self
                     .memories
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                let mem_guard = memory
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                let mem_guard = memory.borrow();
                 ops::memory::$op(&mut self.stack, &mem_guard)?;
                 Ok(BlockEnd::Normal)
             }};
@@ -1258,10 +1247,8 @@ impl<'a> Executor<'a> {
                 let memory = self
                     .memories
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                let mut mem_guard = memory
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                let mut mem_guard = memory.borrow_mut();
                 ops::memory::$op(&mut self.stack, &mut mem_guard)?;
                 Ok(BlockEnd::Normal)
             }};
@@ -1329,7 +1316,7 @@ impl<'a> Executor<'a> {
                     ValueType::ExternRef => self.stack.push(Value::ExternRef(None)),
                     _ => {
                         return Err(RuntimeError::InvalidConversion(format!(
-                            "Invalid reference type for ref.null: {:?}",
+                            "invalid reference type for ref.null: {:?}",
                             ref_type
                         )));
                     }
@@ -1473,11 +1460,11 @@ impl<'a> Executor<'a> {
             // 3. Let val be the value F.module.globals[x].val.
             // 4. Push the value val to the stack.
             GlobalGet { global_idx } => {
-                let value = *self
+                let shared = self
                     .globals
                     .get(*global_idx as usize)
                     .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
-                self.stack.push(value);
+                self.stack.push(shared.get());
                 Ok(BlockEnd::Normal)
             }
 
@@ -1499,15 +1486,14 @@ impl<'a> Executor<'a> {
                     return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
                 }
 
-                // Check mutability - need to handle both imported and local globals
-                // Check if the global is mutable (handles both imported and module-defined globals)
+                // Check mutability
                 if !is_global_mutable(self.module, *global_idx)? {
                     return Err(RuntimeError::InvalidConversion(
-                        "Cannot set immutable global".to_string(),
+                        "cannot set immutable global".to_string(),
                     ));
                 }
 
-                self.globals[*global_idx as usize] = value;
+                self.globals[*global_idx as usize].set(value);
                 Ok(BlockEnd::Normal)
             }
 
@@ -1614,11 +1600,15 @@ impl<'a> Executor<'a> {
                 let memory = self
                     .memories
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("No memory available".to_string()))?;
-                let mut mem_guard = memory
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
-                ops::memory::memory_init(&mut self.stack, &mut mem_guard, *data_idx, &self.module.data.data)?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory available".to_string()))?;
+                let mut mem_guard = memory.borrow_mut();
+                ops::memory::memory_init(
+                    &mut self.stack,
+                    &mut mem_guard,
+                    *data_idx,
+                    &self.module.data.data,
+                    &self.dropped_data,
+                )?;
                 Ok(BlockEnd::Normal)
             }
 
@@ -1629,10 +1619,8 @@ impl<'a> Executor<'a> {
                 let memory = self
                     .memories
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("No memory available".to_string()))?;
-                let mut mem_guard = memory
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory available".to_string()))?;
+                let mut mem_guard = memory.borrow_mut();
                 ops::memory::memory_copy(&mut self.stack, &mut mem_guard)?;
                 Ok(BlockEnd::Normal)
             }
@@ -1644,10 +1632,8 @@ impl<'a> Executor<'a> {
                 let memory = self
                     .memories
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("No memory available".to_string()))?;
-                let mut mem_guard = memory
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory available".to_string()))?;
+                let mut mem_guard = memory.borrow_mut();
                 ops::memory::memory_fill(&mut self.stack, &mut mem_guard)?;
                 Ok(BlockEnd::Normal)
             }
@@ -1655,9 +1641,10 @@ impl<'a> Executor<'a> {
             // data.drop x - Drop a data segment
             // [] → []
             // Prevents further use of data segment x
-            // Note: This is a no-op in our implementation as we don't
-            // track passive data segments separately after initialisation
-            DataDrop { data_idx: _ } => Ok(BlockEnd::Normal),
+            DataDrop { data_idx } => {
+                self.dropped_data.insert(*data_idx);
+                Ok(BlockEnd::Normal)
+            }
 
             // ----------------------------------------------------------------
             // 4.4.1 Numeric Instructions - Unary Operations
@@ -2334,9 +2321,7 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table_guard = table
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                let table_guard = table.borrow();
 
                 let value = table_guard.get(idx as u32)?;
 
@@ -2351,9 +2336,7 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                let mut table_guard = table.borrow_mut();
 
                 table_guard.set(idx as u32, Some(value))?;
                 Ok(BlockEnd::Normal)
@@ -2363,9 +2346,7 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table_guard = table
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                let table_guard = table.borrow();
                 self.stack.push(Value::I32(table_guard.size() as i32));
                 Ok(BlockEnd::Normal)
             }
@@ -2377,9 +2358,7 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                let mut table_guard = table.borrow_mut();
 
                 let result = table_guard.grow(delta as u32, Some(init_value))?;
                 self.stack.push(Value::I32(result as i32));
@@ -2399,9 +2378,7 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                let mut table_guard = table.borrow_mut();
 
                 table_guard.init(dst_idx, src_segment, src_idx, count)?;
                 Ok(BlockEnd::Normal)
@@ -2417,28 +2394,21 @@ impl<'a> Executor<'a> {
                         .tables
                         .get(*dst_table as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?;
-                    let mut table_guard = table
-                        .lock()
-                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                    let mut table_guard = table.borrow_mut();
                     table_guard.copy_within(dst_idx, src_idx, count)?;
                 } else {
-                    // Different tables - with Arc<Mutex<>> we can lock both independently
-                    let src_table_arc = self
+                    // Different tables - borrow both independently
+                    let src_table_rc = self
                         .tables
                         .get(*src_table as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*src_table))?;
-                    let dst_table_arc = self
+                    let dst_table_rc = self
                         .tables
                         .get(*dst_table as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?;
 
-                    // Lock both tables (source is read-only, dest is mutable)
-                    let src_guard = src_table_arc
-                        .lock()
-                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
-                    let mut dst_guard = dst_table_arc
-                        .lock()
-                        .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                    let src_guard = src_table_rc.borrow();
+                    let mut dst_guard = dst_table_rc.borrow_mut();
 
                     dst_guard.copy_from(dst_idx, &src_guard, src_idx, count)?;
                 }
@@ -2454,9 +2424,7 @@ impl<'a> Executor<'a> {
                     .tables
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table
-                    .lock()
-                    .map_err(|_| RuntimeError::MemoryError("Table lock poisoned".to_string()))?;
+                let mut table_guard = table.borrow_mut();
 
                 table_guard.fill(start, count, Some(value))?;
                 Ok(BlockEnd::Normal)
@@ -2477,10 +2445,8 @@ impl<'a> Executor<'a> {
                         let memory = self
                             .memories
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                        let mem_guard = memory
-                            .lock()
-                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                        let mem_guard = memory.borrow();
                         ops::simd::$fn(&mut self.stack, &mem_guard, $memarg)?;
                         Ok(BlockEnd::Normal)
                     }};
@@ -2488,10 +2454,8 @@ impl<'a> Executor<'a> {
                         let memory = self
                             .memories
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                        let mut mem_guard = memory
-                            .lock()
-                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                        let mut mem_guard = memory.borrow_mut();
                         ops::simd::$fn(&mut self.stack, &mut mem_guard, $memarg)?;
                         Ok(BlockEnd::Normal)
                     }};
@@ -2516,10 +2480,8 @@ impl<'a> Executor<'a> {
                         let memory = self
                             .memories
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                        let mem_guard = memory
-                            .lock()
-                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                        let mem_guard = memory.borrow();
                         ops::simd::$fn(&mut self.stack, &mem_guard, $memarg, *$lane)?;
                         Ok(BlockEnd::Normal)
                     }};
@@ -2527,10 +2489,8 @@ impl<'a> Executor<'a> {
                         let memory = self
                             .memories
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("No memory instance available".to_string()))?;
-                        let mut mem_guard = memory
-                            .lock()
-                            .map_err(|_| RuntimeError::MemoryError("Memory lock poisoned".to_string()))?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
+                        let mut mem_guard = memory.borrow_mut();
                         ops::simd::$fn(&mut self.stack, &mut mem_guard, $memarg, *$lane)?;
                         Ok(BlockEnd::Normal)
                     }};
@@ -2935,14 +2895,14 @@ mod tests {
             ExecutorTest::new()
                 .inst(InstructionKind::I32Const { value: 42 })
                 .returns(vec![ValueType::I64])
-                .expect_error("Type mismatch");
+                .expect_error("type mismatch");
         }
 
         #[test]
         fn missing_return_value() {
             ExecutorTest::new()
                 .returns(vec![ValueType::I32])
-                .expect_error("Stack underflow");
+                .expect_error("stack underflow");
         }
 
         #[test]
@@ -2950,7 +2910,7 @@ mod tests {
             ExecutorTest::new()
                 .inst(InstructionKind::I32Const { value: 42 })
                 .returns(vec![ValueType::I32, ValueType::I32])
-                .expect_error("Stack underflow");
+                .expect_error("stack underflow");
         }
     }
 
@@ -2987,7 +2947,7 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
             let outcome = executor
                 .execute_function(&func, vec![], &[ValueType::I32])
                 .expect("Execution should succeed");
@@ -3015,7 +2975,7 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
             let outcome = executor
                 .execute_function(&func, vec![], &[ValueType::I32])
                 .expect("Execution should succeed");
@@ -3354,7 +3314,7 @@ mod tests {
             ExecutorTest::new()
                 .args(vec![Value::I32(42)])
                 .inst(InstructionKind::LocalGet { local_idx: 1 })
-                .expect_error("Local variable index out of bounds: 1");
+                .expect_error("local variable index out of bounds: 1");
         }
 
         #[test]
@@ -3405,7 +3365,7 @@ mod tests {
                 .args(vec![Value::I32(42)])
                 .inst(InstructionKind::I32Const { value: 100 })
                 .inst(InstructionKind::LocalSet { local_idx: 1 })
-                .expect_error("Local variable index out of bounds: 1");
+                .expect_error("local variable index out of bounds: 1");
         }
 
         #[test]
@@ -3413,7 +3373,7 @@ mod tests {
             ExecutorTest::new()
                 .args(vec![Value::I32(42)])
                 .inst(InstructionKind::LocalSet { local_idx: 0 })
-                .expect_error("Stack underflow");
+                .expect_error("stack underflow");
         }
 
         #[test]
@@ -3476,7 +3436,7 @@ mod tests {
                 .args(vec![Value::I32(42)])
                 .inst(InstructionKind::I32Const { value: 100 })
                 .inst(InstructionKind::LocalTee { local_idx: 1 })
-                .expect_error("Local variable index out of bounds: 1");
+                .expect_error("local variable index out of bounds: 1");
         }
 
         #[test]
@@ -3484,7 +3444,7 @@ mod tests {
             ExecutorTest::new()
                 .args(vec![Value::I32(42)])
                 .inst(InstructionKind::LocalTee { local_idx: 0 })
-                .expect_error("Stack underflow");
+                .expect_error("stack underflow");
         }
 
         #[test]
@@ -3535,7 +3495,7 @@ mod tests {
             ExecutorTest::new()
                 .global(ValueType::I32, Value::I32(42), false)
                 .inst(InstructionKind::GlobalGet { global_idx: 1 })
-                .expect_error("Global variable index out of bounds: 1");
+                .expect_error("global variable index out of bounds: 1");
         }
 
         #[test]
@@ -3576,7 +3536,7 @@ mod tests {
                 .global(ValueType::I32, Value::I32(42), true)
                 .inst(InstructionKind::I32Const { value: 100 })
                 .inst(InstructionKind::GlobalSet { global_idx: 1 })
-                .expect_error("Global variable index out of bounds: 1");
+                .expect_error("global variable index out of bounds: 1");
         }
 
         #[test]
@@ -3584,7 +3544,7 @@ mod tests {
             ExecutorTest::new()
                 .global(ValueType::I32, Value::I32(42), true)
                 .inst(InstructionKind::GlobalSet { global_idx: 0 })
-                .expect_error("Stack underflow");
+                .expect_error("stack underflow");
         }
 
         #[test]
@@ -3594,7 +3554,7 @@ mod tests {
                 .global(ValueType::I32, Value::I32(42), false) // immutable
                 .inst(InstructionKind::I32Const { value: 100 })
                 .inst(InstructionKind::GlobalSet { global_idx: 0 })
-                .expect_error("Cannot set immutable global");
+                .expect_error("cannot set immutable global");
         }
 
         #[test]

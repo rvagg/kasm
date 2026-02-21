@@ -65,6 +65,16 @@ impl Table {
         self.elements.len() as u32
     }
 
+    /// Get the reference type of this table
+    pub fn ref_type(&self) -> RefType {
+        self.ref_type
+    }
+
+    /// Get the limits of this table
+    pub fn limits(&self) -> &Limits {
+        &self.limits
+    }
+
     /// Get the element at the given index
     ///
     /// Returns the value or an appropriate null value if the slot is empty.
@@ -175,7 +185,9 @@ impl Table {
     /// - Returns `TableIndexOutOfBounds` if the range is out of bounds.
     /// - Returns `TypeMismatch` if any value type doesn't match the table's reference type.
     pub fn init(&mut self, dst_idx: u32, src: &[Option<Value>], src_idx: u32, count: u32) -> Result<(), RuntimeError> {
-        let src_end = (src_idx + count) as usize;
+        let src_end = src_idx
+            .checked_add(count)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))? as usize;
         let dst_end = dst_idx
             .checked_add(count)
             .ok_or(RuntimeError::TableIndexOutOfBounds(u32::MAX))?;

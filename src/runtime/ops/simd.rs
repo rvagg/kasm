@@ -162,9 +162,9 @@ fn effective_address(stack: &mut Stack, memarg: &MemArg) -> Result<u32, RuntimeE
     let addr = stack.pop_i32()?;
     let ea = (addr as u64)
         .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+        .ok_or_else(|| RuntimeError::MemoryError("out of bounds memory access".to_string()))?;
     if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
+        return Err(RuntimeError::MemoryError("out of bounds memory access".to_string()));
     }
     Ok(ea as u32)
 }

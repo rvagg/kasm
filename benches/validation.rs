@@ -1,7 +1,8 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use kasm::parser;
 use std::collections::HashMap;
 use std::fs;
+use std::hint::black_box;
 
 fn load_test_module(test_name: &str) -> Vec<u8> {
     // Load test from JSON fixture
@@ -39,7 +40,7 @@ fn load_test_module(test_name: &str) -> Vec<u8> {
 fn count_memory_instructions(module: &parser::module::Module) -> usize {
     let mut count = 0;
     for code in &module.code.code {
-        for inst in &code.instructions {
+        for inst in code.body.flatten() {
             use parser::instruction::InstructionKind::*;
             match &inst.kind {
                 I32Load { .. }
@@ -82,7 +83,7 @@ fn count_memory_instructions(module: &parser::module::Module) -> usize {
 fn count_call_instructions(module: &parser::module::Module) -> usize {
     let mut count = 0;
     for code in &module.code.code {
-        for inst in &code.instructions {
+        for inst in code.body.flatten() {
             use parser::instruction::InstructionKind::*;
             match &inst.kind {
                 Call { .. } | CallIndirect { .. } => count += 1,

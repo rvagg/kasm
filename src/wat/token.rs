@@ -3,6 +3,7 @@
 //! This module defines the lexical tokens produced when tokenising WebAssembly
 //! Text Format source code.
 
+use fhex::FromHex;
 use std::fmt;
 
 /// A location in source text.
@@ -22,6 +23,14 @@ pub struct Span {
 }
 
 impl Span {
+    /// A zero-length span at the start of source, for errors without position.
+    pub const ZERO: Span = Span {
+        start: 0,
+        end: 0,
+        line: 1,
+        column: 1,
+    };
+
     /// Create a new span.
     pub fn new(start: usize, end: usize, line: u32, column: u32) -> Self {
         Self {
@@ -130,17 +139,27 @@ pub struct SignedValue<T> {
     pub value: T,
     /// Whether a negative sign was present in the source.
     pub negative: bool,
+    /// Whether any explicit sign (+ or -) was present in the source.
+    pub has_sign: bool,
 }
 
 impl<T> SignedValue<T> {
-    /// Create a new signed value.
-    pub fn new(value: T, negative: bool) -> Self {
-        Self { value, negative }
+    /// Create a value with an explicit sign (`+42` or `-42`).
+    pub fn signed(value: T, negative: bool) -> Self {
+        Self {
+            value,
+            negative,
+            has_sign: true,
+        }
     }
 
-    /// Create a positive value.
-    pub fn positive(value: T) -> Self {
-        Self { value, negative: false }
+    /// Create an unsigned value (bare literal like `42`).
+    pub fn unsigned(value: T) -> Self {
+        Self {
+            value,
+            negative: false,
+            has_sign: false,
+        }
     }
 }
 
@@ -181,11 +200,17 @@ impl SignedValue<u64> {
 
 /// A floating-point literal.
 ///
-/// Represents decimal floats, hex floats, infinity, and NaN (with optional payload).
+/// Stores the original source string for both decimal and hex floats so that
+/// f32 and f64 conversions can each round independently, avoiding the
+/// double-rounding problem of converting via an intermediate f64.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FloatLit {
-    /// A finite floating-point value.
-    Value(f64),
+    /// A decimal floating-point literal. Stores the original string (e.g. "1.5e-3")
+    /// so that f32 and f64 conversions use the standard library's correct rounding.
+    Decimal { negative: bool, decimal_str: String },
+    /// A hex floating-point value. Stores the original hex string (e.g. "0x1.8p+1")
+    /// so that f32 and f64 conversions can each round independently via fhex.
+    Hex { negative: bool, hex_str: String },
     /// Positive or negative infinity.
     Inf { negative: bool },
     /// Not a Number, with optional payload for the significand bits.
@@ -199,10 +224,38 @@ impl FloatLit {
     #[must_use]
     pub fn to_f64(&self) -> f64 {
         match self {
-            FloatLit::Value(v) => *v,
+            FloatLit::Decimal { negative, decimal_str } => {
+                let v: f64 = decimal_str.parse().unwrap_or(0.0);
+                if *negative { -v } else { v }
+            }
+            FloatLit::Hex { negative, hex_str } => {
+                let v = f64::from_hex(hex_str).unwrap_or(0.0);
+                if *negative { -v } else { v }
+            }
             FloatLit::Inf { negative: true } => f64::NEG_INFINITY,
             FloatLit::Inf { negative: false } => f64::INFINITY,
             FloatLit::Nan { .. } => f64::NAN,
+        }
+    }
+
+    /// Convert to f32 with correct IEEE 754 rounding.
+    ///
+    /// For hex literals, calls `f32::from_hex()` directly. For decimal literals,
+    /// calls `str::parse::<f32>()` directly. Both avoid intermediate f64 rounding.
+    #[must_use]
+    pub fn to_f32(&self) -> f32 {
+        match self {
+            FloatLit::Decimal { negative, decimal_str } => {
+                let v: f32 = decimal_str.parse().unwrap_or(0.0);
+                if *negative { -v } else { v }
+            }
+            FloatLit::Hex { negative, hex_str } => {
+                let v = f32::from_hex(hex_str).unwrap_or(0.0);
+                if *negative { -v } else { v }
+            }
+            FloatLit::Inf { negative: true } => f32::NEG_INFINITY,
+            FloatLit::Inf { negative: false } => f32::INFINITY,
+            FloatLit::Nan { .. } => f32::NAN,
         }
     }
 }
@@ -233,7 +286,20 @@ impl fmt::Display for TokenKind {
                 }
             }
             TokenKind::Float(fl) => match fl {
-                FloatLit::Value(n) => write!(f, "{}", n),
+                FloatLit::Decimal { negative, decimal_str } => {
+                    if *negative {
+                        write!(f, "-{}", decimal_str)
+                    } else {
+                        write!(f, "{}", decimal_str)
+                    }
+                }
+                FloatLit::Hex { negative, hex_str } => {
+                    if *negative {
+                        write!(f, "-{}", hex_str)
+                    } else {
+                        write!(f, "{}", hex_str)
+                    }
+                }
                 FloatLit::Inf { negative: true } => write!(f, "-inf"),
                 FloatLit::Inf { negative: false } => write!(f, "inf"),
                 FloatLit::Nan {
@@ -285,27 +351,27 @@ mod tests {
 
     #[test]
     fn signed_value_to_i64() {
-        // Positive values
-        assert_eq!(SignedValue::new(42u64, false).to_i64(), Some(42));
-        assert_eq!(SignedValue::new(0u64, false).to_i64(), Some(0));
-        assert_eq!(SignedValue::new(i64::MAX as u64, false).to_i64(), Some(i64::MAX));
+        // Unsigned values
+        assert_eq!(SignedValue::unsigned(42u64).to_i64(), Some(42));
+        assert_eq!(SignedValue::unsigned(0u64).to_i64(), Some(0));
+        assert_eq!(SignedValue::unsigned(i64::MAX as u64).to_i64(), Some(i64::MAX));
 
         // Negative values
-        assert_eq!(SignedValue::new(42u64, true).to_i64(), Some(-42));
-        assert_eq!(SignedValue::new(0u64, true).to_i64(), Some(0)); // -0 becomes 0
-        assert_eq!(SignedValue::new(i64::MAX as u64 + 1, true).to_i64(), Some(i64::MIN));
+        assert_eq!(SignedValue::signed(42u64, true).to_i64(), Some(-42));
+        assert_eq!(SignedValue::signed(0u64, true).to_i64(), Some(0)); // -0 becomes 0
+        assert_eq!(SignedValue::signed(i64::MAX as u64 + 1, true).to_i64(), Some(i64::MIN));
 
         // Overflow
-        assert_eq!(SignedValue::new(i64::MAX as u64 + 1, false).to_i64(), None);
-        assert_eq!(SignedValue::new(i64::MAX as u64 + 2, true).to_i64(), None);
+        assert_eq!(SignedValue::unsigned(i64::MAX as u64 + 1).to_i64(), None);
+        assert_eq!(SignedValue::signed(i64::MAX as u64 + 2, true).to_i64(), None);
     }
 
     #[test]
     fn signed_value_to_u64() {
-        assert_eq!(SignedValue::new(42u64, false).to_u64(), Some(42));
-        assert_eq!(SignedValue::new(u64::MAX, false).to_u64(), Some(u64::MAX));
-        assert_eq!(SignedValue::new(0u64, true).to_u64(), Some(0)); // -0 is 0
-        assert_eq!(SignedValue::new(1u64, true).to_u64(), None); // -1 invalid as u64
+        assert_eq!(SignedValue::unsigned(42u64).to_u64(), Some(42));
+        assert_eq!(SignedValue::unsigned(u64::MAX).to_u64(), Some(u64::MAX));
+        assert_eq!(SignedValue::signed(0u64, true).to_u64(), Some(0)); // -0 is 0
+        assert_eq!(SignedValue::signed(1u64, true).to_u64(), None); // -1 invalid as u64
     }
 
     #[test]
@@ -314,8 +380,8 @@ mod tests {
         assert_eq!(format!("{}", TokenKind::RightParen), ")");
         assert_eq!(format!("{}", TokenKind::Keyword("func".into())), "func");
         assert_eq!(format!("{}", TokenKind::Id("name".into())), "$name");
-        assert_eq!(format!("{}", TokenKind::Integer(SignedValue::new(42, false))), "42");
-        assert_eq!(format!("{}", TokenKind::Integer(SignedValue::new(42, true))), "-42");
+        assert_eq!(format!("{}", TokenKind::Integer(SignedValue::unsigned(42))), "42");
+        assert_eq!(format!("{}", TokenKind::Integer(SignedValue::signed(42, true))), "-42");
         assert_eq!(format!("{}", TokenKind::String(b"hi".to_vec())), "\"hi\"");
         assert_eq!(format!("{}", TokenKind::String(vec![0x00, 0x0a])), "\"\\00\\0a\"");
     }

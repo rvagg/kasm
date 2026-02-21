@@ -33,13 +33,13 @@ impl From<crate::parser::validate::ValidationError> for DecodeError {
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DecodeError::Io(e) => write!(f, "IO error: {e}"),
+            DecodeError::Io(e) => write!(f, "io error: {e}"),
             DecodeError::UnknownOpcode(_op) => write!(f, "illegal opcode"),
             DecodeError::UnknownInstruction(prefix, sub) => {
-                write!(f, "Unknown instruction: {prefix:#04x} {sub:#04x}")
+                write!(f, "unknown instruction: {prefix:#04x} {sub:#04x}")
             }
-            DecodeError::InvalidValueType(s) => write!(f, "Invalid value type: {s}"),
-            DecodeError::InvalidBlockType => write!(f, "Invalid block type"),
+            DecodeError::InvalidValueType(s) => write!(f, "invalid value type: {s}"),
+            DecodeError::InvalidBlockType => write!(f, "invalid block type"),
             DecodeError::Validation(e) => write!(f, "{e}"),
         }
     }

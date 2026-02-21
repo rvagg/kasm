@@ -6,7 +6,6 @@
 pub mod control;
 pub mod executor;
 pub mod frame;
-pub mod implemented;
 pub mod imports;
 pub mod instance;
 pub mod memory;
@@ -21,7 +20,9 @@ pub mod wasi;
 pub use imports::ImportObject;
 pub use instance::Instance;
 pub use memory::Memory;
-pub use store::{FuncAddr, FunctionInstance, MemoryAddr, SharedMemory, SharedTable, Store, TableAddr};
+pub use store::{
+    FuncAddr, FunctionInstance, GlobalAddr, MemoryAddr, SharedGlobal, SharedMemory, SharedTable, Store, TableAddr,
+};
 pub use table::Table;
 pub use value::Value;
 
@@ -51,57 +52,59 @@ pub struct ExternalCallRequest {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
-    #[error("Stack underflow")]
+    #[error("stack underflow")]
     StackUnderflow,
-    #[error("Type mismatch: expected {expected}, got {actual}")]
+    #[error("type mismatch: expected {expected}, got {actual}")]
     TypeMismatch { expected: String, actual: String },
-    #[error("Unknown function: {0}")]
+    #[error("unknown import: {0}")]
     UnknownFunction(String),
-    #[error("Unknown export: {0}")]
+    #[error("unknown export: {0}")]
     UnknownExport(String),
-    #[error("Function index out of bounds: {0}")]
+    #[error("incompatible import type: {0}")]
+    IncompatibleImportType(String),
+    #[error("function index out of bounds: {0}")]
     FunctionIndexOutOfBounds(u32),
-    #[error("Unimplemented instruction: {0}")]
+    #[error("unimplemented instruction: {0}")]
     UnimplementedInstruction(String),
-    #[error("Invalid function type")]
+    #[error("invalid function type")]
     InvalidFunctionType,
-    #[error("Local variable index out of bounds: {0}")]
+    #[error("local variable index out of bounds: {0}")]
     LocalIndexOutOfBounds(u32),
-    #[error("Global variable index out of bounds: {0}")]
+    #[error("global variable index out of bounds: {0}")]
     GlobalIndexOutOfBounds(u32),
-    #[error("Invalid label: {0}")]
+    #[error("invalid label: {0}")]
     InvalidLabel(u32),
-    #[error("Memory error: {0}")]
+    #[error("memory error: {0}")]
     MemoryError(String),
-    #[error("Division by zero")]
+    #[error("integer divide by zero")]
     DivisionByZero,
-    #[error("Integer overflow")]
+    #[error("integer overflow")]
     IntegerOverflow,
-    #[error("Invalid conversion: {0}")]
+    #[error("invalid conversion to integer: {0}")]
     InvalidConversion(String),
-    #[error("Trap: {0}")]
+    #[error("trap: {0}")]
     Trap(String),
-    #[error("Invalid constant expression: {0}")]
+    #[error("invalid constant expression: {0}")]
     InvalidConstExpr(String),
-    #[error("Call stack overflow")]
+    #[error("call stack exhausted")]
     CallStackOverflow,
-    #[error("Table index out of bounds: {0}")]
+    #[error("out of bounds table access")]
     TableIndexOutOfBounds(u32),
-    #[error("Table size exceeded")]
+    #[error("table size exceeded")]
     TableSizeExceeded,
-    #[error("Undefined table element: {0}")]
+    #[error("uninitialized element {0}")]
     UndefinedElement(u32),
-    #[error("Indirect call type mismatch: expected {expected}, got {actual}")]
+    #[error("indirect call type mismatch: expected {expected}, got {actual}")]
     IndirectCallTypeMismatch { expected: String, actual: String },
-    #[error("Element index out of bounds: {0}")]
+    #[error("element index out of bounds: {0}")]
     ElementIndexOutOfBounds(u32),
-    #[error("Import type mismatch for {module}.{name}: expected {expected}, got {actual}")]
+    #[error("incompatible import type for {module}.{name}: expected {expected}, got {actual}")]
     ImportTypeMismatch {
         module: String,
         name: String,
         expected: String,
         actual: String,
     },
-    #[error("Instruction budget exhausted")]
+    #[error("instruction budget exhausted")]
     InstructionBudgetExhausted,
 }

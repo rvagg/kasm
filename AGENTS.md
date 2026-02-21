@@ -12,6 +12,7 @@ src/parser/         # Binary parser, validation
   instruction/      # Opcode decoding (200+ instructions)
   module.rs         # Module representation
   structured.rs     # Control flow tree builder
+  validate.rs       # Module-level validation (called by WAT parser)
 
 src/wat/            # WAT (text format) parser
   mod.rs            # Public API: parse() function
@@ -22,13 +23,20 @@ src/wat/            # WAT (text format) parser
   parser.rs         # Two-phase parser (S-expr → Module)
   error.rs          # LexError/ParseError with span information
 
+src/wast/           # .wast spec test support
+  mod.rs            # Public API: parse_script(), create_spectest_*()
+  parser.rs         # .wast script parser (commands, assertions, modules)
+  command.rs        # AST types: WastCommand, WastValue, WastFloat, etc.
+  spectest.rs       # spectest module + imports (globals, table, memory, print fns)
+  values.rs         # Value conversion and NaN-aware comparison
+
 src/encoder.rs      # Binary encoder (Module → .wasm)
 
 src/parser/
   encoding.rs       # LEB128/float/vector encoding primitives (write_* and emit_* API)
 
 src/runtime/        # Interpreter
-  store.rs          # Store-based execution, cross-module function calls
+  store.rs          # Store-based execution, cross-module calls, shared globals
   executor.rs       # State machine execution (no recursion)
   instance.rs       # Module instantiation
   imports.rs        # Import resolution (globals, functions, memories, tables)
@@ -36,7 +44,7 @@ src/runtime/        # Interpreter
   ops/              # Instruction implementations (numeric, memory, control, etc.)
   memory.rs         # Linear memory (64KB pages, 4GB max)
   stack.rs          # Operand stack
-  value.rs          # i32/i64/f32/f64/funcref/externref
+  value.rs          # i32/i64/f32/f64/v128/funcref/externref
   wasi/             # WASI preview1 implementation
     mod.rs          # WASI imports (fd_read, fd_write, args_*, environ_*, proc_exit)
     context.rs      # WasiContext with lazy memory binding
@@ -56,9 +64,9 @@ benches/                # Criterion benchmarks
 ```
 
 ## Status
-- 427+ instructions implemented including all 236 SIMD (see src/runtime/implemented.rs)
-- 147/147 spec tests pass (90 core + 57 SIMD)
-- 704 unit tests, 82 encoder tests, 18 WASI tests
+- 427+ instructions implemented including all 236 SIMD
+- 147/147 spec tests pass (90 core + 57 SIMD) via native .wast runner
+- 725 unit tests, 82 encoder tests, 147 dump tests, 147 wast tests, 18 WASI tests
 - SIMD: all v128 operations (integer, float, bitwise, comparison, shuffle, conversion, memory)
 - WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
 - AssemblyScript support: env.abort with UTF-16 string extraction
@@ -161,7 +169,7 @@ cargo bench --bench validation          # Parser/validation benchmarks
 | Metric | Value |
 |--------|-------|
 | Instruction dispatch | ~237 ns |
-| Function call | ~0.34 µs |
+| Function call | ~0.34 us |
 | Memory load+store (per byte) | ~474 ns |
 
 Results saved to `target/criterion/` with HTML reports.
@@ -192,21 +200,33 @@ time cat benches/commp_bench_500k.bin | target/release/kasm run examples/commp/t
 1. Add to `InstructionKind` enum (src/parser/instruction/mod.rs)
 2. Add decoding in `decode_instruction()` (src/parser/instruction/decode.rs)
 3. Add execution in `execute_instruction()` (src/runtime/executor.rs) or ops module
-4. Update src/runtime/implemented.rs
-5. Run `./check.sh`
+4. Run `./check.sh`
 
-## Test Coverage System
-1. **src/runtime/implemented.rs** - Central registry of implemented instructions
-2. **tests/parser_tests.rs** - Spec test runner:
-   - Checks if test's instructions are implemented
-   - Skips tests with unimplemented instructions (keeps tests green)
-   - Runs assert_return/assert_trap/assert_invalid assertions
-   - Creates ImportObject with spectest globals (global_i32=666, etc.)
-   - Uses Store for cross-module function execution
-3. **src/bin/test_coverage.rs** - Shows which instructions block most tests
+## Test Infrastructure
+- **tests/wast_tests.rs** - Native .wast spec test runner (147/147 passing):
+  - Parses .wast files directly via `kasm::wast::parse_script()`
+  - All assertion types: assert_return, assert_trap, assert_invalid, assert_malformed,
+    assert_unlinkable, assert_uninstantiable, assert_exhaustion
+  - Creates spectest imports (globals, table, memory, print functions)
+  - Error message equivalences with narrow, justified mappings
+  - Spec .wast files: `tests/spec/wast/` (90 core) + `tests/spec/wast/simd/` (57 SIMD)
+- **tests/dump_tests.rs** - Module display format tests (147 fixtures):
+  - Compares `Module::to_string()` against wasm-objdump reference output
+  - Tests Header, Details, and Disassemble formats
+- **tests/encoder_tests.rs** - Encoder round-trip tests (82 tests):
+  - Encode stability: encode → parse → encode → compare bytes
+  - Uses canonical .wasm binaries from JSON fixtures (compiled by wabt)
+- **tests/wasi_tests.rs** - WASI integration tests (18 tests)
+- **tests/spec/*.json** - JSON fixtures with `bin` + `dump` sections (4.4 MB):
+  - `bin`: base64-encoded .wasm binaries compiled by wabt reference toolchain
+  - `dump`: wasm-objdump output for header/details/disassemble comparison
+  - Regenerate: `WAST2JSON=... WASM_OBJDUMP=... node tests/compile_test.mjs --batch <wast-dir> tests/spec`
 
 ```bash
-cargo run --bin test-coverage  # See which instructions enable most tests
+cargo test --test wast_tests           # 147 spec tests
+cargo test --test dump_tests           # 147 dump format tests
+cargo test --test encoder_tests        # 82 encoder tests
+cargo test --test wasi_tests           # 18 WASI tests
 ```
 
 ## WAT Parser
@@ -282,18 +302,23 @@ cargo test --test encoder_tests    # 82 encoder tests
 - src/wat/sexpr.rs - S-expression tree with span tracking
 - src/wat/lexer.rs - WAT tokeniser with iterator API
 - src/wat/token.rs - Token, TokenKind, SignedValue, FloatLit, Span
+- src/wast/mod.rs - .wast test support API (parse_script, spectest)
+- src/wast/parser.rs - .wast script parser
+- src/wast/values.rs - Value conversion and NaN-aware comparison
 - src/main.rs - CLI with `run`, `dump`, and `compile` subcommands
 - src/runtime/store.rs - Store, FuncAddr, MemoryAddr, TableAddr, cross-module execution
 - src/runtime/executor.rs - State machine interpreter
 - src/runtime/wasi/mod.rs - WASI imports and create_wasi_instance helper
 - src/runtime/wasi/context.rs - WasiContext (memory, fds, args, env)
 - src/runtime/ops/*.rs - Instruction implementations by category
-- src/runtime/implemented.rs - Registry of implemented instructions
 - src/encoder.rs - Binary encoder (Module → .wasm bytes)
 - src/parser/encoding.rs - Encoding primitives (LEB128, floats, vectors)
-- tests/parser_tests.rs - Spec test harness with spectest imports
+- src/parser/validate.rs - Module-level validation
+- tests/wast_tests.rs - Native .wast spec test runner
+- tests/dump_tests.rs - Module display format tests
 - tests/encoder_tests.rs - Encoder round-trip tests (WAT, binary, spec fixtures)
 - tests/wasi_tests.rs - WASI integration tests (inline WAT)
+- tests/compile_test.mjs - JSON fixture generator (wast2json + wasm-objdump)
 
 ## Error Types
 - `DecodeError` - Binary parser errors with byte positions
@@ -305,14 +330,15 @@ cargo test --test encoder_tests    # 82 encoder tests
 
 ## Testing
 - Unit tests: Individual component tests
-- Spec tests: Official WebAssembly test suite
-- Always check spec test JSON for expected behaviour
+- Spec tests: Official WebAssembly test suite via native .wast runner
+- Dump tests: Module display format vs wasm-objdump reference
+- Encoder tests: Round-trip encode stability with wabt-compiled fixtures
 - Use `RUST_BACKTRACE=1` for debugging
 
 ## Performance Notes
 - Interpreter is ~6,500x slower than native (see docs/PERFORMANCE.md for bottleneck analysis)
-- Main bottleneck: Mutex lock per memory operation (~510 ns per load+store)
-- Function calls use Rc-based body sharing (~0.5 µs/call)
+- Memory/tables use Rc<RefCell<>> for shared access (single-threaded)
+- Function calls use Rc-based body sharing (~0.5 us/call)
 - Debug builds much slower than release - always benchmark with `--release`
 - State machine executor: unlimited call depth, no Rust stack overflow
 - Run `cargo bench --bench execution` to measure current performance

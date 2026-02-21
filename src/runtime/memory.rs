@@ -88,6 +88,11 @@ impl Memory {
         self.current_pages
     }
 
+    /// Get the maximum memory size in pages (None = unbounded)
+    pub fn max_pages(&self) -> Option<u32> {
+        self.max_pages
+    }
+
     /// Grow memory by the specified number of pages
     ///
     /// Returns the previous size in pages, or -1 if growth fails
@@ -146,10 +151,7 @@ impl Memory {
 
         // Check if access is within bounds
         if end > self.data.len() {
-            return Err(RuntimeError::MemoryError(format!(
-                "Out of bounds memory access: address {addr} + size {size} = {end} exceeds memory size {}",
-                self.data.len()
-            )));
+            return Err(RuntimeError::MemoryError("out of bounds memory access".to_string()));
         }
 
         Ok(addr)

@@ -72,6 +72,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// Current byte offset in the source.
+    #[cfg(test)]
     pub fn offset(&self) -> usize {
         self.offset
     }
@@ -126,6 +127,18 @@ impl<'a> Cursor<'a> {
             count += 1;
         }
         count
+    }
+
+    /// Consume characters while the predicate holds, returning the consumed slice.
+    pub fn take_while(&mut self, predicate: impl Fn(char) -> bool) -> &'a str {
+        let start = self.offset;
+        while let Some(c) = self.peek() {
+            if !predicate(c) {
+                break;
+            }
+            self.advance();
+        }
+        &self.source[start..self.offset]
     }
 
     /// Extract a slice of the source text by byte offsets.
@@ -247,6 +260,19 @@ mod tests {
         let count = cursor.skip_while(|c| c == 'b');
         assert_eq!(count, 2);
         assert_eq!(cursor.peek(), Some('c'));
+    }
+
+    #[test]
+    fn take_while_returns_slice() {
+        let mut cursor = Cursor::new("aaabbc");
+
+        let taken = cursor.take_while(|c| c == 'a');
+        assert_eq!(taken, "aaa");
+        assert_eq!(cursor.peek(), Some('b'));
+
+        let taken = cursor.take_while(|c| c == 'x');
+        assert_eq!(taken, "");
+        assert_eq!(cursor.peek(), Some('b'));
     }
 
     #[test]

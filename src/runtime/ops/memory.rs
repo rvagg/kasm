@@ -19,43 +19,30 @@ pub fn copy_to_memory(memory: &mut Memory, dest_addr: u32, data: &[u8]) -> Resul
     Ok(())
 }
 
-/// Validate and convert memory operation arguments (length and addresses)
-/// Returns (length_u32, Option<src_addr_u32>, dest_addr_u32)
-fn validate_memory_args(
-    length: i32,
-    src_addr: Option<i32>,
-    dest_addr: i32,
-    operation: &str,
-) -> Result<(u32, Option<u32>, u32), RuntimeError> {
-    // Validate length
-    if length < 0 {
-        return Err(RuntimeError::MemoryError(format!("Negative length in {}", operation)));
+/// Compute the effective address for a memory load/store: base + memarg.offset.
+///
+/// Returns an error if the sum overflows or exceeds the 32-bit address space.
+#[inline]
+fn effective_address(base: i32, memarg: &MemArg) -> Result<u32, RuntimeError> {
+    let ea = (base as u64)
+        .checked_add(memarg.offset as u64)
+        .ok_or_else(|| RuntimeError::MemoryError("out of bounds memory access".to_string()))?;
+    if ea > u32::MAX as u64 {
+        return Err(RuntimeError::MemoryError("out of bounds memory access".to_string()));
     }
-    let length = length as u32;
+    Ok(ea as u32)
+}
 
-    // Validate source address if provided
-    let src_addr = if let Some(src) = src_addr {
-        if src < 0 {
-            return Err(RuntimeError::MemoryError(format!(
-                "Negative source address in {}",
-                operation
-            )));
-        }
-        Some(src as u32)
-    } else {
-        None
-    };
-
-    // Validate destination address
-    if dest_addr < 0 {
-        return Err(RuntimeError::MemoryError(format!(
-            "Negative destination address in {}",
-            operation
-        )));
+/// Check that addr + length falls within memory bounds.
+///
+/// WebAssembly bulk memory operations require this even when length is zero.
+#[inline]
+fn check_memory_bounds(memory: &Memory, addr: u32, length: u32) -> Result<(), RuntimeError> {
+    let mem_size = memory.size() as u64 * 65536;
+    if addr as u64 + length as u64 > mem_size {
+        return Err(RuntimeError::MemoryError("out of bounds memory access".to_string()));
     }
-    let dest_addr = dest_addr as u32;
-
-    Ok((length, src_addr, dest_addr))
+    Ok(())
 }
 
 // ============================================================================
@@ -68,17 +55,9 @@ fn validate_memory_args(
 pub fn i32_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    // Calculate effective address (checking for overflow)
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    // Check if address fits in u32 (WebAssembly 1.0 uses 32-bit addressing)
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_i32(ea as u32)?;
+    let value = memory.read_i32(ea)?;
     stack.push(Value::I32(value));
     Ok(())
 }
@@ -89,15 +68,9 @@ pub fn i32_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(
 pub fn i32_load8_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_i8(ea as u32)?;
+    let value = memory.read_i8(ea)?;
     stack.push(Value::I32(value as i32));
     Ok(())
 }
@@ -108,15 +81,9 @@ pub fn i32_load8_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resul
 pub fn i32_load8_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_u8(ea as u32)?;
+    let value = memory.read_u8(ea)?;
     stack.push(Value::I32(value as i32));
     Ok(())
 }
@@ -127,15 +94,9 @@ pub fn i32_load8_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resul
 pub fn i32_load16_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_i16(ea as u32)?;
+    let value = memory.read_i16(ea)?;
     stack.push(Value::I32(value as i32));
     Ok(())
 }
@@ -146,15 +107,9 @@ pub fn i32_load16_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resu
 pub fn i32_load16_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_u16(ea as u32)?;
+    let value = memory.read_u16(ea)?;
     stack.push(Value::I32(value as i32));
     Ok(())
 }
@@ -165,15 +120,9 @@ pub fn i32_load16_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resu
 pub fn i64_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_i64(ea as u32)?;
+    let value = memory.read_i64(ea)?;
     stack.push(Value::I64(value));
     Ok(())
 }
@@ -184,15 +133,9 @@ pub fn i64_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(
 pub fn i64_load8_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_i8(ea as u32)?;
+    let value = memory.read_i8(ea)?;
     stack.push(Value::I64(value as i64));
     Ok(())
 }
@@ -203,15 +146,9 @@ pub fn i64_load8_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resul
 pub fn i64_load8_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_u8(ea as u32)?;
+    let value = memory.read_u8(ea)?;
     stack.push(Value::I64(value as i64));
     Ok(())
 }
@@ -222,15 +159,9 @@ pub fn i64_load8_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resul
 pub fn i64_load16_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_i16(ea as u32)?;
+    let value = memory.read_i16(ea)?;
     stack.push(Value::I64(value as i64));
     Ok(())
 }
@@ -241,15 +172,9 @@ pub fn i64_load16_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resu
 pub fn i64_load16_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_u16(ea as u32)?;
+    let value = memory.read_u16(ea)?;
     stack.push(Value::I64(value as i64));
     Ok(())
 }
@@ -260,15 +185,9 @@ pub fn i64_load16_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resu
 pub fn i64_load32_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_i32(ea as u32)?;
+    let value = memory.read_i32(ea)?;
     stack.push(Value::I64(value as i64));
     Ok(())
 }
@@ -279,15 +198,9 @@ pub fn i64_load32_s(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resu
 pub fn i64_load32_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_u32(ea as u32)?;
+    let value = memory.read_u32(ea)?;
     stack.push(Value::I64(value as i64));
     Ok(())
 }
@@ -298,15 +211,9 @@ pub fn i64_load32_u(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Resu
 pub fn f32_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_f32(ea as u32)?;
+    let value = memory.read_f32(ea)?;
     stack.push(Value::F32(value));
     Ok(())
 }
@@ -317,15 +224,9 @@ pub fn f32_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(
 pub fn f64_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    let value = memory.read_f64(ea as u32)?;
+    let value = memory.read_f64(ea)?;
     stack.push(Value::F64(value));
     Ok(())
 }
@@ -341,15 +242,9 @@ pub fn i32_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
     let value = stack.pop_i32()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_i32(ea as u32, value)?;
+    memory.write_i32(ea, value)?;
     Ok(())
 }
 
@@ -360,15 +255,9 @@ pub fn i32_store8(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Re
     let value = stack.pop_i32()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_u8(ea as u32, value as u8)?;
+    memory.write_u8(ea, value as u8)?;
     Ok(())
 }
 
@@ -379,15 +268,9 @@ pub fn i32_store16(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> R
     let value = stack.pop_i32()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_u16(ea as u32, value as u16)?;
+    memory.write_u16(ea, value as u16)?;
     Ok(())
 }
 
@@ -398,15 +281,9 @@ pub fn i64_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
     let value = stack.pop_i64()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_i64(ea as u32, value)?;
+    memory.write_i64(ea, value)?;
     Ok(())
 }
 
@@ -417,15 +294,9 @@ pub fn i64_store8(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Re
     let value = stack.pop_i64()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_u8(ea as u32, value as u8)?;
+    memory.write_u8(ea, value as u8)?;
     Ok(())
 }
 
@@ -436,15 +307,9 @@ pub fn i64_store16(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> R
     let value = stack.pop_i64()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_u16(ea as u32, value as u16)?;
+    memory.write_u16(ea, value as u16)?;
     Ok(())
 }
 
@@ -455,15 +320,9 @@ pub fn i64_store32(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> R
     let value = stack.pop_i64()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_u32(ea as u32, value as u32)?;
+    memory.write_u32(ea, value as u32)?;
     Ok(())
 }
 
@@ -474,15 +333,9 @@ pub fn f32_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
     let value = stack.pop_f32()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_f32(ea as u32, value)?;
+    memory.write_f32(ea, value)?;
     Ok(())
 }
 
@@ -493,15 +346,9 @@ pub fn f64_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
     let value = stack.pop_f64()?;
     let addr = stack.pop_i32()?;
 
-    let ea = (addr as u64)
-        .checked_add(memarg.offset as u64)
-        .ok_or_else(|| RuntimeError::MemoryError("Address overflow".to_string()))?;
+    let ea = effective_address(addr, memarg)?;
 
-    if ea > u32::MAX as u64 {
-        return Err(RuntimeError::MemoryError("Address exceeds 32-bit range".to_string()));
-    }
-
-    memory.write_f64(ea as u32, value)?;
+    memory.write_f64(ea, value)?;
     Ok(())
 }
 
@@ -552,33 +399,34 @@ pub fn memory_init(
     memory: &mut Memory,
     data_idx: u32,
     data_segments: &[crate::parser::module::Data],
+    dropped_data: &std::collections::HashSet<u32>,
 ) -> Result<(), RuntimeError> {
-    // Pop arguments in reverse order
-    let length = stack.pop_i32()?;
-    let src_offset = stack.pop_i32()?;
-    let dest_addr = stack.pop_i32()?;
+    let length = stack.pop_i32()? as u32;
+    let src_offset = stack.pop_i32()? as u32;
+    let dest_addr = stack.pop_i32()? as u32;
 
-    // Validate and convert arguments
-    let (length, src_offset, dest_addr) = validate_memory_args(length, Some(src_offset), dest_addr, "memory.init")?;
-    let src_offset = src_offset.unwrap(); // We know it's Some from the call above
-
-    // Get the data segment
-    let data_segment = data_segments
-        .get(data_idx as usize)
-        .ok_or_else(|| RuntimeError::MemoryError(format!("Invalid data segment index: {}", data_idx)))?;
+    // A dropped segment acts as an empty segment
+    let effective_len = if dropped_data.contains(&data_idx) {
+        0
+    } else {
+        let data_segment = data_segments
+            .get(data_idx as usize)
+            .ok_or_else(|| RuntimeError::MemoryError(format!("invalid data segment index: {}", data_idx)))?;
+        data_segment.init.len()
+    };
 
     // Check bounds in data segment
     let src_end = (src_offset as usize)
         .checked_add(length as usize)
-        .ok_or_else(|| RuntimeError::MemoryError("Source range overflow in memory.init".to_string()))?;
+        .ok_or_else(|| RuntimeError::MemoryError("source range overflow in memory.init".to_string()))?;
 
-    if src_end > data_segment.init.len() {
-        return Err(RuntimeError::MemoryError(
-            "Source range exceeds data segment bounds in memory.init".to_string(),
-        ));
+    if src_end > effective_len {
+        return Err(RuntimeError::MemoryError("out of bounds memory access".to_string()));
     }
 
-    // Copy the data using the shared helper
+    check_memory_bounds(memory, dest_addr, length)?;
+
+    let data_segment = &data_segments[data_idx as usize];
     let src_data = &data_segment.init[src_offset as usize..src_end];
     copy_to_memory(memory, dest_addr, src_data)?;
 
@@ -592,14 +440,16 @@ pub fn memory_init(
 /// Stack: [dest_addr, src_addr, length]
 /// Copies length bytes from src_addr to dest_addr
 pub fn memory_copy(stack: &mut Stack, memory: &mut Memory) -> Result<(), RuntimeError> {
-    // Pop arguments in reverse order
-    let length = stack.pop_i32()?;
-    let src_addr = stack.pop_i32()?;
-    let dest_addr = stack.pop_i32()?;
+    let length = stack.pop_i32()? as u32;
+    let src_addr = stack.pop_i32()? as u32;
+    let dest_addr = stack.pop_i32()? as u32;
 
-    // Validate and convert arguments
-    let (length, src_addr, dest_addr) = validate_memory_args(length, Some(src_addr), dest_addr, "memory.copy")?;
-    let src_addr = src_addr.unwrap(); // We know it's Some from the call above
+    check_memory_bounds(memory, src_addr, length)?;
+    check_memory_bounds(memory, dest_addr, length)?;
+
+    if length == 0 {
+        return Ok(());
+    }
 
     // Read all bytes first (to handle overlapping regions correctly)
     let mut bytes = Vec::with_capacity(length as usize);
@@ -622,13 +472,11 @@ pub fn memory_copy(stack: &mut Stack, memory: &mut Memory) -> Result<(), Runtime
 /// Stack: [dest_addr, value, length]
 /// Fills length bytes at dest_addr with value
 pub fn memory_fill(stack: &mut Stack, memory: &mut Memory) -> Result<(), RuntimeError> {
-    // Pop arguments in reverse order
-    let length = stack.pop_i32()?;
+    let length = stack.pop_i32()? as u32;
     let value = stack.pop_i32()?;
-    let dest_addr = stack.pop_i32()?;
+    let dest_addr = stack.pop_i32()? as u32;
 
-    // Validate and convert arguments
-    let (length, _, dest_addr) = validate_memory_args(length, None, dest_addr, "memory.fill")?;
+    check_memory_bounds(memory, dest_addr, length)?;
 
     // Value is treated as a byte (truncated to u8)
     let byte_value = (value & 0xFF) as u8;
@@ -671,7 +519,7 @@ mod tests {
     ) -> Result<Vec<Value>, RuntimeError> {
         let structured_func = StructureBuilder::build_function(&instructions, 0, return_types.to_vec())
             .expect("Structure building should succeed");
-        let mut executor = Executor::new(module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(module).expect("Executor creation should succeed");
         let outcome = executor.execute_function(&structured_func, args, return_types)?;
         match outcome {
             crate::runtime::ExecutionOutcome::Complete(results) => Ok(results),
@@ -692,10 +540,10 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let result = Executor::new(&module, None);
+        let result = Executor::new(&module);
         assert!(result.is_err());
         let error_msg = result.err().unwrap().to_string();
-        assert!(error_msg.contains("only supports one memory"));
+        assert!(error_msg.contains("multiple memories not supported"));
     }
 
     #[test]
@@ -703,7 +551,7 @@ mod tests {
         // memory.size with no memory should error
         ExecutorTest::new()
             .inst(InstructionKind::MemorySize)
-            .expect_error("No memory instance available");
+            .expect_error("no memory instance available");
     }
 
     #[test]
@@ -712,7 +560,7 @@ mod tests {
         ExecutorTest::new()
             .inst(InstructionKind::I32Const { value: 1 })
             .inst(InstructionKind::MemoryGrow)
-            .expect_error("No memory instance available");
+            .expect_error("no memory instance available");
     }
 
     #[test]
@@ -745,7 +593,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(10) },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 2 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -772,7 +620,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(2) },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 5 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -794,7 +642,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: -1 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -816,7 +664,7 @@ mod tests {
             limits: Limits { min: 2, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 0 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -838,7 +686,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(5) },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::MemorySize),
             make_instruction(InstructionKind::I32Const { value: 1 }),
@@ -900,7 +748,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 100 }), // address,
             make_instruction(InstructionKind::I32Const { value: 42 }),  // value,
@@ -928,7 +776,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 100 }),
             make_instruction(InstructionKind::I32Const { value: 0x12345678 }),
@@ -956,7 +804,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 0 }),
             make_instruction(InstructionKind::I32Const { value: 100 }),
@@ -1007,7 +855,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
         // Try to load from last valid address (PAGE_SIZE - 4)
         let instructions = vec![
@@ -1038,7 +886,7 @@ mod tests {
             .expect("Structure building should succeed");
         let result = executor.execute_function(&func, vec![], &[]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Out of bounds"));
+        assert!(result.unwrap_err().to_string().contains("out of bounds"));
     }
 
     #[test]
@@ -1049,7 +897,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
         // Try to store at last valid address
         let instructions = vec![
@@ -1083,7 +931,7 @@ mod tests {
             .expect("Structure building should succeed");
         let result = executor.execute_function(&func, vec![], &[]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Out of bounds"));
+        assert!(result.unwrap_err().to_string().contains("out of bounds"));
     }
 
     #[test]
@@ -1094,7 +942,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: i32::MAX }),
             make_instruction(InstructionKind::I32Load {
@@ -1131,7 +979,7 @@ mod tests {
             &[ValueType::I32],
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No memory instance available"));
+        assert!(result.unwrap_err().to_string().contains("no memory instance available"));
     }
 
     #[test]
@@ -1152,7 +1000,7 @@ mod tests {
             &[],
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No memory instance available"));
+        assert!(result.unwrap_err().to_string().contains("no memory instance available"));
     }
 
     #[test]
@@ -1163,7 +1011,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
         // First call: store a value
         let store_instructions = vec![
@@ -1317,7 +1165,7 @@ mod tests {
             .inst(F64Store {
                 memarg: MemArg { offset: 0, align: 3 },
             })
-            .expect_error("Out of bounds");
+            .expect_error("out of bounds");
     }
 
     #[test]
@@ -1327,7 +1175,7 @@ mod tests {
             .inst(I64Load {
                 memarg: MemArg { offset: 0, align: 3 },
             })
-            .expect_error("No memory instance");
+            .expect_error("no memory instance");
     }
 
     #[test]

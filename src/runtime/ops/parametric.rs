@@ -93,7 +93,7 @@ mod tests {
     fn drop_empty_stack() {
         ExecutorTest::new()
             .inst(InstructionKind::Drop)
-            .expect_error("Stack underflow");
+            .expect_error("stack underflow");
     }
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
     fn select_empty_stack() {
         ExecutorTest::new()
             .inst(InstructionKind::Select)
-            .expect_error("Stack underflow");
+            .expect_error("stack underflow");
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
             .inst(InstructionKind::I32Const { value: 1 })
             .inst(InstructionKind::I32Const { value: 1 })
             .inst(InstructionKind::Select) // Missing one value
-            .expect_error("Stack underflow");
+            .expect_error("stack underflow");
     }
 
     // Note: Type mismatch test removed because validation happens at parse time,
@@ -327,6 +327,6 @@ mod tests {
             .inst(InstructionKind::I32Const { value: 2 })
             .inst(InstructionKind::I64Const { value: 1 }) // Wrong type for condition
             .inst(InstructionKind::Select)
-            .expect_error("Type mismatch");
+            .expect_error("type mismatch");
     }
 }

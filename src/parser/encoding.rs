@@ -39,6 +39,17 @@ pub const DESC_GLOBAL: u8 = 0x03;
 // Element segment elemkind (§5.5.12)
 pub const ELEMKIND_FUNCREF: u8 = 0x00;
 
+// Element segment flags (§5.5.12)
+// 3-bit encoding: bit 0 = non-active mode, bit 1 = explicit table, bit 2 = expressions
+pub const ELEM_ACTIVE_FUNCS: u32 = 0; // active, table 0, func indices
+pub const ELEM_PASSIVE_FUNCS: u32 = 1; // passive, elemkind, func indices
+pub const ELEM_ACTIVE_TABLE_FUNCS: u32 = 2; // active, explicit table, elemkind, func indices
+pub const ELEM_DECLARATIVE_FUNCS: u32 = 3; // declarative, elemkind, func indices
+pub const ELEM_ACTIVE_EXPRS: u32 = 4; // active, table 0, expressions
+pub const ELEM_PASSIVE_EXPRS: u32 = 5; // passive, reftype, expressions
+pub const ELEM_ACTIVE_TABLE_EXPRS: u32 = 6; // active, explicit table, reftype, expressions
+pub const ELEM_DECLARATIVE_EXPRS: u32 = 7; // declarative, reftype, expressions
+
 // Data segment flags (§5.5.13)
 pub const DATA_ACTIVE: u32 = 0;
 pub const DATA_PASSIVE: u32 = 1;
@@ -226,7 +237,7 @@ mod tests {
             test_values.push(max_value);
         }
 
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         for _ in 0..100 {
             test_values.push(rng.random::<u32>());
@@ -277,7 +288,7 @@ mod tests {
             test_values.push(max_value);
         }
 
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         for _ in 0..100 {
             test_values.push(rng.random::<u64>());
@@ -357,7 +368,7 @@ mod tests {
             test_values.push(min_value);
         }
 
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         for _ in 0..100 {
             test_values.push(rng.random::<i32>());
@@ -434,7 +445,7 @@ mod tests {
             test_values.push(min_value);
         }
 
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         for _ in 0..100 {
             test_values.push(rng.random::<i64>());
