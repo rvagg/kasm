@@ -11,7 +11,7 @@ An experimental & educational WebAssembly runtime implementation in Rust that pr
 - **Binary parser** with full section support and validation
 - **WAT parser** for the WebAssembly text format
 - **Binary encoder** producing spec-compliant `.wasm` from any parsed Module
-- **State machine interpreter** supporting WebAssembly 1.0 + SIMD
+- **State machine interpreter** supporting WebAssembly 2.0
 - **Full SIMD (v128)** support: all v128 instructions across integer, float, bitwise, comparison, shuffle, conversion, and memory operations
 - **WASI preview1** support: fd_read/write, args, environ, proc_exit, filesystem preopens
 - **AssemblyScript** compatibility (env.abort with UTF-16 string extraction)
