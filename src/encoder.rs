@@ -1,31 +1,32 @@
-/// Encodes a [`Module`] to WebAssembly binary format (`.wasm`).
-///
-/// This is the conceptual inverse of [`crate::parser::parse`]. Given a parsed
-/// Module (from either the binary parser or the WAT text parser), it produces
-/// the binary encoding as specified by the WebAssembly 2.0 specification.
-///
-/// # Binary format overview
-///
-/// A WebAssembly binary begins with a magic number (`\0asm`) and version (1),
-/// followed by sections in a fixed order. Each section is encoded as:
-///
-/// ```text
-/// section_id: u8 | byte_length: vu32 | contents: byte*
-/// ```
-///
-/// Sections are emitted only when present (non-empty). The encoder produces
-/// minimal LEB128 encoding for all integer values.
-///
-/// # Example
-///
-/// ```
-/// use kasm::encoder;
-/// use kasm::wat;
-///
-/// let module = wat::parse("(module (func))").unwrap();
-/// let bytes = encoder::encode(&module).unwrap();
-/// assert_eq!(&bytes[0..4], b"\0asm");
-/// ```
+//! Encodes a [`Module`] to WebAssembly binary format (`.wasm`).
+//!
+//! This is the conceptual inverse of [`crate::parser::parse`]. Given a parsed
+//! Module (from either the binary parser or the WAT text parser), it produces
+//! the binary encoding as specified by the WebAssembly 2.0 specification.
+//!
+//! # Binary format overview
+//!
+//! A WebAssembly binary begins with a magic number (`\0asm`) and version (1),
+//! followed by sections in a fixed order. Each section is encoded as:
+//!
+//! ```text
+//! section_id: u8 | byte_length: vu32 | contents: byte*
+//! ```
+//!
+//! Sections are emitted only when present (non-empty). The encoder produces
+//! minimal LEB128 encoding for all integer values.
+//!
+//! # Example
+//!
+//! ```
+//! use kasm::encoder;
+//! use kasm::wat;
+//!
+//! let module = wat::parse("(module (func))").unwrap();
+//! let bytes = encoder::encode(&module).unwrap();
+//! assert_eq!(&bytes[0..4], b"\0asm");
+//! ```
+
 use std::fmt;
 
 use crate::parser::encoding::{

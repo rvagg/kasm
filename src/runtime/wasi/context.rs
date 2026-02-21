@@ -270,6 +270,12 @@ impl WasiContext {
     /// Resolve a path relative to a preopened directory
     ///
     /// Verifies the resolved path does not escape the preopen directory.
+    /// Resolve a guest path relative to a preopened directory.
+    ///
+    /// Canonicalises the result and verifies it does not escape the preopen
+    /// directory (symlink traversal, `..` components). For paths that do not
+    /// yet exist (e.g. a file about to be created), the parent directory is
+    /// canonicalised instead and the filename is appended.
     pub fn resolve_path(&self, dir_fd: u32, path: &str) -> Result<PathBuf, WasiErrno> {
         let (_, _, host_dir) = self
             .preopens

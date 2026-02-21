@@ -1,3 +1,15 @@
+//! Sequential byte reader for WebAssembly binary decoding.
+//!
+//! [`Reader`] wraps a byte buffer with position tracking and provides typed
+//! read methods for the primitives used in the binary format: fixed-width
+//! integers, LEB128-encoded unsigned and signed integers, IEEE 754 floats,
+//! 128-bit vectors, and length-prefixed strings and byte vectors.
+//!
+//! Bounds-checked helpers ([`Reader::validate_item_count`],
+//! [`Reader::read_string_bounded`], [`Reader::read_u8vec_bounded`]) guard
+//! against malformed counts that would otherwise cause large allocations
+//! before the true error is detected.
+
 extern crate byteorder;
 extern crate hex;
 
@@ -5,6 +17,7 @@ use std::io;
 
 use self::byteorder::{LittleEndian, ReadBytesExt};
 
+/// Sequential byte reader with position tracking for WebAssembly binary decoding.
 pub struct Reader {
     pub bytes: Vec<u8>,
     pos: usize,
@@ -18,10 +31,13 @@ impl Reader {
 
 impl Reader {
     // Basic operations --------------------------------------------------------
+
+    /// Current byte offset within the buffer.
     pub fn pos(&self) -> usize {
         self.pos
     }
 
+    /// Seek to an absolute byte position.
     pub fn set_pos(&mut self, pos: usize) -> Result<(), io::Error> {
         if pos > self.bytes.len() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "position out of bounds"));
@@ -30,6 +46,7 @@ impl Reader {
         Ok(())
     }
 
+    /// Read a single byte, advancing the position by one.
     pub fn read_byte(&mut self) -> Result<u8, io::Error> {
         match self.next() {
             Some(byte) => Ok(byte),
@@ -37,10 +54,12 @@ impl Reader {
         }
     }
 
+    /// Returns `true` if at least `count` bytes remain unread.
     pub fn has_at_least(&self, count: usize) -> bool {
         self.bytes.len() - self.pos >= count
     }
 
+    /// Number of bytes remaining in the buffer.
     pub fn remaining(&self) -> usize {
         self.bytes.len() - self.pos
     }
@@ -71,10 +90,12 @@ impl Reader {
         Ok(())
     }
 
+    /// Advance the position by `len` bytes without reading.
     pub fn skip(&mut self, len: usize) {
         self.pos += len;
     }
 
+    /// Read exactly `len` bytes into a new `Vec`.
     pub fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>, io::Error> {
         if !self.has_at_least(len) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "unexpected end"));
@@ -89,7 +110,7 @@ impl Reader {
 
     // Read and interpret types ------------------------------------------------
 
-    // le
+    /// Read a 4-byte little-endian `u32`.
     pub fn read_u32(&mut self) -> Result<u32, io::Error> {
         let bytes = self.read_bytes(4)?;
         if bytes.len() != 4 {
@@ -103,6 +124,7 @@ impl Reader {
         Ok(num)
     }
 
+    /// Read an unsigned LEB128-encoded `u64`.
     pub fn read_vu64(&mut self) -> Result<u64, io::Error> {
         read_vu64(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -110,6 +132,7 @@ impl Reader {
         })
     }
 
+    /// Read an unsigned LEB128-encoded `u32`.
     pub fn read_vu32(&mut self) -> Result<u32, io::Error> {
         read_vu32(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -117,6 +140,7 @@ impl Reader {
         })
     }
 
+    /// Read a single-bit LEB128-encoded boolean (0 or 1).
     pub fn read_vu1(&mut self) -> Result<bool, io::Error> {
         read_vu1(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -124,6 +148,7 @@ impl Reader {
         })
     }
 
+    /// Read a single raw byte (alias for `read_byte`).
     pub fn read_u8(&mut self) -> Result<u8, io::Error> {
         match self.next() {
             Some(byte) => Ok(byte),
@@ -131,6 +156,7 @@ impl Reader {
         }
     }
 
+    /// Read a signed LEB128-encoded `i64`.
     pub fn read_vs64(&mut self) -> Result<i64, io::Error> {
         read_vs64(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -138,6 +164,7 @@ impl Reader {
         })
     }
 
+    /// Read a signed LEB128-encoded `i32`.
     pub fn read_vs32(&mut self) -> Result<i32, io::Error> {
         read_vs32(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -145,6 +172,7 @@ impl Reader {
         })
     }
 
+    /// Read a 64-bit IEEE 754 float in little-endian byte order.
     pub fn read_f64(&mut self) -> Result<f64, io::Error> {
         read_f64(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -152,6 +180,7 @@ impl Reader {
         })
     }
 
+    /// Read a 32-bit IEEE 754 float in little-endian byte order.
     pub fn read_f32(&mut self) -> Result<f32, io::Error> {
         read_f32(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -159,6 +188,7 @@ impl Reader {
         })
     }
 
+    /// Read 16 raw bytes as a v128 value in little-endian byte order.
     pub fn read_v128(&mut self) -> Result<[u8; 16], io::Error> {
         read_v128(&mut || match self.next() {
             Some(byte) => Ok(byte),
@@ -166,6 +196,7 @@ impl Reader {
         })
     }
 
+    /// Read a length-prefixed UTF-8 string.
     pub fn read_string(&mut self) -> Result<String, io::Error> {
         self.read_string_bounded(self.bytes.len())
     }
@@ -191,6 +222,7 @@ impl Reader {
         String::from_utf8(v).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "malformed UTF-8 encoding"))
     }
 
+    /// Read a length-prefixed byte vector.
     pub fn read_u8vec(&mut self) -> Result<Vec<u8>, io::Error> {
         self.read_u8vec_bounded(self.bytes.len())
     }
@@ -269,66 +301,27 @@ fn test_read_u32() {
     assert_eq_with_diag(read(vec![0b11111111, 0b11111111, 0b11111111, 0b11111111]), 4294967295);
 }
 
-/*
-pub fn read_u64<F>(reader : &mut F) -> u64
-    where F : FnMut() -> u8 {
-
-  let hi = read_u32(reader) as u64;
-  let lo = read_u32(reader) as u64;
-
-  (hi << 32) + lo
-}
-
-
-#[test]
-fn test_read_u64() {
-  let read = | v : Vec<u8> | {
-    let mut iter = v.iter();
-    read_u64(&mut || *iter.next().unwrap() as u8)
-  };
-
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000 ]), 0);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000001 ]), 1);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000001, 0b00000000 ]), 256);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000001, 0b00000001 ]), 257);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000 ]), 128);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b00000000 ]), 32768);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b10000000 ]), 32896);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b00000000 ]), 32768);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b00000000, 0b00000000 ]), 8388608);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b10000000, 0b10000000 ]), 8421504);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b00000000, 0b00000000, 0b00000000 ]), 2147483648);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b10000000, 0b10000000, 0b10000000 ]), 2155905152);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b10000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000 ]), 549755813888);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b10000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000 ]), 140737488355328);
-  assert_eq!(read(vec![ 0b00000000, 0b10000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000 ]), 36028797018963968);
-  assert_eq!(read(vec![ 0b10000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000 ]), 9223372036854775808);
-  assert_eq!(read(vec![ 0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b10000000, 0b00000000 ]), 9259542123273814016);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b11111111, 0b00000000 ]), 65280);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b11111111, 0b11111111 ]), 65535);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b11111111, 0b11111111, 0b11111111 ]), 16777215);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b00000000, 0b11111111, 0b11111111, 0b11111111, 0b11111111 ]), 4294967295);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b00000000, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111 ]), 1099511627775);
-  assert_eq!(read(vec![ 0b00000000, 0b00000000, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111 ]), 281474976710655);
-  assert_eq!(read(vec![ 0b00000000, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111 ]), 72057594037927935);
-  assert_eq!(read(vec![ 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b11111111 ]), 18446744073709551615);
-}
-*/
-
+/// Decode an unsigned LEB128 integer of the given bit width.
+///
+/// Each byte contributes 7 payload bits (low bits) and 1 continuation bit
+/// (high bit). The continuation bit signals whether more bytes follow.
 fn read_vu<F>(reader: &mut F, size: usize) -> Result<u64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
 {
+    // Maximum number of bytes needed: ceil(size / 7)
     let max_bytes: usize = ((size as f64) / 7_f64).ceil() as usize;
     let mut result: u64 = 0;
     let mut i = 0;
 
     loop {
         let b = reader()? as u64;
+        // Extract the 7 payload bits and shift them into position
         let value = (b & 0x7f) << (7 * i);
         result |= value;
         if (b & 0x80) == 0 {
-            // Check that unused bits are not set
+            // Final byte: if the total bit width is not a multiple of 7,
+            // the last byte has unused high bits that must be zero
             if i + 1 == max_bytes && !size.is_multiple_of(7) {
                 let unused_bits = 7 - size % 7;
                 if b >= (1 << (7 - unused_bits)) {
@@ -338,6 +331,7 @@ where
             break;
         }
         i += 1;
+        // Too many continuation bytes for the requested bit width
         if i >= max_bytes {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -349,6 +343,7 @@ where
     Ok(result)
 }
 
+/// Decode an unsigned LEB128 `u64` from a byte-producing closure.
 pub fn read_vu64<F>(reader: &mut F) -> Result<u64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -422,6 +417,7 @@ fn test_read_vu64() {
     );
 }
 
+/// Decode an unsigned LEB128 `u32` from a byte-producing closure.
 pub fn read_vu32<F>(reader: &mut F) -> Result<u32, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -458,6 +454,7 @@ fn test_read_vu32() {
     );
 }
 
+/// Decode a single-bit LEB128 boolean from a byte-producing closure.
 pub fn read_vu1<F>(reader: &mut F) -> Result<bool, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -479,7 +476,11 @@ fn test_read_vu1() {
     }
 }
 
-// TODO: simplify this, a lot!
+/// Decode a signed LEB128 integer of the given bit width.
+///
+/// Uses the same 7-bit-per-byte encoding as unsigned LEB128, but the final
+/// byte's sign bit determines whether the value is sign-extended to fill the
+/// remaining high bits of the result.
 fn read_vs<F>(reader: &mut F, size: usize) -> Result<i64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -487,14 +488,18 @@ where
     let mut result: i64 = 0;
     let mut shift = 0;
     let max_bytes = ((size as f64) / 7_f64).ceil() as usize;
+    // In the last byte, the sign bit position within the used payload bits
     let sign_bit = 1 << ((size % 7) - 1);
     let used_bits = size % 7;
     let unused_bits = 7 - used_bits;
+    // Mask for the bits in the last byte that must agree with the sign
     let mask = ((1 << unused_bits) - 1) << used_bits;
     let mut i = 0;
 
     loop {
         let b = reader()? as u32;
+        // Last byte validation: no continuation bit allowed, and unused high
+        // bits must be sign-extended (all 1s for negative, all 0s for positive)
         if i + 1 == max_bytes {
             if (b & 0x80) != 0 {
                 return Err(io::Error::new(
@@ -507,9 +512,12 @@ where
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "integer too large"));
             }
         }
+        // Accumulate 7 payload bits at the current shift position
         let value = ((b & !0x80) as i64) << shift;
         result |= value;
         if (b & 0x80) == 0 {
+            // Sign-extend: if bit 6 (0x40) is set, the value is negative;
+            // fill the remaining high bits with 1s
             if (b & 0x40) != 0 && shift + 7 < 64 {
                 result |= (-1_i64) << (shift + 7);
             }
@@ -522,6 +530,7 @@ where
     Ok(result)
 }
 
+/// Decode a signed LEB128 `i64` from a byte-producing closure.
 pub fn read_vs64<F>(reader: &mut F) -> Result<i64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -529,6 +538,7 @@ where
     read_vs(reader, 64)
 }
 
+/// Decode a signed LEB128 `i32` from a byte-producing closure.
 pub fn read_vs32<F>(reader: &mut F) -> Result<i32, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -536,6 +546,10 @@ where
     read_vs(reader, 32).map(|v| v as i32)
 }
 
+/// Decode a signed LEB128 33-bit integer, returned as `i32`.
+///
+/// Used for block types where the value space is a 33-bit signed integer
+/// that can represent both type indices (positive) and value types (negative).
 pub fn read_vs33<F>(reader: &mut F) -> Result<i32, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -609,6 +623,7 @@ fn test_read_vs32() {
     );
 }
 
+/// Read a 32-bit IEEE 754 float from a byte-producing closure.
 pub fn read_f32<F>(reader: &mut F) -> Result<f32, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -640,6 +655,7 @@ fn test_read_f32() {
     assert_eq_with_diag(read(vec![249, 2, 21, 80]), 1.0e10);
 }
 
+/// Read a 64-bit IEEE 754 float from a byte-producing closure.
 pub fn read_f64<F>(reader: &mut F) -> Result<f64, io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,
@@ -678,6 +694,7 @@ fn test_read_f64() {
     assert_eq_with_diag(read(vec![125, 195, 148, 37, 173, 73, 178, 84]), 1.0e100);
 }
 
+/// Read 16 raw bytes as a v128 value from a byte-producing closure.
 pub fn read_v128<F>(reader: &mut F) -> Result<[u8; 16], io::Error>
 where
     F: FnMut() -> Result<u8, io::Error>,

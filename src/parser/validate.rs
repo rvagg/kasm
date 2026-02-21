@@ -1,3 +1,15 @@
+//! Module-level type validation for WebAssembly.
+//!
+//! The binary parser validates structural constraints inline as it decodes
+//! (section ordering, index bounds, count consistency). This module performs
+//! the deeper type-level validation that the WAT parser needs after building
+//! a [`Module`] from text: operand stack typing, control flow label scoping,
+//! function signature agreement, constant expression legality, and the full
+//! set of `assert_invalid` checks exercised by the spec test suite.
+//!
+//! Entry point: [`validate_module()`], called automatically by
+//! [`crate::wat::parse()`].
+
 use super::module::{
     DataMode, ElementMode, ExportIndex, ExternalKind, FunctionType, GlobalType, Limits, Module, Positional, RefType,
     ValueType, ValueType::*,

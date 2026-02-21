@@ -1,4 +1,20 @@
-//! WebAssembly instruction executor
+//! WebAssembly instruction executor.
+//!
+//! Implements a state-machine interpreter that walks the
+//! [`StructuredInstruction`] tree without Rust-level recursion. Function
+//! calls push frames onto an explicit call stack rather than the native
+//! stack, so call depth is bounded by `MAX_CALL_DEPTH` (not Rust's stack
+//! size) and deeply recursive WebAssembly programs cannot cause a host
+//! stack overflow.
+//!
+//! Cross-module calls are handled via `ExecutionOutcome::CallExternal`:
+//! when the executor encounters an imported function, it yields control
+//! back to the [`Store`](super::store::Store) which resolves the target
+//! instance and re-enters the executor there.
+//!
+//! An optional instruction budget allows bounding execution time; when the
+//! budget is exhausted, the executor returns
+//! [`RuntimeError::InstructionBudgetExhausted`].
 
 use super::{
     ExecutionOutcome, ExternalCallRequest, RuntimeError, Value,
@@ -78,7 +94,7 @@ pub struct Executor<'a> {
     /// Memory instances (shared for cross-module access)
     /// WebAssembly 1.0 supports only 1 memory per module
     memories: Vec<SharedMemory>,
-    /// Global variable values (shared via Rc<Cell<Value>> for cross-module mutable global aliasing)
+    /// Global variable values (shared via `Rc<Cell<Value>>` for cross-module mutable global aliasing)
     globals: Vec<SharedGlobal>,
     /// Table instances (shared for cross-module access)
     tables: Vec<SharedTable>,
@@ -1299,11 +1315,11 @@ impl<'a> Executor<'a> {
             Nop => Ok(BlockEnd::Normal),
 
             // ----------------------------------------------------------------
-            // 4.4.3 Reference Instructions
+            // 4.4.2 Reference Instructions
             //
 
             // ref.null t - Push null reference
-            // spec: 4.4.3
+            // spec: 4.4.2
             // [] → [t]
             //
             // From the spec:
@@ -1325,7 +1341,7 @@ impl<'a> Executor<'a> {
             }
 
             // ref.is_null - Test if reference is null
-            // spec: 4.4.3
+            // spec: 4.4.2
             // [t] → [i32]
             //
             // From the spec:
@@ -1352,7 +1368,7 @@ impl<'a> Executor<'a> {
             }
 
             // ref.func x - Create function reference
-            // spec: 4.4.3
+            // spec: 4.4.2
             // [] → [funcref]
             //
             // From the spec:
@@ -1638,9 +1654,8 @@ impl<'a> Executor<'a> {
                 Ok(BlockEnd::Normal)
             }
 
-            // data.drop x - Drop a data segment
+            // data.drop x - Drop a data segment (spec: 4.4.7.13)
             // [] → []
-            // Prevents further use of data segment x
             DataDrop { data_idx } => {
                 self.dropped_data.insert(*data_idx);
                 Ok(BlockEnd::Normal)
@@ -2314,7 +2329,8 @@ impl<'a> Executor<'a> {
             }
 
             // ----------------------------------------------------------------
-            // Table Instructions
+            // spec: 4.4.6 Table Instructions
+            // spec: 4.4.6.1
             TableGet { table_idx } => {
                 let idx = self.stack.pop_i32()?;
                 let table = self
@@ -2328,6 +2344,7 @@ impl<'a> Executor<'a> {
                 self.stack.push(value);
                 Ok(BlockEnd::Normal)
             }
+            // spec: 4.4.6.2
             TableSet { table_idx } => {
                 let value = self.stack.pop()?;
                 let idx = self.stack.pop_i32()?;
@@ -2341,6 +2358,7 @@ impl<'a> Executor<'a> {
                 table_guard.set(idx as u32, Some(value))?;
                 Ok(BlockEnd::Normal)
             }
+            // spec: 4.4.6.3
             TableSize { table_idx } => {
                 let table = self
                     .tables
@@ -2350,6 +2368,7 @@ impl<'a> Executor<'a> {
                 self.stack.push(Value::I32(table_guard.size() as i32));
                 Ok(BlockEnd::Normal)
             }
+            // spec: 4.4.6.4
             TableGrow { table_idx } => {
                 let delta = self.stack.pop_i32()?;
                 let init_value = self.stack.pop()?;
@@ -2364,6 +2383,7 @@ impl<'a> Executor<'a> {
                 self.stack.push(Value::I32(result as i32));
                 Ok(BlockEnd::Normal)
             }
+            // spec: 4.4.6.7
             TableInit { elem_idx, table_idx } => {
                 let count = self.stack.pop_i32()? as u32;
                 let src_idx = self.stack.pop_i32()? as u32;
@@ -2383,6 +2403,7 @@ impl<'a> Executor<'a> {
                 table_guard.init(dst_idx, src_segment, src_idx, count)?;
                 Ok(BlockEnd::Normal)
             }
+            // spec: 4.4.6.6
             TableCopy { dst_table, src_table } => {
                 let count = self.stack.pop_i32()? as u32;
                 let src_idx = self.stack.pop_i32()? as u32;
@@ -2415,6 +2436,7 @@ impl<'a> Executor<'a> {
 
                 Ok(BlockEnd::Normal)
             }
+            // spec: 4.4.6.5
             TableFill { table_idx } => {
                 let count = self.stack.pop_i32()? as u32;
                 let value = self.stack.pop()?;
@@ -2429,6 +2451,7 @@ impl<'a> Executor<'a> {
                 table_guard.fill(start, count, Some(value))?;
                 Ok(BlockEnd::Normal)
             }
+            // spec: 4.4.6.8
             ElemDrop { elem_idx } => {
                 if (*elem_idx as usize) >= self.element_segments.len() {
                     return Err(RuntimeError::ElementIndexOutOfBounds(*elem_idx));
@@ -2438,7 +2461,7 @@ impl<'a> Executor<'a> {
                 Ok(BlockEnd::Normal)
             }
 
-            // SIMD instructions
+            // spec: 4.4.3 Vector Instructions
             Simd(op) => {
                 macro_rules! simd_mem {
                     (load $fn:ident($memarg:expr)) => {{

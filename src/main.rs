@@ -1,3 +1,10 @@
+//! CLI entry point for kasm.
+//!
+//! Provides three subcommands:
+//! - `run` -- execute a WASI module (`.wasm` or `.wat`)
+//! - `dump` -- display module structure (header, details, disassembly)
+//! - `compile` -- compile WAT text format to `.wasm` binary
+
 use clap::{Parser, Subcommand};
 use kasm::parser;
 use kasm::parser::module::Module;

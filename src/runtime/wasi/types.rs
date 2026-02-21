@@ -36,8 +36,8 @@ pub enum WasiErrno {
     BadMsg = 9,
     /// Device or resource busy
     Busy = 10,
-    /// Operation canceled
-    Canceled = 11,
+    /// Operation cancelled
+    Cancelled = 11,
     /// No child processes
     Child = 12,
     /// Connection aborted

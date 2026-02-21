@@ -1,4 +1,13 @@
-//! WebAssembly value representation
+//! WebAssembly runtime value representation.
+//!
+//! [`Value`] is the tagged union used on the operand stack and as function
+//! arguments and results. Numeric types (`I32`, `I64`, `F32`, `F64`) are
+//! stored directly. `V128` holds a 128-bit SIMD value as `[u8; 16]` in
+//! little-endian byte order; lane interpretation (i8x16, i16x8, i32x4,
+//! i64x2, f32x4, f64x2) is determined by the instruction that reads it.
+//! Reference types (`FuncRef`, `ExternRef`) use `Option` where `None`
+//! represents `ref.null`. `FuncRef` carries a [`FuncAddr`] for
+//! cross-module indirect calls through the [`Store`](super::store::Store).
 
 use super::FuncAddr;
 use crate::parser::module::ValueType;

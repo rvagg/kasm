@@ -1,3 +1,13 @@
+//! WebAssembly binary format parser.
+//!
+//! Decodes `.wasm` bytes into a [`module::Module`] representation. The parser
+//! reads sections in wire order (§5.5.2), validates structural constraints
+//! inline (section ordering, count consistency, index bounds), and builds
+//! a structured instruction tree for each function body.
+//!
+//! The entry point is [`parse()`], which consumes a [`reader::Reader`] and
+//! returns a fully decoded `Module`.
+
 pub mod encoding;
 pub mod instruction;
 pub mod limits;
@@ -15,6 +25,21 @@ use std::io;
 
 use self::module::Positional;
 
+/// Decode a WebAssembly binary module from the given byte reader.
+///
+/// Reads the 8-byte header (magic number + version), then iterates through
+/// sections in wire order. Each section is validated for correct ordering,
+/// length consistency, and structural invariants (e.g. function/code count
+/// match, start function signature, data count agreement).
+///
+/// The `module_registry` provides previously parsed modules for import
+/// resolution during linking.
+///
+/// # Errors
+///
+/// Returns [`instruction::DecodeError`] on malformed input: bad magic number,
+/// unknown section IDs, section length mismatches, invalid LEB128 encoding,
+/// out-of-range indices, or type validation failures.
 pub fn parse(
     module_registry: &HashMap<String, module::Module>,
     name: &str,
@@ -28,7 +53,6 @@ pub fn parse(
 
     loop {
         if !bytes.has_at_least(1) {
-            //TODO: assert we got the length we expected
             break;
         }
 
@@ -132,8 +156,7 @@ pub fn parse(
     Ok(unit)
 }
 
-// TODO: the verbosity of this function suggest that the structure of the module
-// needs to be rethought
+/// Dispatch a single section by ID, delegating to the appropriate section reader.
 fn read_sections(
     sec_id: u8,
     bytes: &mut reader::Reader,

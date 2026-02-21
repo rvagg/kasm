@@ -92,23 +92,23 @@ pub struct GlobalAddr(pub usize);
 
 /// Shared global instance for cross-module mutable global aliasing
 ///
-/// Uses Rc<Cell<>> since WebAssembly is single-threaded and Value is Copy.
+/// Uses `Rc<Cell<>>` since WebAssembly is single-threaded and Value is Copy.
 /// When module A exports a mutable global and module B imports it, both
-/// modules share the same Rc<Cell<Value>>, so mutations are visible to both.
+/// modules share the same `Rc<Cell<Value>>`, so mutations are visible to both.
 pub type SharedGlobal = Rc<Cell<Value>>;
 
 /// Shared memory instance for cross-module access
 ///
-/// Uses Rc<RefCell<>> since WebAssembly is single-threaded and Memory is not Copy.
+/// Uses `Rc<RefCell<>>` since WebAssembly is single-threaded and Memory is not Copy.
 /// When module A exports memory and module B imports it, both share the same
-/// Rc<RefCell<Memory>>, so mutations are visible to both.
+/// `Rc<RefCell<Memory>>`, so mutations are visible to both.
 pub type SharedMemory = Rc<RefCell<Memory>>;
 
 /// Shared table instance for cross-module access
 ///
-/// Uses Rc<RefCell<>> since WebAssembly is single-threaded and Table is not Copy.
+/// Uses `Rc<RefCell<>>` since WebAssembly is single-threaded and Table is not Copy.
 /// When module A exports a table and module B imports it, both share the same
-/// Rc<RefCell<Table>>, so mutations are visible to both.
+/// `Rc<RefCell<Table>>`, so mutations are visible to both.
 pub type SharedTable = Rc<RefCell<Table>>;
 
 /// A function instance in the Store

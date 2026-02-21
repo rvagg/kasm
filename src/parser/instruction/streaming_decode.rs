@@ -16,7 +16,7 @@ pub trait InstructionProcessor {
     fn finalise(self) -> Result<(), DecodeError>;
 }
 
-/// Implementation that collects instructions into a Vec (current behavior)
+/// Implementation that collects instructions into a Vec (current behaviour)
 pub struct VecCollector {
     instructions: Vec<Instruction>,
 }

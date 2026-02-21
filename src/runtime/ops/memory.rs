@@ -232,11 +232,11 @@ pub fn f64_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(
 }
 
 // ============================================================================
-// Memory Store Operations (spec section 4.4.7.2)
+// Memory Store Operations (spec section 4.4.7.6)
 // ============================================================================
 
 /// i32.store - Store 32-bit integer to memory
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, i32] → []
 pub fn i32_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_i32()?;
@@ -249,7 +249,7 @@ pub fn i32_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
 }
 
 /// i32.store8 - Store 32-bit integer as 8-bit value
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, i32] → []
 pub fn i32_store8(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_i32()?;
@@ -262,7 +262,7 @@ pub fn i32_store8(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Re
 }
 
 /// i32.store16 - Store 32-bit integer as 16-bit value
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, i32] → []
 pub fn i32_store16(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_i32()?;
@@ -275,7 +275,7 @@ pub fn i32_store16(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> R
 }
 
 /// i64.store - Store 64-bit integer to memory
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, i64] → []
 pub fn i64_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_i64()?;
@@ -288,7 +288,7 @@ pub fn i64_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
 }
 
 /// i64.store8 - Store 64-bit integer as 8-bit value
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, i64] → []
 pub fn i64_store8(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_i64()?;
@@ -301,7 +301,7 @@ pub fn i64_store8(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Re
 }
 
 /// i64.store16 - Store 64-bit integer as 16-bit value
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, i64] → []
 pub fn i64_store16(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_i64()?;
@@ -314,7 +314,7 @@ pub fn i64_store16(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> R
 }
 
 /// i64.store32 - Store 64-bit integer as 32-bit value
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, i64] → []
 pub fn i64_store32(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_i64()?;
@@ -327,7 +327,7 @@ pub fn i64_store32(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> R
 }
 
 /// f32.store - Store 32-bit float to memory
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, f32] → []
 pub fn f32_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_f32()?;
@@ -340,7 +340,7 @@ pub fn f32_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
 }
 
 /// f64.store - Store 64-bit float to memory
-/// spec: 4.4.7.2
+/// spec: 4.4.7.6
 /// [i32, f64] → []
 pub fn f64_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let value = stack.pop_f64()?;
@@ -353,11 +353,11 @@ pub fn f64_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Res
 }
 
 // ============================================================================
-// Memory Size Operations (spec section 4.4.7.3)
+// Memory Size Operations (spec section 4.4.7.8, 4.4.7.9)
 // ============================================================================
 
 /// memory.size - Get memory size in pages
-/// spec: 4.4.7.3
+/// spec: 4.4.7.8
 /// [] → [i32]
 pub fn memory_size(stack: &mut Stack, memory: &Memory) -> Result<(), RuntimeError> {
     let size_in_pages = memory.size();
@@ -366,7 +366,7 @@ pub fn memory_size(stack: &mut Stack, memory: &Memory) -> Result<(), RuntimeErro
 }
 
 /// memory.grow - Grow memory by delta pages
-/// spec: 4.4.7.3
+/// spec: 4.4.7.9
 /// [i32] → [i32]
 ///
 /// Returns the previous size in pages, or -1 if the operation fails
@@ -389,7 +389,7 @@ pub fn memory_grow(stack: &mut Stack, memory: &mut Memory) -> Result<(), Runtime
 // These are part of the bulk memory operations proposal which is now standard
 
 /// memory.init - Initialise memory from a data segment
-/// spec: bulk memory operations
+/// spec: 4.4.7.12
 /// [i32 i32 i32] → []
 ///
 /// Stack: [dest_addr, src_offset, length]
@@ -434,7 +434,7 @@ pub fn memory_init(
 }
 
 /// memory.copy - Copy memory within the same memory
-/// spec: bulk memory operations
+/// spec: 4.4.7.11
 /// [i32 i32 i32] → []
 ///
 /// Stack: [dest_addr, src_addr, length]
@@ -466,7 +466,7 @@ pub fn memory_copy(stack: &mut Stack, memory: &mut Memory) -> Result<(), Runtime
 }
 
 /// memory.fill - Fill memory with a byte value
-/// spec: bulk memory operations
+/// spec: 4.4.7.10
 /// [i32 i32 i32] → []
 ///
 /// Stack: [dest_addr, value, length]

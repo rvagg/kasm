@@ -1,7 +1,7 @@
 //! WebAssembly label stack for control flow
 //!
 //! This module implements the label stack as described in the WebAssembly specification.
-//! See: https://webassembly.github.io/spec/core/exec/runtime.html#labels
+//! See: <https://webassembly.github.io/spec/core/exec/runtime.html#labels>
 //!
 //! From the spec:
 //! > "Labels carry an arity n and their associated branch target, which is expressed
@@ -15,7 +15,7 @@ use crate::parser::module::ValueType;
 
 /// Type of label construct as per WebAssembly specification
 ///
-/// See: https://webassembly.github.io/spec/core/syntax/instructions.html#control-instructions
+/// See: <https://webassembly.github.io/spec/core/syntax/instructions.html#control-instructions>
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LabelType {
     /// Block label - branches target the end of the block
@@ -42,13 +42,13 @@ pub struct Label {
     /// Type of this label construct
     pub label_type: LabelType,
     /// Block type defining parameters and results
-    /// See: https://webassembly.github.io/spec/core/syntax/instructions.html#block-types
+    /// See: <https://webassembly.github.io/spec/core/syntax/instructions.html#block-types>
     pub block_type: BlockType,
     /// Height of value stack when entering this label
     /// Used to restore stack state on branch
     pub stack_height: usize,
     /// Whether this label is unreachable (after unconditional branch/return)
-    /// See: https://webassembly.github.io/spec/core/valid/instructions.html#control-instructions
+    /// See: <https://webassembly.github.io/spec/core/valid/instructions.html#control-instructions>
     pub unreachable: bool,
     /// Resolved parameter types (consumed on block entry)
     pub param_types: Vec<ValueType>,

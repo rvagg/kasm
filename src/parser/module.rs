@@ -1,3 +1,12 @@
+//! WebAssembly module representation.
+//!
+//! [`Module`] is the central AST type shared by both the binary parser
+//! ([`crate::parser::parse`]) and the WAT text parser ([`crate::wat::parse`]).
+//! It contains one section struct per WebAssembly section kind (type, import,
+//! function, table, memory, global, export, start, element, code, data, custom)
+//! plus a lazily built [`ValidationContext`] that caches derived lookups used
+//! during type checking and execution.
+
 use std::cell::RefCell;
 use std::fmt;
 use std::io;
@@ -1710,7 +1719,7 @@ pub enum RefType {
 }
 
 impl RefType {
-    /// Returns the wire byte for this reference type (§5.3.4).
+    /// Returns the wire byte for this reference type (§5.3.3).
     pub fn wire_byte(&self) -> u8 {
         match self {
             RefType::FuncRef => 0x70,

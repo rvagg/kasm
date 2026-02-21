@@ -82,6 +82,9 @@ cargo fmt -- --check
 echo -e "\n=== Running clippy ==="
 cargo clippy -- -D warnings
 
+echo -e "\n=== Checking documentation ==="
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --quiet
+
 echo -e "\n=== Running tests ==="
 cargo test
 

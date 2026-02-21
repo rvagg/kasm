@@ -1,10 +1,11 @@
-/// Binary encoding primitives for WebAssembly values.
-///
-/// Provides LEB128 integer encoding, IEEE 754 float encoding, and byte vector
-/// encoding as specified by the WebAssembly binary format.
-///
-/// All functions write directly into a caller-provided `&mut Vec<u8>` buffer,
-/// avoiding intermediate allocations.
+//! Binary encoding primitives for WebAssembly values.
+//!
+//! Provides LEB128 integer encoding, IEEE 754 float encoding, and byte vector
+//! encoding as specified by the WebAssembly binary format.
+//!
+//! All functions write directly into a caller-provided `&mut Vec<u8>` buffer,
+//! avoiding intermediate allocations.
+
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::io;
 
@@ -30,7 +31,7 @@ pub const SECTION_DATA_COUNT: u8 = 12;
 // Type constructors (§5.3.6)
 pub const TYPE_FUNC: u8 = 0x60;
 
-// Import/export descriptor kinds (§5.5.5, §5.5.9)
+// Import/export descriptor kinds (§5.5.5, §5.5.10)
 pub const DESC_FUNC: u8 = 0x00;
 pub const DESC_TABLE: u8 = 0x01;
 pub const DESC_MEMORY: u8 = 0x02;
@@ -50,12 +51,12 @@ pub const ELEM_PASSIVE_EXPRS: u32 = 5; // passive, reftype, expressions
 pub const ELEM_ACTIVE_TABLE_EXPRS: u32 = 6; // active, explicit table, reftype, expressions
 pub const ELEM_DECLARATIVE_EXPRS: u32 = 7; // declarative, reftype, expressions
 
-// Data segment flags (§5.5.13)
+// Data segment flags (§5.5.14)
 pub const DATA_ACTIVE: u32 = 0;
 pub const DATA_PASSIVE: u32 = 1;
 pub const DATA_ACTIVE_EXPLICIT: u32 = 2;
 
-// Expression terminator (§5.4.7)
+// Expression terminator (§5.4.9)
 pub const OP_END: u8 = 0x0B;
 
 // Block type: empty (§5.4.1)

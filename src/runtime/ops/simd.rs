@@ -1,11 +1,36 @@
-//! SIMD (v128) operations for WebAssembly
+//! SIMD (v128) operations for WebAssembly.
+//!
+//! Implements all 236 instructions under the `0xFD` SIMD prefix
+//! (spec section 4.4.3). The v128 value is stored as `[u8; 16]` in
+//! little-endian byte order; lane interpretation is determined by the
+//! instruction:
+//!
+//! | Interpretation | Lanes | Rust type per lane |
+//! |----------------|-------|--------------------|
+//! | i8x16 / u8x16 | 16 | `i8` / `u8` |
+//! | i16x8 / u16x8 | 8 | `i16` / `u16` |
+//! | i32x4 / u32x4 | 4 | `i32` / `u32` |
+//! | i64x2 / u64x2 | 2 | `i64` / `u64` |
+//! | f32x4 | 4 | `f32` |
+//! | f64x2 | 2 | `f64` |
+//!
+//! # NaN canonicalisation
+//!
+//! Arithmetic floating-point operations (`add`, `sub`, `mul`, `div`, `sqrt`,
+//! `ceil`, `floor`, `trunc`, `nearest`, `min`, `max`) canonicalise NaN results
+//! by setting the quiet bit. Non-arithmetic operations (`abs`, `neg`, `pmin`,
+//! `pmax`, `copysign`) preserve the NaN payload unchanged.
 
 use super::*;
 
 // ============================================================================
 // Lane extraction/insertion helpers
+//
+// These convert between the raw `[u8; 16]` byte representation and typed
+// lane arrays. All conversions use little-endian byte order.
 // ============================================================================
 
+/// Interpret a v128 as four `f32` lanes.
 fn get_f32_lanes(v: [u8; 16]) -> [f32; 4] {
     [
         f32::from_le_bytes([v[0], v[1], v[2], v[3]]),
@@ -15,6 +40,7 @@ fn get_f32_lanes(v: [u8; 16]) -> [f32; 4] {
     ]
 }
 
+/// Pack four `f32` lanes into a v128.
 fn set_f32_lanes(lanes: [f32; 4]) -> [u8; 16] {
     let mut r = [0u8; 16];
     for (i, &f) in lanes.iter().enumerate() {
@@ -23,6 +49,7 @@ fn set_f32_lanes(lanes: [f32; 4]) -> [u8; 16] {
     r
 }
 
+/// Interpret a v128 as two `f64` lanes.
 fn get_f64_lanes(v: [u8; 16]) -> [f64; 2] {
     [
         f64::from_le_bytes([v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]]),
@@ -30,6 +57,7 @@ fn get_f64_lanes(v: [u8; 16]) -> [f64; 2] {
     ]
 }
 
+/// Pack two `f64` lanes into a v128.
 fn set_f64_lanes(lanes: [f64; 2]) -> [u8; 16] {
     let mut r = [0u8; 16];
     r[0..8].copy_from_slice(&lanes[0].to_le_bytes());
@@ -39,8 +67,12 @@ fn set_f64_lanes(lanes: [f64; 2]) -> [u8; 16] {
 
 // ============================================================================
 // Integer lane extraction/insertion helpers
+//
+// Signed and unsigned variants for each lane width. The `get_*` functions
+// reinterpret bytes as typed lanes; the `set_*` functions do the reverse.
 // ============================================================================
 
+/// Interpret a v128 as sixteen signed `i8` lanes.
 fn get_i8x16_lanes(v: [u8; 16]) -> [i8; 16] {
     let mut r = [0i8; 16];
     for i in 0..16 {
@@ -65,6 +97,7 @@ fn set_u8x16_lanes(lanes: [u8; 16]) -> [u8; 16] {
     lanes
 }
 
+/// Interpret a v128 as eight signed `i16` lanes.
 fn get_i16x8_lanes(v: [u8; 16]) -> [i16; 8] {
     let mut r = [0i16; 8];
     for i in 0..8 {
@@ -97,6 +130,7 @@ fn set_u16x8_lanes(lanes: [u16; 8]) -> [u8; 16] {
     r
 }
 
+/// Interpret a v128 as four signed `i32` lanes.
 fn get_i32x4_lanes(v: [u8; 16]) -> [i32; 4] {
     let mut r = [0i32; 4];
     for i in 0..4 {
@@ -129,6 +163,7 @@ fn set_u32x4_lanes(lanes: [u32; 4]) -> [u8; 16] {
     r
 }
 
+/// Interpret a v128 as two signed `i64` lanes.
 fn get_i64x2_lanes(v: [u8; 16]) -> [i64; 2] {
     [
         i64::from_le_bytes([v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]]),
@@ -169,8 +204,8 @@ fn effective_address(stack: &mut Stack, memarg: &MemArg) -> Result<u32, RuntimeE
     Ok(ea as u32)
 }
 
-/// v128.load — load 16 bytes from memory
-/// [i32] → [v128]
+/// v128.load — load 16 bytes from memory.
+/// \[i32\] -> \[v128\]
 pub fn v128_load(stack: &mut Stack, memory: &Memory, memarg: &MemArg) -> Result<(), RuntimeError> {
     let ea = effective_address(stack, memarg)?;
     let bytes = memory.read_bytes(ea, 16)?;
@@ -193,7 +228,7 @@ pub fn v128_store(stack: &mut Stack, memory: &mut Memory, memarg: &MemArg) -> Re
 // f32x4 operations
 // ============================================================================
 
-/// Apply a unary f32 operation lane-wise across a v128
+/// Apply a unary f32 operation lane-wise, canonicalising NaN results.
 fn f32x4_unary(stack: &mut Stack, op: fn(f32) -> f32) -> Result<(), RuntimeError> {
     let a = get_f32_lanes(stack.pop_v128()?);
     let r = [
@@ -278,6 +313,7 @@ pub fn f32x4_abs(stack: &mut Stack) -> Result<(), RuntimeError> {
     Ok(())
 }
 
+/// Flip the sign bit of each f32 lane — does NOT canonicalise NaN.
 pub fn f32x4_neg(stack: &mut Stack) -> Result<(), RuntimeError> {
     let mut v = stack.pop_v128()?;
     for i in 0..4 {
@@ -369,6 +405,7 @@ pub fn f32x4_ge(stack: &mut Stack) -> Result<(), RuntimeError> {
 // f64x2 operations
 // ============================================================================
 
+/// Apply a unary f64 operation lane-wise, canonicalising NaN results.
 fn f64x2_unary(stack: &mut Stack, op: fn(f64) -> f64) -> Result<(), RuntimeError> {
     let a = get_f64_lanes(stack.pop_v128()?);
     let r = [canonicalise_f64_nan(op(a[0])), canonicalise_f64_nan(op(a[1]))];
@@ -376,6 +413,7 @@ fn f64x2_unary(stack: &mut Stack, op: fn(f64) -> f64) -> Result<(), RuntimeError
     Ok(())
 }
 
+/// Apply a binary f64 operation lane-wise, canonicalising NaN results.
 fn f64x2_binary(stack: &mut Stack, op: fn(f64, f64) -> f64) -> Result<(), RuntimeError> {
     let b = get_f64_lanes(stack.pop_v128()?);
     let a = get_f64_lanes(stack.pop_v128()?);
@@ -387,6 +425,7 @@ fn f64x2_binary(stack: &mut Stack, op: fn(f64, f64) -> f64) -> Result<(), Runtim
     Ok(())
 }
 
+/// Apply a binary f64 operation without NaN canonicalisation (for pmin/pmax).
 fn f64x2_bitwise_binary(stack: &mut Stack, op: fn(f64, f64) -> f64) -> Result<(), RuntimeError> {
     let b = get_f64_lanes(stack.pop_v128()?);
     let a = get_f64_lanes(stack.pop_v128()?);
@@ -394,6 +433,7 @@ fn f64x2_bitwise_binary(stack: &mut Stack, op: fn(f64, f64) -> f64) -> Result<()
     Ok(())
 }
 
+/// Apply a comparison f64 operation lane-wise; all-ones for true, all-zeros for false.
 fn f64x2_compare(stack: &mut Stack, op: fn(f64, f64) -> bool) -> Result<(), RuntimeError> {
     let b = get_f64_lanes(stack.pop_v128()?);
     let a = get_f64_lanes(stack.pop_v128()?);
@@ -406,6 +446,7 @@ fn f64x2_compare(stack: &mut Stack, op: fn(f64, f64) -> bool) -> Result<(), Runt
     Ok(())
 }
 
+/// IEEE 754-2019 minimum for f64: propagate NaN, -0 < +0.
 fn ieee_min_f64(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
@@ -416,6 +457,7 @@ fn ieee_min_f64(a: f64, b: f64) -> f64 {
     }
 }
 
+/// IEEE 754-2019 maximum for f64: propagate NaN, +0 > -0.
 fn ieee_max_f64(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
@@ -426,6 +468,7 @@ fn ieee_max_f64(a: f64, b: f64) -> f64 {
     }
 }
 
+/// Clear the sign bit of each f64 lane — does NOT canonicalise NaN.
 pub fn f64x2_abs(stack: &mut Stack) -> Result<(), RuntimeError> {
     let mut v = stack.pop_v128()?;
     v[7] &= 0x7F;
@@ -434,6 +477,7 @@ pub fn f64x2_abs(stack: &mut Stack) -> Result<(), RuntimeError> {
     Ok(())
 }
 
+/// Flip the sign bit of each f64 lane — does NOT canonicalise NaN.
 pub fn f64x2_neg(stack: &mut Stack) -> Result<(), RuntimeError> {
     let mut v = stack.pop_v128()?;
     v[7] ^= 0x80;
@@ -580,8 +624,8 @@ pub fn v128_xor(stack: &mut Stack) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-/// v128.bitselect — per-bit selection: (v1 & c) | (v2 & !c)
-/// [v128, v128, v128] -> [v128]
+/// v128.bitselect — per-bit selection: (v1 & c) | (v2 & !c).
+/// \[v128, v128, v128\] -> \[v128\]
 pub fn v128_bitselect(stack: &mut Stack) -> Result<(), RuntimeError> {
     let c = stack.pop_v128()?;
     let v2 = stack.pop_v128()?;
@@ -798,6 +842,7 @@ pub fn f64x2_replace_lane(stack: &mut Stack, lane: u8) -> Result<(), RuntimeErro
 // i8x16 comparisons
 // ============================================================================
 
+/// Signed i8x16 lane-wise comparison; 0xFF for true, 0x00 for false.
 fn i8x16_compare(stack: &mut Stack, op: fn(i8, i8) -> bool) -> Result<(), RuntimeError> {
     let b = get_i8x16_lanes(stack.pop_v128()?);
     let a = get_i8x16_lanes(stack.pop_v128()?);
@@ -809,6 +854,7 @@ fn i8x16_compare(stack: &mut Stack, op: fn(i8, i8) -> bool) -> Result<(), Runtim
     Ok(())
 }
 
+/// Unsigned u8x16 lane-wise comparison; 0xFF for true, 0x00 for false.
 fn u8x16_compare(stack: &mut Stack, op: fn(u8, u8) -> bool) -> Result<(), RuntimeError> {
     let b = get_u8x16_lanes(stack.pop_v128()?);
     let a = get_u8x16_lanes(stack.pop_v128()?);
@@ -855,6 +901,7 @@ pub fn i8x16_ge_u(stack: &mut Stack) -> Result<(), RuntimeError> {
 // i16x8 comparisons
 // ============================================================================
 
+/// Signed i16x8 lane-wise comparison; all-ones for true, all-zeros for false.
 fn i16x8_compare(stack: &mut Stack, op: fn(i16, i16) -> bool) -> Result<(), RuntimeError> {
     let b = get_i16x8_lanes(stack.pop_v128()?);
     let a = get_i16x8_lanes(stack.pop_v128()?);
@@ -867,6 +914,7 @@ fn i16x8_compare(stack: &mut Stack, op: fn(i16, i16) -> bool) -> Result<(), Runt
     Ok(())
 }
 
+/// Unsigned u16x8 lane-wise comparison; all-ones for true, all-zeros for false.
 fn u16x8_compare(stack: &mut Stack, op: fn(u16, u16) -> bool) -> Result<(), RuntimeError> {
     let b = get_u16x8_lanes(stack.pop_v128()?);
     let a = get_u16x8_lanes(stack.pop_v128()?);
@@ -914,6 +962,7 @@ pub fn i16x8_ge_u(stack: &mut Stack) -> Result<(), RuntimeError> {
 // i32x4 comparisons
 // ============================================================================
 
+/// Signed i32x4 lane-wise comparison; all-ones for true, all-zeros for false.
 fn i32x4_compare(stack: &mut Stack, op: fn(i32, i32) -> bool) -> Result<(), RuntimeError> {
     let b = get_i32x4_lanes(stack.pop_v128()?);
     let a = get_i32x4_lanes(stack.pop_v128()?);
@@ -926,6 +975,7 @@ fn i32x4_compare(stack: &mut Stack, op: fn(i32, i32) -> bool) -> Result<(), Runt
     Ok(())
 }
 
+/// Unsigned u32x4 lane-wise comparison; all-ones for true, all-zeros for false.
 fn u32x4_compare(stack: &mut Stack, op: fn(u32, u32) -> bool) -> Result<(), RuntimeError> {
     let b = get_u32x4_lanes(stack.pop_v128()?);
     let a = get_u32x4_lanes(stack.pop_v128()?);
@@ -973,6 +1023,7 @@ pub fn i32x4_ge_u(stack: &mut Stack) -> Result<(), RuntimeError> {
 // i64x2 comparisons
 // ============================================================================
 
+/// Signed i64x2 lane-wise comparison; all-ones for true, all-zeros for false.
 fn i64x2_compare(stack: &mut Stack, op: fn(i64, i64) -> bool) -> Result<(), RuntimeError> {
     let b = get_i64x2_lanes(stack.pop_v128()?);
     let a = get_i64x2_lanes(stack.pop_v128()?);
@@ -1678,8 +1729,8 @@ pub fn i64x2_mul(stack: &mut Stack) -> Result<(), RuntimeError> {
 // Shuffle and swizzle
 // ============================================================================
 
-/// i8x16.shuffle — select lanes from two v128 values using 16-byte immediate indices
-/// Each index in lanes[i] selects from the concatenation [a, b] (0..15 from a, 16..31 from b)
+/// i8x16.shuffle — select lanes from two v128 values using 16-byte immediate indices.
+/// Each index in `lanes[i]` selects from the concatenation \[a, b\] (0..15 from a, 16..31 from b)
 pub fn i8x16_shuffle(stack: &mut Stack, lanes: &[u8; 16]) -> Result<(), RuntimeError> {
     let b = stack.pop_v128()?;
     let a = stack.pop_v128()?;
@@ -2084,8 +2135,8 @@ pub fn i32x4_extadd_pairwise_i16x8_u(stack: &mut Stack) -> Result<(), RuntimeErr
 // Dot product
 // ============================================================================
 
-/// i32x4.dot_i16x8_s — signed dot product of i16 pairs producing i32 lanes
-/// r[i] = a[i*2]*b[i*2] + a[i*2+1]*b[i*2+1]  (all as i32)
+/// i32x4.dot_i16x8_s — signed dot product of i16 pairs producing i32 lanes.
+/// `r[i] = a[i*2]*b[i*2] + a[i*2+1]*b[i*2+1]`  (all as i32)
 pub fn i32x4_dot_i16x8_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     let b = get_i16x8_lanes(stack.pop_v128()?);
     let a = get_i16x8_lanes(stack.pop_v128()?);
@@ -2501,10 +2552,12 @@ fn trunc_sat_f64_to_u32(v: f64) -> u32 {
     }
 }
 
+/// WebAssembly `nearest` rounding: round to nearest, ties to even.
 fn wasm_nearest_f32(v: f32) -> f32 {
     v.round_ties_even()
 }
 
+/// WebAssembly `nearest` rounding: round to nearest, ties to even.
 fn wasm_nearest_f64(v: f64) -> f64 {
     v.round_ties_even()
 }
@@ -2521,6 +2574,8 @@ fn canonicalise_f32_nan(v: f32) -> f32 {
     }
 }
 
+/// Ensure an f64 NaN result has the quiet bit set (signaling -> quiet conversion).
+/// Per the WebAssembly spec, floating-point operations never produce signaling NaNs.
 #[inline]
 fn canonicalise_f64_nan(v: f64) -> f64 {
     if v.is_nan() {

@@ -88,7 +88,7 @@ pub fn br_if(stack: &mut Stack, label_stack: &LabelStack, label_idx: u32) -> Res
 /// A br_table performs an indirect branch through an operand indexing into
 /// a list of labels.
 /// 1. Pop i32 index from stack
-/// 2. If index < len(labels), branch to labels[index]
+/// 2. If `index` < len(labels), branch to labels\[index\]
 /// 3. Else branch to default
 pub fn br_table(
     stack: &mut Stack,
