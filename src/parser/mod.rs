@@ -5,7 +5,7 @@ pub mod module;
 pub mod reader;
 pub mod structure_builder;
 pub mod structured;
-mod validate;
+pub(crate) mod validate;
 
 #[cfg(test)]
 mod utf8_tests;
@@ -562,7 +562,7 @@ fn read_section_code(
         // Directly decode to structured representation without buffering
         let body = instruction::decode_function(bytes, module, &locals, module.code.len() as u32).map_err(|err| {
             if bytes.pos() > end_pos {
-                io::Error::new(io::ErrorKind::InvalidData, "END opcode expected").into()
+                io::Error::new(io::ErrorKind::InvalidData, "end opcode expected").into()
             } else if ii == count - 1 && bytes.pos() == end_pos {
                 match err {
                     instruction::DecodeError::Validation(_) => err,
@@ -1006,101 +1006,93 @@ impl module::Element {
                     .collect())
             };
 
-        let typ = bytes.read_vu32()?;
-        let element = match typ {
-            0 => {
-                // 0:u32 𝑒:expr 𝑦*:vec(funcidx) => {type funcref, init ((ref.func 𝑦) end)*, mode active {table 0, offset 𝑒}}
-                module::Element {
-                    flags: typ,
-                    ref_type: module::RefType::FuncRef,
-                    mode: module::ElementMode::Active {
-                        table_index: 0,
-                        offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
-                    },
-                    init: read_func_index_init(bytes)?,
-                }
-            }
-            1 => {
-                // 1:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode passive}
-                module::Element {
-                    flags: typ,
-                    ref_type: read_element_kind(bytes)?,
-                    mode: module::ElementMode::Passive,
-                    init: read_func_index_init(bytes)?,
-                }
-            }
-            2 => {
-                // 2:u32 𝑥:tableidx 𝑒:expr et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode active {table 𝑥, offset 𝑒}}
-                module::Element {
-                    flags: typ,
-                    mode: module::ElementMode::Active {
-                        table_index: read_table_index(bytes)?,
-                        offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
-                    },
-                    ref_type: read_element_kind(bytes)?,
-                    init: read_func_index_init(bytes)?,
-                }
-            }
-            3 => {
-                // 3:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode declarative}
-                module::Element {
-                    flags: typ,
-                    ref_type: read_element_kind(bytes)?,
-                    mode: module::ElementMode::Declarative,
-                    init: read_func_index_init(bytes)?,
-                }
-            }
-            4 => {
-                // 4:u32 𝑒:expr el *:vec(expr) => {type funcref, init el *, mode active {table 0, offset 𝑒}}
-                module::Element {
-                    flags: typ,
-                    ref_type: module::RefType::FuncRef,
-                    mode: module::ElementMode::Active {
-                        table_index: 0,
-                        offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
-                    },
-                    init: read_init(bytes, module::ValueType::FuncRef)?,
-                }
-            }
-            5 => {
-                // 5:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode passive}
+        let flags = bytes.read_vu32()?;
+        let element = match flags {
+            // 0:u32 𝑒:expr 𝑦*:vec(funcidx) => {type funcref, init ((ref.func 𝑦) end)*, mode active {table 0, offset 𝑒}}
+            encoding::ELEM_ACTIVE_FUNCS => module::Element {
+                flags,
+                ref_type: module::RefType::FuncRef,
+                mode: module::ElementMode::Active {
+                    table_index: 0,
+                    offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                },
+                init: read_func_index_init(bytes)?,
+            },
+            // 1:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode passive}
+            encoding::ELEM_PASSIVE_FUNCS => module::Element {
+                flags,
+                ref_type: read_element_kind(bytes)?,
+                mode: module::ElementMode::Passive,
+                init: read_func_index_init(bytes)?,
+            },
+            // 2:u32 𝑥:tableidx 𝑒:expr et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode active {table 𝑥, offset 𝑒}}
+            encoding::ELEM_ACTIVE_TABLE_FUNCS => module::Element {
+                flags,
+                mode: module::ElementMode::Active {
+                    table_index: read_table_index(bytes)?,
+                    offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                },
+                ref_type: read_element_kind(bytes)?,
+                init: read_func_index_init(bytes)?,
+            },
+            // 3:u32 et : elemkind 𝑦*:vec(funcidx) => {type et, init ((ref.func 𝑦) end)*, mode declarative}
+            encoding::ELEM_DECLARATIVE_FUNCS => module::Element {
+                flags,
+                ref_type: read_element_kind(bytes)?,
+                mode: module::ElementMode::Declarative,
+                init: read_func_index_init(bytes)?,
+            },
+            // 4:u32 𝑒:expr el *:vec(expr) => {type funcref, init el *, mode active {table 0, offset 𝑒}}
+            encoding::ELEM_ACTIVE_EXPRS => module::Element {
+                flags,
+                ref_type: module::RefType::FuncRef,
+                mode: module::ElementMode::Active {
+                    table_index: 0,
+                    offset: instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?,
+                },
+                init: read_init(bytes, module::ValueType::FuncRef)?,
+            },
+            // 5:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode passive}
+            encoding::ELEM_PASSIVE_EXPRS => {
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
                 module::Element {
-                    flags: typ,
+                    flags,
                     ref_type,
                     mode: module::ElementMode::Passive,
                     init,
                 }
             }
-            6 => {
-                // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
+            // 6:u32 𝑥:tableidx 𝑒:expr et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode active {table 𝑥, offset 𝑒}}
+            encoding::ELEM_ACTIVE_TABLE_EXPRS => {
                 let table_index = read_table_index(bytes)?;
                 let offset = instruction::decode_constant_expression(bytes, imports, module::ValueType::I32)?;
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
                 module::Element {
-                    flags: typ,
+                    flags,
                     mode: module::ElementMode::Active { table_index, offset },
                     ref_type,
                     init,
                 }
             }
-            7 => {
-                // 7:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode declarative}
+            // 7:u32 et : reftype el *:vec(expr) => {type 𝑒𝑡, init el *, mode declarative}
+            encoding::ELEM_DECLARATIVE_EXPRS => {
                 let ref_type = read_type(bytes)?;
                 let init = read_init(bytes, ref_type.into())?;
                 module::Element {
-                    flags: typ,
+                    flags,
                     ref_type,
                     mode: module::ElementMode::Declarative,
                     init,
                 }
             }
             _ => {
-                return Err(
-                    io::Error::new(io::ErrorKind::InvalidData, format!("unknown element type: 0x{typ:02x}")).into(),
-                );
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unknown element type: 0x{flags:02x}"),
+                )
+                .into());
             }
         };
         if let module::ElementMode::Active { table_index, .. } = element.mode {

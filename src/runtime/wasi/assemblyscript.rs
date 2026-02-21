@@ -129,7 +129,8 @@ fn env_abort(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeE
 mod tests {
     use super::*;
     use crate::runtime::Memory;
-    use std::sync::Mutex;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn test_add_assemblyscript_imports() {
@@ -148,7 +149,7 @@ mod tests {
 
         // Bind memory (required for context)
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         let args = vec![
@@ -175,7 +176,7 @@ mod tests {
         let ctx = WasiContext::builder().build();
 
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         // Write an AssemblyScript string "Error!" at address 100
@@ -231,7 +232,7 @@ mod tests {
         let ctx = WasiContext::builder().build();
 
         let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Arc::new(Mutex::new(memory));
+        let shared_memory = Rc::new(RefCell::new(memory));
         ctx.bind_memory(shared_memory);
 
         // Null pointer returns None

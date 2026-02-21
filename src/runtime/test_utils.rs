@@ -107,7 +107,7 @@ pub mod test {
             )
             .expect("Structure building should succeed");
 
-            let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
             // Set initial global values if any were specified
             if !self.globals.is_empty() {
@@ -172,7 +172,7 @@ pub mod test {
             let structured_func = StructureBuilder::build_function(&self.instructions, 0, self.return_types.clone())
                 .expect("Structure building should succeed");
 
-            let mut executor = Executor::new(&module, None).expect("Executor creation should succeed");
+            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
 
             // Set initial global values if any were specified
             if !self.globals.is_empty() {

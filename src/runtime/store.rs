@@ -10,7 +10,7 @@
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                          Store                              │
 //! │  ┌────────────────────────────────────────────────────────┐ │
-//! │  │ Function Space (FuncAddr → FunctionInstance)           │ │
+//! │  │ Function Space (FuncAddr -> FunctionInstance)          │ │
 //! │  │  [0]: Host { print }                                   │ │
 //! │  │  [1]: Host { print_i32 }                               │ │
 //! │  │  [2]: Wasm { instance: 0, func: 0 }                    │ │
@@ -41,15 +41,26 @@
 //! 4. When target completes, Store pops the call stack and resumes the caller
 //! 5. This continues until the call stack is empty
 //!
-//! The call stack enables arbitrarily deep cross-module chains (A → B → C → ...)
+//! The call stack enables arbitrarily deep cross-module chains (A -> B -> C -> ...)
 //! where each module can perform computation before/after its external calls.
 
+use super::imports::{global_value_type, is_global_mutable};
 use super::{ExecutionOutcome, Instance, Memory, RuntimeError, Table, Value};
-use crate::parser::module::{ExternalKind, FunctionType};
-use std::sync::{Arc, Mutex};
+use crate::parser::module::{ExportIndex, ExternalKind, FunctionType, Limits};
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 /// Type alias for host function implementations
 type HostFunc = Box<dyn Fn(Vec<Value>) -> Result<Vec<Value>, RuntimeError>>;
+
+/// The next action in the cross-module execution loop.
+///
+/// Alternates between calling a new function and resuming a suspended instance
+/// with the results of a completed call.
+enum PendingAction {
+    Call(FuncAddr, Vec<Value>),
+    Resume(usize, Vec<Value>),
+}
 
 /// Global function address - index into the Store's function space
 ///
@@ -72,17 +83,33 @@ pub struct MemoryAddr(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TableAddr(pub usize);
 
+/// Global address - index into the Store's global registry
+///
+/// GlobalAddr provides stable, globally-unique identifiers for global instances
+/// that can be shared across module boundaries for mutable global imports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlobalAddr(pub usize);
+
+/// Shared global instance for cross-module mutable global aliasing
+///
+/// Uses Rc<Cell<>> since WebAssembly is single-threaded and Value is Copy.
+/// When module A exports a mutable global and module B imports it, both
+/// modules share the same Rc<Cell<Value>>, so mutations are visible to both.
+pub type SharedGlobal = Rc<Cell<Value>>;
+
 /// Shared memory instance for cross-module access
 ///
-/// Uses Arc<Mutex<>> to enable safe sharing between modules while maintaining
-/// Rust's ownership rules. The Mutex ensures safe concurrent access if needed.
-pub type SharedMemory = Arc<Mutex<Memory>>;
+/// Uses Rc<RefCell<>> since WebAssembly is single-threaded and Memory is not Copy.
+/// When module A exports memory and module B imports it, both share the same
+/// Rc<RefCell<Memory>>, so mutations are visible to both.
+pub type SharedMemory = Rc<RefCell<Memory>>;
 
 /// Shared table instance for cross-module access
 ///
-/// Uses Arc<Mutex<>> to enable safe sharing between modules while maintaining
-/// Rust's ownership rules. The Mutex ensures safe concurrent access if needed.
-pub type SharedTable = Arc<Mutex<Table>>;
+/// Uses Rc<RefCell<>> since WebAssembly is single-threaded and Table is not Copy.
+/// When module A exports a table and module B imports it, both share the same
+/// Rc<RefCell<Table>>, so mutations are visible to both.
+pub type SharedTable = Rc<RefCell<Table>>;
 
 /// A function instance in the Store
 ///
@@ -107,6 +134,37 @@ pub enum FunctionInstance {
     },
 }
 
+/// Validate that actual limits are compatible with expected limits for an import.
+///
+/// The imported entity's minimum must be >= the declared minimum, and if a maximum
+/// is declared, the imported entity must also have a maximum that is <= the declared one.
+fn validate_import_limits(
+    actual_min: u32,
+    actual_max: Option<u32>,
+    expected: &Limits,
+    module_name: &str,
+    field_name: &str,
+) -> Result<(), RuntimeError> {
+    if actual_min < expected.min {
+        return Err(RuntimeError::IncompatibleImportType(format!(
+            "{}.{}",
+            module_name, field_name
+        )));
+    }
+    if let Some(expected_max) = expected.max {
+        match actual_max {
+            Some(actual_max) if actual_max <= expected_max => {}
+            _ => {
+                return Err(RuntimeError::IncompatibleImportType(format!(
+                    "{}.{}",
+                    module_name, field_name
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The WebAssembly Store - owns all instances and provides execution context
 ///
 /// The Store manages the lifetime of all module instances and provides a global
@@ -120,12 +178,16 @@ pub struct Store<'a> {
     instances: Vec<Instance<'a>>,
 
     /// All memory instances, indexed by MemoryAddr
-    /// Shared via Arc<Mutex<>> to enable cross-module memory imports
+    /// Shared via Rc<RefCell<>> to enable cross-module memory imports
     memories: Vec<SharedMemory>,
 
     /// All table instances, indexed by TableAddr
-    /// Shared via Arc<Mutex<>> to enable cross-module table imports
+    /// Shared via Rc<RefCell<>> to enable cross-module table imports
     tables: Vec<SharedTable>,
+
+    /// All global instances, indexed by GlobalAddr
+    /// Shared via Rc<Cell<>> to enable cross-module mutable global aliasing
+    globals: Vec<SharedGlobal>,
 }
 
 impl<'a> Store<'a> {
@@ -136,6 +198,7 @@ impl<'a> Store<'a> {
             instances: Vec::new(),
             memories: Vec::new(),
             tables: Vec::new(),
+            globals: Vec::new(),
         }
     }
 
@@ -150,21 +213,21 @@ impl<'a> Store<'a> {
 
     /// Allocate a new memory address and register a memory instance
     ///
-    /// The memory is wrapped in Arc<Mutex<>> for shared access across modules.
+    /// The memory is wrapped in Rc<RefCell<>> for shared access across modules.
     /// Returns the MemoryAddr that can be used to reference this memory.
     pub fn allocate_memory(&mut self, memory: Memory) -> MemoryAddr {
         let addr = MemoryAddr(self.memories.len());
-        self.memories.push(Arc::new(Mutex::new(memory)));
+        self.memories.push(Rc::new(RefCell::new(memory)));
         addr
     }
 
     /// Allocate a new table address and register a table instance
     ///
-    /// The table is wrapped in Arc<Mutex<>> for shared access across modules.
+    /// The table is wrapped in Rc<RefCell<>> for shared access across modules.
     /// Returns the TableAddr that can be used to reference this table.
     pub fn allocate_table(&mut self, table: Table) -> TableAddr {
         let addr = TableAddr(self.tables.len());
-        self.tables.push(Arc::new(Mutex::new(table)));
+        self.tables.push(Rc::new(RefCell::new(table)));
         addr
     }
 
@@ -182,16 +245,26 @@ impl<'a> Store<'a> {
         self.tables.get(addr.0)
     }
 
+    /// Allocate a new global in the Store
+    ///
+    /// Returns the GlobalAddr that can be used to reference this global.
+    pub fn allocate_global(&mut self, value: Value) -> GlobalAddr {
+        let addr = GlobalAddr(self.globals.len());
+        self.globals.push(Rc::new(Cell::new(value)));
+        addr
+    }
+
+    /// Get a shared global cell by its address
+    ///
+    /// Returns None if the address is invalid.
+    pub fn get_shared_global(&self, addr: GlobalAddr) -> Option<&SharedGlobal> {
+        self.globals.get(addr.0)
+    }
+
     /// Create and register a new instance in the Store
     ///
-    /// This handles the full lifecycle:
-    /// 1. Resolves memory/table imports from ImportObject
-    /// 2. Creates local memories/tables and adds them to Store
-    /// 3. Creates the Instance with shared memories/tables
-    /// 4. Allocates FuncAddr for all its functions
-    /// 5. Links and initialises the instance
-    ///
-    /// Returns the instance ID
+    /// Resolves imports, creates local resources, links functions, and initialises
+    /// the instance. Returns the instance ID.
     pub fn create_instance(
         &mut self,
         module: &'a crate::parser::module::Module,
@@ -199,11 +272,45 @@ impl<'a> Store<'a> {
     ) -> Result<usize, RuntimeError> {
         let instance_id = self.instances.len();
 
-        // === Phase 1: Resolve memories ===
-        let mut memories: Vec<SharedMemory> = Vec::new();
-        let mut memory_addresses: Vec<MemoryAddr> = Vec::new();
+        let (memories, memory_addresses) = self.resolve_memories(module, imports)?;
+        let (tables, table_addresses) = self.resolve_tables(module, imports)?;
+        let (globals, global_addresses) = self.resolve_globals(module, imports)?;
 
-        // Check if module has memory imports
+        let mut instance = Instance::new_unlinked(
+            module,
+            memories,
+            tables,
+            globals,
+            memory_addresses,
+            table_addresses,
+            global_addresses,
+        )?;
+
+        let function_addresses = self.resolve_functions(module, imports, instance_id)?;
+
+        // Link functions, then push instance before propagating errors.
+        // The spec requires side effects on shared tables/memories to persist
+        // even when instantiation fails (e.g., OOB element segments).
+        let link_result = instance.link_functions(function_addresses);
+        self.instances.push(instance);
+        link_result?;
+
+        self.execute_start_function(instance_id)?;
+
+        Ok(instance_id)
+    }
+
+    /// Resolve memory imports or create local memories.
+    ///
+    /// WebAssembly 1.0 allows at most one memory, either imported or locally defined.
+    fn resolve_memories(
+        &mut self,
+        module: &crate::parser::module::Module,
+        imports: Option<&super::ImportObject>,
+    ) -> Result<(Vec<SharedMemory>, Vec<MemoryAddr>), RuntimeError> {
+        let mut memories = Vec::new();
+        let mut addresses = Vec::new();
+
         let has_memory_import = module
             .imports
             .imports
@@ -211,119 +318,196 @@ impl<'a> Store<'a> {
             .any(|imp| matches!(imp.external_kind, ExternalKind::Memory(_)));
 
         if has_memory_import {
-            // Resolve imported memory
             for import in &module.imports.imports {
-                if let ExternalKind::Memory(_limits) = &import.external_kind {
-                    if let Some(import_obj) = imports {
-                        let mem_addr = import_obj.get_memory(&import.module, &import.name)?;
-                        let shared_mem = self
-                            .get_memory(mem_addr)
-                            .ok_or_else(|| {
-                                RuntimeError::MemoryError(format!(
-                                    "Memory import {}.{} not found in store",
-                                    import.module, import.name
-                                ))
-                            })?
-                            .clone();
-                        memories.push(shared_mem);
-                        memory_addresses.push(mem_addr);
-                    } else {
-                        return Err(RuntimeError::MemoryError(format!(
-                            "Memory import {}.{} not found",
-                            import.module, import.name
-                        )));
-                    }
-                }
-            }
-        } else {
-            // Create local memories
-            for mem_def in &module.memory.memory {
-                let memory = Memory::new(mem_def.limits.min, mem_def.limits.max)?;
-                let addr = self.allocate_memory(memory);
-                memories.push(self.get_memory(addr).unwrap().clone());
-                memory_addresses.push(addr);
-            }
-        }
+                if let ExternalKind::Memory(expected_limits) = &import.external_kind {
+                    let import_obj = imports.ok_or_else(|| {
+                        RuntimeError::MemoryError(format!("memory import {}.{} not found", import.module, import.name))
+                    })?;
 
-        // === Phase 2: Resolve tables ===
-        let mut tables: Vec<SharedTable> = Vec::new();
-        let mut table_addresses: Vec<TableAddr> = Vec::new();
-
-        // Imported tables (they come first in the index space)
-        for import in &module.imports.imports {
-            if let ExternalKind::Table(_table_type) = &import.external_kind {
-                if let Some(import_obj) = imports {
-                    let table_addr = import_obj.get_table(&import.module, &import.name)?;
-                    let shared_table = self
-                        .get_table(table_addr)
+                    let mem_addr = import_obj.get_memory(&import.module, &import.name)?;
+                    let shared_mem = self
+                        .get_memory(mem_addr)
                         .ok_or_else(|| {
                             RuntimeError::MemoryError(format!(
-                                "Table import {}.{} not found in store",
+                                "memory import {}.{} not found in store",
                                 import.module, import.name
                             ))
                         })?
                         .clone();
-                    tables.push(shared_table);
-                    table_addresses.push(table_addr);
-                } else {
-                    return Err(RuntimeError::MemoryError(format!(
-                        "Table import {}.{} not found",
-                        import.module, import.name
-                    )));
+
+                    let mem = shared_mem.borrow();
+                    validate_import_limits(
+                        mem.size(),
+                        mem.max_pages(),
+                        expected_limits,
+                        &import.module,
+                        &import.name,
+                    )?;
+                    drop(mem);
+
+                    memories.push(shared_mem);
+                    addresses.push(mem_addr);
                 }
+            }
+        } else {
+            for mem_def in &module.memory.memory {
+                let memory = Memory::new(mem_def.limits.min, mem_def.limits.max)?;
+                let addr = self.allocate_memory(memory);
+                memories.push(self.get_memory(addr).unwrap().clone());
+                addresses.push(addr);
             }
         }
 
-        // Local tables
+        Ok((memories, addresses))
+    }
+
+    /// Resolve table imports and create local tables.
+    ///
+    /// Unlike memories, tables can have both imports and locals (sequential in the index space).
+    fn resolve_tables(
+        &mut self,
+        module: &crate::parser::module::Module,
+        imports: Option<&super::ImportObject>,
+    ) -> Result<(Vec<SharedTable>, Vec<TableAddr>), RuntimeError> {
+        let mut tables = Vec::new();
+        let mut addresses = Vec::new();
+
+        for import in &module.imports.imports {
+            if let ExternalKind::Table(expected_table_type) = &import.external_kind {
+                let import_obj = imports.ok_or_else(|| {
+                    RuntimeError::MemoryError(format!("table import {}.{} not found", import.module, import.name))
+                })?;
+
+                let table_addr = import_obj.get_table(&import.module, &import.name)?;
+                let shared_table = self
+                    .get_table(table_addr)
+                    .ok_or_else(|| {
+                        RuntimeError::MemoryError(format!(
+                            "table import {}.{} not found in store",
+                            import.module, import.name
+                        ))
+                    })?
+                    .clone();
+
+                let tbl = shared_table.borrow();
+                if tbl.ref_type() != expected_table_type.ref_type {
+                    return Err(RuntimeError::IncompatibleImportType(format!(
+                        "{}.{}",
+                        import.module, import.name
+                    )));
+                }
+                let actual_limits = tbl.limits();
+                validate_import_limits(
+                    actual_limits.min,
+                    actual_limits.max,
+                    &expected_table_type.limits,
+                    &import.module,
+                    &import.name,
+                )?;
+                drop(tbl);
+
+                tables.push(shared_table);
+                addresses.push(table_addr);
+            }
+        }
+
         for table_type in &module.table.tables {
             let table = Table::new(table_type.ref_type, table_type.limits)?;
             let addr = self.allocate_table(table);
             tables.push(self.get_table(addr).unwrap().clone());
-            table_addresses.push(addr);
+            addresses.push(addr);
         }
 
-        // === Phase 3: Create instance with shared memories/tables ===
-        let mut instance =
-            Instance::new_unlinked(module, imports, memories, tables, memory_addresses, table_addresses)?;
+        Ok((tables, addresses))
+    }
 
-        // === Phase 4: Allocate function addresses ===
-        let num_imported_funcs = module.imports.function_count();
-        let mut function_addresses = Vec::new();
+    /// Resolve global imports and create local globals.
+    ///
+    /// Imported globals share the same Rc<Cell<Value>> so mutations are visible across modules.
+    /// Local globals are allocated with default values; init expressions are evaluated later.
+    fn resolve_globals(
+        &mut self,
+        module: &crate::parser::module::Module,
+        imports: Option<&super::ImportObject>,
+    ) -> Result<(Vec<SharedGlobal>, Vec<GlobalAddr>), RuntimeError> {
+        let mut globals = Vec::new();
+        let mut addresses = Vec::new();
 
-        // Imported functions - get FuncAddr from imports and validate types
         for import in &module.imports.imports {
-            if let ExternalKind::Function(type_idx) = &import.external_kind {
-                if let Some(import_obj) = imports {
-                    // Get the imported function address
-                    let addr = import_obj.get_function(&import.module, &import.name)?;
+            if let ExternalKind::Global(global_type) = &import.external_kind {
+                let import_obj = imports.ok_or_else(|| {
+                    RuntimeError::MemoryError(format!("global import {}.{} not found", import.module, import.name))
+                })?;
 
-                    // Get the expected type from the module's type section
-                    let expected_type = module.types.get(*type_idx).ok_or(RuntimeError::InvalidFunctionType)?;
+                let global_addr = import_obj.get_global_addr(&import.module, &import.name)?;
+                import_obj.validate_global(
+                    &import.module,
+                    &import.name,
+                    global_type.value_type,
+                    global_type.mutable,
+                )?;
 
-                    // Get the actual type from the imported function
-                    let actual_type = self.get_function_type(addr)?;
+                let shared = self
+                    .get_shared_global(global_addr)
+                    .ok_or_else(|| {
+                        RuntimeError::MemoryError(format!(
+                            "global import {}.{} not found in store",
+                            import.module, import.name
+                        ))
+                    })?
+                    .clone();
 
-                    // Validate that the types match
-                    if expected_type != actual_type {
-                        return Err(RuntimeError::ImportTypeMismatch {
-                            module: import.module.clone(),
-                            name: import.name.clone(),
-                            expected: format!("{:?}", expected_type),
-                            actual: format!("{:?}", actual_type),
-                        });
-                    }
-
-                    function_addresses.push(addr);
-                } else {
-                    return Err(RuntimeError::UnknownFunction(format!(
-                        "Import {}.{} not found",
-                        import.module, import.name
-                    )));
-                }
+                globals.push(shared);
+                addresses.push(global_addr);
             }
         }
 
-        // Local functions - allocate new FuncAddr
+        for global in &module.globals.globals {
+            let default_value = super::imports::default_value_for_type(global.global_type.value_type)?;
+            let addr = self.allocate_global(default_value);
+            globals.push(self.get_shared_global(addr).unwrap().clone());
+            addresses.push(addr);
+        }
+
+        Ok((globals, addresses))
+    }
+
+    /// Resolve function imports and allocate local function addresses.
+    ///
+    /// Imported functions are validated against their expected type signatures.
+    /// Local functions are registered as Wasm function instances in the Store.
+    fn resolve_functions(
+        &mut self,
+        module: &crate::parser::module::Module,
+        imports: Option<&super::ImportObject>,
+        instance_id: usize,
+    ) -> Result<Vec<FuncAddr>, RuntimeError> {
+        let num_imported_funcs = module.imports.function_count();
+        let mut addresses = Vec::new();
+
+        for import in &module.imports.imports {
+            if let ExternalKind::Function(type_idx) = &import.external_kind {
+                let import_obj = imports.ok_or_else(|| {
+                    RuntimeError::UnknownFunction(format!("import {}.{} not found", import.module, import.name))
+                })?;
+
+                let addr = import_obj.get_function(&import.module, &import.name)?;
+                let expected_type = module.types.get(*type_idx).ok_or(RuntimeError::InvalidFunctionType)?;
+                let actual_type = self.get_function_type(addr)?;
+
+                if expected_type != actual_type {
+                    return Err(RuntimeError::ImportTypeMismatch {
+                        module: import.module.clone(),
+                        name: import.name.clone(),
+                        expected: format!("{:?}", expected_type),
+                        actual: format!("{:?}", actual_type),
+                    });
+                }
+
+                addresses.push(addr);
+            }
+        }
+
         for (local_idx, func) in module.functions.functions.iter().enumerate() {
             let func_idx = (num_imported_funcs + local_idx) as u32;
             let func_type = module
@@ -337,21 +521,27 @@ impl<'a> Store<'a> {
                 func_idx,
                 func_type,
             });
-            function_addresses.push(addr);
+            addresses.push(addr);
         }
 
-        // === Phase 5: Link and initialise ===
-        // Link the instance with its function addresses
-        // This also initialises element segments now that addresses are available
-        instance.link_functions(function_addresses)?;
+        Ok(addresses)
+    }
 
-        // Execute start function if present
-        instance.execute_start()?;
-
-        // Add instance to store
-        self.instances.push(instance);
-
-        Ok(instance_id)
+    /// Execute the start function for a newly instantiated module.
+    fn execute_start_function(&mut self, instance_id: usize) -> Result<(), RuntimeError> {
+        match self.instances[instance_id].execute_start()? {
+            Some(func_addr) => {
+                // Imported start function — dispatch through Store
+                match self.functions.get(func_addr.0) {
+                    Some(FunctionInstance::Host { func, .. }) => func(vec![]).map(|_| ()),
+                    Some(FunctionInstance::Wasm { .. }) => Err(RuntimeError::UnimplementedInstruction(
+                        "cross-module wasm start function".to_string(),
+                    )),
+                    None => Err(RuntimeError::FunctionIndexOutOfBounds(func_addr.0 as u32)),
+                }
+            }
+            None => Ok(()),
+        }
     }
 
     /// Get a reference to an instance by ID
@@ -405,54 +595,47 @@ impl<'a> Store<'a> {
         }
     }
 
-    /// Execute a function by its address
+    /// Execute a function by its address, handling cross-module calls.
     ///
-    /// This is the main entry point for calling any function in the Store,
-    /// whether it's a WebAssembly function or a host function.
-    /// Handles cross-module calls automatically using a call stack.
+    /// Execution alternates between two actions: calling a new function, or resuming
+    /// a suspended instance with results from a completed call. The call stack tracks
+    /// instances waiting for results.
     ///
-    /// # Errors
-    /// - Returns error if FuncAddr is invalid
-    /// - Returns any errors from function execution
+    /// ```text
+    /// Call(A) -> A completes -> return results   (simple case)
+    /// Call(A) -> A needs B   -> push A, Call(B)
+    ///                        -> B completes -> pop A, Resume(A, results)
+    ///                                       -> A completes -> return results
+    /// ```
     pub fn execute(&mut self, addr: FuncAddr, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
-        // Call stack tracks instances waiting for results from external calls
         let mut call_stack: Vec<usize> = Vec::new();
-
-        // What we need to do next: either call a function or resume an instance
-        let mut pending_call: Option<(FuncAddr, Vec<Value>)> = Some((addr, args));
-        let mut pending_resume: Option<(usize, Vec<Value>)> = None;
+        let mut action = PendingAction::Call(addr, args);
 
         loop {
-            // Get the outcome from either a new call or a resume
-            let (outcome, source_instance) = if let Some((addr, args)) = pending_call.take() {
-                self.execute_one(addr, args)?
-            } else if let Some((instance_id, results)) = pending_resume.take() {
-                let instance = self
-                    .get_instance_mut(instance_id)
-                    .ok_or(RuntimeError::FunctionIndexOutOfBounds(0))?;
-                let outcome = instance.resume_with_results(results)?;
-                (outcome, Some(instance_id))
-            } else {
-                unreachable!("Must have either a pending call or pending resume")
+            let (outcome, source_instance) = match action {
+                PendingAction::Call(addr, args) => self.execute_one(addr, args)?,
+                PendingAction::Resume(instance_id, results) => {
+                    let instance = self
+                        .get_instance_mut(instance_id)
+                        .ok_or(RuntimeError::FunctionIndexOutOfBounds(0))?;
+                    let outcome = instance.resume_with_results(results)?;
+                    (outcome, Some(instance_id))
+                }
             };
 
-            // Handle the outcome
             match outcome {
                 ExecutionOutcome::Complete(results) => {
-                    // Function or resume completed - pop caller from stack
                     if let Some(caller_id) = call_stack.pop() {
-                        pending_resume = Some((caller_id, results));
+                        action = PendingAction::Resume(caller_id, results);
                     } else {
-                        // Stack empty - we're done
                         return Ok(results);
                     }
                 }
                 ExecutionOutcome::NeedsExternalCall(request) => {
-                    // Push the current instance onto the call stack (if it's a wasm instance)
                     if let Some(instance_id) = source_instance {
                         call_stack.push(instance_id);
                     }
-                    pending_call = Some((request.func_addr, request.args));
+                    action = PendingAction::Call(request.func_addr, request.args);
                 }
             }
         }
@@ -491,6 +674,52 @@ impl<'a> Store<'a> {
         }
 
         result
+    }
+
+    /// Register all exports from an instance as imports under a given module name.
+    ///
+    /// This implements the `.wast` `(register "name")` directive: every function,
+    /// global, memory, and table exported by the instance becomes available for
+    /// import under `as_name`.
+    pub fn register_exports(
+        &self,
+        instance_id: usize,
+        as_name: &str,
+        imports: &mut super::ImportObject,
+    ) -> Result<(), RuntimeError> {
+        let instance = self
+            .get_instance(instance_id)
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(0))?;
+        let module = instance.module();
+
+        for export in &module.exports.exports {
+            match export.index {
+                ExportIndex::Function(_) => {
+                    if let Ok(addr) = instance.get_function_addr(&export.name) {
+                        imports.add_function(as_name, &export.name, addr);
+                    }
+                }
+                ExportIndex::Global(global_idx) => {
+                    if let Ok(addr) = instance.get_global_addr(&export.name) {
+                        let mutable = is_global_mutable(module, global_idx).unwrap_or(false);
+                        let vtype =
+                            global_value_type(module, global_idx).unwrap_or(crate::parser::module::ValueType::I32);
+                        imports.add_global(as_name, &export.name, addr, vtype, mutable);
+                    }
+                }
+                ExportIndex::Memory(_) => {
+                    if let Ok(addr) = instance.get_memory_addr(&export.name) {
+                        imports.add_memory(as_name, &export.name, addr);
+                    }
+                }
+                ExportIndex::Table(_) => {
+                    if let Ok(addr) = instance.get_table_addr(&export.name) {
+                        imports.add_table(as_name, &export.name, addr);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -920,7 +1149,7 @@ mod tests {
             .create_instance(&module_a, Some(&imports_a))
             .expect("Module A creation should succeed");
 
-        // This is the critical test - A → B → C chain
+        // This is the critical test - A -> B -> C chain
         let result = store
             .invoke_export(instance_a, "call_chain", vec![], None)
             .expect("Three-module chain should succeed");
@@ -1029,7 +1258,7 @@ mod tests {
         let module_a = module_calling_import_and_add("module_b", "call_c", 1000, "call_chain");
         let instance_a = store.create_instance(&module_a, Some(&imports_a)).unwrap();
 
-        // A → B → C chain with computation at each level
+        // A -> B -> C chain with computation at each level
         // Expected: 10 + 100 + 1000 = 1110
         let result = store
             .invoke_export(instance_a, "call_chain", vec![], None)
@@ -1046,8 +1275,8 @@ mod tests {
     #[test]
     fn test_wasm_host_wasm_chain() {
         // A calls Host, Host was called from B
-        // This tests: B (wasm) → Host → resume B
-        // Then: A (wasm) → B (wasm) → Host → resume B → resume A
+        // This tests: B (wasm) -> Host -> resume B
+        // Then: A (wasm) -> B (wasm) -> Host -> resume B -> resume A
         let mut store = Store::new();
 
         // Host function
@@ -1080,7 +1309,7 @@ mod tests {
             .create_instance(&module_a, Some(&imports_a))
             .expect("Module A creation should succeed");
 
-        // A → B → Host chain
+        // A -> B -> Host chain
         let result = store
             .invoke_export(instance_a, "start_chain", vec![], None)
             .expect("Wasm-Host-Wasm chain should succeed");
@@ -1104,8 +1333,8 @@ mod tests {
         let shared_mem = store.get_memory(addr);
         assert!(shared_mem.is_some());
 
-        // Verify the memory properties through the mutex
-        let mem_guard = shared_mem.unwrap().lock().unwrap();
+        // Verify the memory properties through the RefCell
+        let mem_guard = shared_mem.unwrap().borrow();
         assert_eq!(mem_guard.size(), 1);
     }
 
@@ -1125,8 +1354,8 @@ mod tests {
         let shared_table = store.get_table(addr);
         assert!(shared_table.is_some());
 
-        // Verify the table properties through the mutex
-        let table_guard = shared_table.unwrap().lock().unwrap();
+        // Verify the table properties through the RefCell
+        let table_guard = shared_table.unwrap().borrow();
         assert_eq!(table_guard.size(), 10);
     }
 
@@ -1149,9 +1378,9 @@ mod tests {
         assert_eq!(addr3, MemoryAddr(2));
 
         // All are retrievable with correct properties
-        assert_eq!(store.get_memory(addr1).unwrap().lock().unwrap().size(), 1);
-        assert_eq!(store.get_memory(addr2).unwrap().lock().unwrap().size(), 2);
-        assert_eq!(store.get_memory(addr3).unwrap().lock().unwrap().size(), 3);
+        assert_eq!(store.get_memory(addr1).unwrap().borrow().size(), 1);
+        assert_eq!(store.get_memory(addr2).unwrap().borrow().size(), 2);
+        assert_eq!(store.get_memory(addr3).unwrap().borrow().size(), 3);
     }
 
     #[test]
@@ -1172,8 +1401,8 @@ mod tests {
         assert_eq!(addr2, TableAddr(1));
 
         // All are retrievable with correct properties
-        assert_eq!(store.get_table(addr1).unwrap().lock().unwrap().size(), 5);
-        assert_eq!(store.get_table(addr2).unwrap().lock().unwrap().size(), 8);
+        assert_eq!(store.get_table(addr1).unwrap().borrow().size(), 5);
+        assert_eq!(store.get_table(addr2).unwrap().borrow().size(), 8);
     }
 
     #[test]
@@ -1207,13 +1436,13 @@ mod tests {
 
         // Modify through one reference
         {
-            let mut mem = ref1.lock().unwrap();
+            let mut mem = ref1.borrow_mut();
             mem.write_u32(0, 0xDEADBEEF).unwrap();
         }
 
         // Read through the other reference - should see the modification
         {
-            let mem = ref2.lock().unwrap();
+            let mem = ref2.borrow();
             let value = mem.read_u32(0).unwrap();
             assert_eq!(value, 0xDEADBEEF);
         }
@@ -1235,13 +1464,13 @@ mod tests {
 
         // Modify through one reference
         {
-            let mut tbl = ref1.lock().unwrap();
+            let mut tbl = ref1.borrow_mut();
             tbl.set(0, Some(Value::FuncRef(Some(FuncAddr(42))))).unwrap();
         }
 
         // Read through the other reference - should see the modification
         {
-            let tbl = ref2.lock().unwrap();
+            let tbl = ref2.borrow();
             let value = tbl.get(0).unwrap();
             assert_eq!(value, Value::FuncRef(Some(FuncAddr(42))));
         }

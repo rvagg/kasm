@@ -1,5 +1,9 @@
-use super::module::{ElementMode, FunctionType, GlobalType, ValueType, ValueType::*};
-use crate::parser::instruction::{BlockType, Instruction, InstructionKind, SimdOp};
+use super::module::{
+    DataMode, ElementMode, ExportIndex, ExternalKind, FunctionType, GlobalType, Limits, Module, Positional, RefType,
+    ValueType, ValueType::*,
+};
+use super::structured::StructuredInstruction;
+use crate::parser::instruction::{BlockType, ByteRange, Instruction, InstructionKind, SimdOp};
 use MaybeValue::{Unknown, Val};
 use thiserror::Error;
 
@@ -82,6 +86,42 @@ pub enum ValidationError {
 
     #[error("invalid lane index")]
     InvalidLaneIndex,
+
+    #[error("duplicate export name")]
+    DuplicateExportName,
+
+    #[error("unknown function {0}")]
+    UnknownFunctionExport(u32),
+
+    #[error("unknown table {0}")]
+    UnknownTableExport(u32),
+
+    #[error("unknown memory {0}")]
+    UnknownMemoryExport(u32),
+
+    #[error("unknown global {0}")]
+    UnknownGlobalExport(u32),
+
+    #[error("unknown type")]
+    UnknownType,
+
+    #[error("multiple memories")]
+    MultipleMemories,
+
+    #[error("size minimum must not be greater than maximum")]
+    MinGreaterThanMax,
+
+    #[error("memory size must be at most 65536 pages (4GiB)")]
+    MemorySizeTooLarge,
+
+    #[error("table size must be at most 2^32-1")]
+    TableSizeTooLarge,
+
+    #[error("unknown function")]
+    UnknownStartFunction,
+
+    #[error("start function")]
+    StartFunctionType,
 }
 
 pub trait Validator {
@@ -125,7 +165,7 @@ impl ConstantExpressionValidator<'_> {
         self.imports
             .get_global_import(global_index)
             .map(|import| match &import.external_kind {
-                super::module::ExternalKind::Global(global_type) => {
+                ExternalKind::Global(global_type) => {
                     if global_type.mutable {
                         Err(ValidationError::ConstantExpressionRequired)
                     } else {
@@ -448,7 +488,7 @@ impl<'a> CodeValidator<'a> {
                 .imports
                 .get_global_import(global_index)
                 .and_then(|import| match &import.external_kind {
-                    super::module::ExternalKind::Global(global_type) => Some(global_type),
+                    ExternalKind::Global(global_type) => Some(global_type),
                     _ => None,
                 })
         } else {
@@ -1187,10 +1227,13 @@ impl Validator for CodeValidator<'_> {
                     return Err(ValidationError::UnknownMemoryWithIndex(0));
                 }
 
-                // memory.init always requires a DataCount section for bulk memory operations
-                let has_data_count_section =
-                    self.module.data_count.position.start != 0 || self.module.data_count.position.end != 0;
-                if !has_data_count_section {
+                // Bulk memory ops require knowledge of data segment count.
+                // Binary modules signal this via a DataCount section (non-zero position);
+                // WAT-parsed modules always have the count available (non-zero count).
+                let has_data_count = self.module.data_count.count > 0
+                    || self.module.data_count.position.start != 0
+                    || self.module.data_count.position.end != 0;
+                if !has_data_count {
                     return Err(ValidationError::DataCountSectionRequired);
                 }
 
@@ -1261,13 +1304,12 @@ impl Validator for CodeValidator<'_> {
             }
 
             DataDrop { data_idx } => {
-                let has_data_count_section =
-                    self.module.data_count.position.start != 0 || self.module.data_count.position.end != 0;
+                let has_data_count = self.module.data_count.count > 0
+                    || self.module.data_count.position.start != 0
+                    || self.module.data_count.position.end != 0;
                 let has_memory = !self.module.memory.is_empty() || self.module.imports.memory_count() > 0;
 
-                if !has_data_count_section {
-                    // If module has memory, bulk memory ops require DataCount section
-                    // If no memory, then it's just an unknown data segment
+                if !has_data_count {
                     if has_memory {
                         return Err(ValidationError::DataCountSectionRequired);
                     } else {
@@ -1721,4 +1763,281 @@ fn validate_lane_index(lane: u8, num_lanes: u8) -> Result<(), ValidationError> {
         return Err(ValidationError::InvalidLaneIndex);
     }
     Ok(())
+}
+
+// ============================================================================
+// Module-level validation
+// ============================================================================
+
+/// Validate an already-parsed Module (constant expressions and function bodies).
+///
+/// This runs the same type-level validation that the binary parser performs inline
+/// during decoding, enabling WAT-parsed modules to be validated without an
+/// encode→decode round-trip.
+pub(crate) fn validate_module(module: &Module) -> Result<(), ValidationError> {
+    let total_functions = (module.imports.function_count() + module.functions.len()) as u32;
+    let total_tables = (module.imports.table_count() + module.table.tables.len()) as u32;
+    let total_memories = (module.imports.memory_count() + module.memory.memory.len()) as u32;
+    let total_globals = (module.imports.global_count() + module.globals.globals.len()) as u32;
+    let total_types = module.types.types.len() as u32;
+
+    // Multiple memories are not allowed in WebAssembly 1.0
+    if total_memories > 1 {
+        return Err(ValidationError::MultipleMemories);
+    }
+
+    // Validate memory limits
+    for mem in &module.memory.memory {
+        validate_limits(&mem.limits, 65536, ValidationError::MemorySizeTooLarge)?;
+    }
+
+    // Validate table limits
+    for table in &module.table.tables {
+        validate_limits(&table.limits, u32::MAX, ValidationError::TableSizeTooLarge)?;
+    }
+
+    // Validate imported memory/table limits and function type references
+    for import in &module.imports.imports {
+        match &import.external_kind {
+            ExternalKind::Memory(limits) => {
+                validate_limits(limits, 65536, ValidationError::MemorySizeTooLarge)?;
+            }
+            ExternalKind::Table(table) => {
+                validate_limits(&table.limits, u32::MAX, ValidationError::TableSizeTooLarge)?;
+            }
+            ExternalKind::Function(type_idx) => {
+                if *type_idx >= total_types {
+                    return Err(ValidationError::UnknownType);
+                }
+            }
+            ExternalKind::Global(_) => {}
+        }
+    }
+
+    // Validate start function
+    if module.start.has_position() {
+        let start_idx = module.start.start;
+        if start_idx >= total_functions {
+            return Err(ValidationError::UnknownStartFunction);
+        }
+        // Start function must have type [] -> []
+        if let Some(ft) = module.get_function_type_by_idx(start_idx)
+            && (!ft.parameters.is_empty() || !ft.return_types.is_empty())
+        {
+            return Err(ValidationError::StartFunctionType);
+        }
+    }
+
+    // Validate exports: check for duplicate names and valid indices
+    {
+        let mut seen_names = std::collections::HashSet::new();
+        for export in &module.exports.exports {
+            if !seen_names.insert(&export.name) {
+                return Err(ValidationError::DuplicateExportName);
+            }
+            match export.index {
+                ExportIndex::Function(idx) => {
+                    if idx >= total_functions {
+                        return Err(ValidationError::UnknownFunctionExport(idx));
+                    }
+                }
+                ExportIndex::Table(idx) => {
+                    if idx >= total_tables {
+                        return Err(ValidationError::UnknownTableExport(idx));
+                    }
+                }
+                ExportIndex::Memory(idx) => {
+                    if idx >= total_memories {
+                        return Err(ValidationError::UnknownMemoryExport(idx));
+                    }
+                }
+                ExportIndex::Global(idx) => {
+                    if idx >= total_globals {
+                        return Err(ValidationError::UnknownGlobalExport(idx));
+                    }
+                }
+            }
+        }
+    }
+
+    // Validate function type indices
+    for func in &module.functions.functions {
+        if func.ftype_index >= total_types {
+            return Err(ValidationError::UnknownType);
+        }
+    }
+
+    // Validate element segment table references and ref_type compatibility
+    for elem in &module.elements.elements {
+        if let ElementMode::Active { table_index, .. } = &elem.mode {
+            if *table_index >= total_tables {
+                return Err(ValidationError::UnknownTableWithIndex(*table_index));
+            }
+            // Element ref_type must match target table's ref_type
+            let table_ref_type = get_table_ref_type(module, *table_index);
+            if let Some(trt) = table_ref_type
+                && trt != elem.ref_type
+            {
+                return Err(ValidationError::TypeMismatch);
+            }
+        }
+    }
+
+    // Validate data segment memory references
+    for data in &module.data.data {
+        if let DataMode::Active { memory_index, .. } = &data.mode
+            && *memory_index >= total_memories
+        {
+            return Err(ValidationError::UnknownMemoryWithIndex(*memory_index));
+        }
+    }
+
+    // Validate global initialiser expressions
+    for global in &module.globals.globals {
+        let mut v = ConstantExpressionValidator::new(&module.imports, global.global_type.value_type)
+            .with_function_count(total_functions);
+        validate_const_expr(&global.init, &mut v)?;
+    }
+
+    // Validate element segments
+    for elem in &module.elements.elements {
+        // Active element offset must evaluate to i32
+        if let ElementMode::Active { offset, .. } = &elem.mode {
+            let mut v = ConstantExpressionValidator::new(&module.imports, I32);
+            validate_const_expr(offset, &mut v)?;
+        }
+
+        // Each init expression must produce the element's ref type
+        let init_type = match elem.ref_type {
+            RefType::FuncRef => FuncRef,
+            RefType::ExternRef => ExternRef,
+        };
+        for init in &elem.init {
+            let mut v =
+                ConstantExpressionValidator::new(&module.imports, init_type).with_function_count(total_functions);
+            validate_const_expr(init, &mut v)?;
+        }
+    }
+
+    // Validate data segment offsets
+    for data in &module.data.data {
+        if let DataMode::Active { offset, .. } = &data.mode {
+            let mut v = ConstantExpressionValidator::new(&module.imports, I32);
+            validate_const_expr(offset, &mut v)?;
+        }
+    }
+
+    // Validate function bodies
+    let ctx = module.validation_context();
+    let import_func_count = module.imports.function_count() as u32;
+
+    for (i, body) in module.code.code.iter().enumerate() {
+        let func_index = import_func_count + i as u32;
+        let ftype = module
+            .get_function_type(i)
+            .ok_or(ValidationError::UnknownFunctionType)?;
+
+        let mut v = CodeValidator::new(module, &ctx, &body.locals, ftype, func_index);
+        validate_structured(&body.body.body, &mut v)?;
+        v.validate(&validation_instr(InstructionKind::End))?;
+        v.finalise()?;
+    }
+
+    Ok(())
+}
+
+// Walk a structured instruction tree, feeding each instruction to the validator
+// in the flat order it expects (Block → body → End, etc.).
+fn validate_structured(body: &[StructuredInstruction], validator: &mut impl Validator) -> Result<(), ValidationError> {
+    for si in body {
+        match si {
+            StructuredInstruction::Plain(instr) => {
+                validator.validate(instr)?;
+            }
+            StructuredInstruction::Block { block_type, body, .. } => {
+                validator.validate(&validation_instr(InstructionKind::Block {
+                    block_type: *block_type,
+                }))?;
+                validate_structured(body, validator)?;
+                validator.validate(&validation_instr(InstructionKind::End))?;
+            }
+            StructuredInstruction::Loop { block_type, body, .. } => {
+                validator.validate(&validation_instr(InstructionKind::Loop {
+                    block_type: *block_type,
+                }))?;
+                validate_structured(body, validator)?;
+                validator.validate(&validation_instr(InstructionKind::End))?;
+            }
+            StructuredInstruction::If {
+                block_type,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                validator.validate(&validation_instr(InstructionKind::If {
+                    block_type: *block_type,
+                }))?;
+                validate_structured(then_branch, validator)?;
+                if let Some(else_body) = else_branch {
+                    validator.validate(&validation_instr(InstructionKind::Else))?;
+                    validate_structured(else_body, validator)?;
+                }
+                validator.validate(&validation_instr(InstructionKind::End))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+// Look up a table's ref_type by index (imports first, then local tables).
+fn get_table_ref_type(module: &Module, table_index: u32) -> Option<RefType> {
+    let import_table_count = module.imports.table_count() as u32;
+    if table_index < import_table_count {
+        let mut table_idx = 0u32;
+        for import in &module.imports.imports {
+            if let ExternalKind::Table(tt) = &import.external_kind {
+                if table_idx == table_index {
+                    return Some(tt.ref_type);
+                }
+                table_idx += 1;
+            }
+        }
+        None
+    } else {
+        let local_idx = (table_index - import_table_count) as usize;
+        module.table.tables.get(local_idx).map(|t| t.ref_type)
+    }
+}
+
+// Validate limits: min <= max (if present), and both <= absolute_max.
+fn validate_limits(limits: &Limits, absolute_max: u32, too_large: ValidationError) -> Result<(), ValidationError> {
+    if let Some(max) = limits.max {
+        if limits.min > max {
+            return Err(ValidationError::MinGreaterThanMax);
+        }
+        if max > absolute_max {
+            return Err(too_large);
+        }
+    }
+    if limits.min > absolute_max {
+        return Err(too_large);
+    }
+    Ok(())
+}
+
+// Feed a flat constant expression through the validator and finalise.
+fn validate_const_expr(instrs: &[Instruction], validator: &mut impl Validator) -> Result<(), ValidationError> {
+    for instr in instrs {
+        validator.validate(instr)?;
+    }
+    validator.finalise()
+}
+
+/// Synthesise a minimal Instruction for validation (only `kind` is inspected).
+fn validation_instr(kind: InstructionKind) -> Instruction {
+    Instruction {
+        kind,
+        position: ByteRange { offset: 0, length: 0 },
+        original_bytes: Vec::new(),
+    }
 }

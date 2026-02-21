@@ -740,7 +740,7 @@ mod tests {
                 labels: vec![0],
                 default: 0,
             })
-            .expect_error("Stack underflow");
+            .expect_error("stack underflow");
     }
 
     #[test]
@@ -752,7 +752,7 @@ mod tests {
                 labels: vec![5], // Label 5 doesn't exist (no blocks)
                 default: 0,
             })
-            .expect_error("Invalid label");
+            .expect_error("invalid label");
     }
 
     #[test]
@@ -764,7 +764,7 @@ mod tests {
                 labels: vec![0],
                 default: 5, // Invalid default label
             })
-            .expect_error("Invalid label");
+            .expect_error("invalid label");
     }
 
     #[test]
@@ -779,7 +779,7 @@ mod tests {
                 labels: vec![0, 5], // label 5 doesn't exist
                 default: 0,
             })
-            .expect_error("Invalid label");
+            .expect_error("invalid label");
     }
 
     #[test]
@@ -811,7 +811,7 @@ mod tests {
         ExecutorTest::new()
             .inst(InstructionKind::Unreachable)
             .inst(InstructionKind::I32Const { value: 42 }) // Should not be reached
-            .expect_error("Trap");
+            .expect_error("unreachable");
     }
 
     #[test]
@@ -821,7 +821,7 @@ mod tests {
             .inst(InstructionKind::I32Const { value: 42 })
             .inst(InstructionKind::Unreachable)
             .inst(InstructionKind::I32Const { value: 99 }) // Should not be reached
-            .expect_error("Trap");
+            .expect_error("unreachable");
     }
 
     #[test]
@@ -834,7 +834,7 @@ mod tests {
             .inst(InstructionKind::Unreachable)
             .inst(InstructionKind::End)
             .inst(InstructionKind::I32Const { value: 42 }) // Should not be reached
-            .expect_error("Trap");
+            .expect_error("unreachable");
     }
 
     #[test]
@@ -849,7 +849,7 @@ mod tests {
             .inst(InstructionKind::Else)
             .inst(InstructionKind::I32Const { value: 42 })
             .inst(InstructionKind::End)
-            .expect_error("Trap");
+            .expect_error("unreachable");
     }
 
     #[test]
@@ -864,6 +864,6 @@ mod tests {
             .inst(InstructionKind::Else)
             .inst(InstructionKind::Unreachable)
             .inst(InstructionKind::End)
-            .expect_error("Trap");
+            .expect_error("unreachable");
     }
 }

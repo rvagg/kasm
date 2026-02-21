@@ -18,7 +18,6 @@
 use super::cursor::{Cursor, Position};
 use super::error::LexError;
 use super::token::{FloatLit, SignedValue, Token, TokenKind};
-use fhex::FromHex;
 
 // ============================================================================
 // Lexer
@@ -97,11 +96,23 @@ impl<'a> Lexer<'a> {
                 self.cursor.advance();
                 Ok(TokenKind::RightParen)
             }
-            '"' => self.lex_string(),
-            '$' => self.lex_id(),
+            '"' => {
+                let result = self.lex_string()?;
+                self.check_token_boundary(start)?;
+                Ok(result)
+            }
+            '$' => {
+                let result = self.lex_id()?;
+                self.check_token_boundary(start)?;
+                Ok(result)
+            }
             '+' | '-' => self.lex_signed_number_or_keyword(),
-            c if c.is_ascii_digit() => self.lex_number(false),
-            c if is_idchar(c) => self.lex_keyword_or_special_float(),
+            c if c.is_ascii_digit() => self.lex_number(false, false),
+            c if is_idchar(c) => {
+                let result = self.lex_keyword_or_special_float()?;
+                self.check_token_boundary(start)?;
+                Ok(result)
+            }
             c => {
                 self.cursor.advance();
                 Err(self.error(format!("unexpected character: {:?}", c), start))
@@ -111,9 +122,7 @@ impl<'a> Lexer<'a> {
 
     /// Lex a keyword, but check if it's actually a special float (inf, nan).
     fn lex_keyword_or_special_float(&mut self) -> Result<TokenKind, LexError> {
-        let start = self.cursor.position();
-        self.cursor.skip_while(is_idchar);
-        let text = self.cursor.slice_from(&start);
+        let text = self.cursor.take_while(is_idchar);
 
         // Check for special float keywords
         if let Some(float) = parse_special_float(text, false) {
@@ -138,7 +147,7 @@ impl<'a> Lexer<'a> {
 
         if is_number {
             let negative = self.cursor.advance() == Some('-');
-            self.lex_number(negative)
+            self.lex_number(negative, true)
         } else {
             self.lex_keyword_or_special_float()
         }
@@ -162,7 +171,7 @@ impl<'a> Lexer<'a> {
             match (self.cursor.peek(), self.cursor.peek_second()) {
                 // Line comment: ;; to end of line
                 (Some(';'), Some(';')) => {
-                    self.cursor.skip_while(|c| c != '\n');
+                    self.cursor.skip_while(|c| c != '\n' && c != '\r');
                 }
                 // Block comment: (; ... ;) with nesting
                 (Some('('), Some(';')) => {
@@ -221,15 +230,12 @@ impl<'a> Lexer<'a> {
         // Consume the '$'
         self.cursor.advance();
 
-        let id_start = self.cursor.position();
-        self.cursor.skip_while(is_idchar);
-
-        if self.cursor.offset() == id_start.offset {
+        let name = self.cursor.take_while(is_idchar);
+        if name.is_empty() {
             return Err(self.error_span("expected identifier after '$'", start));
         }
 
-        let name = self.cursor.slice_from(&id_start).to_string();
-        Ok(TokenKind::Id(name))
+        Ok(TokenKind::Id(name.to_string()))
     }
 }
 
@@ -319,8 +325,7 @@ impl<'a> Lexer<'a> {
 
         // Collect hex digits
         let digits_start = self.cursor.position();
-        self.cursor.skip_while(|c| c.is_ascii_hexdigit());
-        let digits = self.cursor.slice_from(&digits_start);
+        let digits = self.cursor.take_while(|c| c.is_ascii_hexdigit());
 
         if digits.is_empty() {
             return Err(self.error("empty unicode escape", digits_start));
@@ -354,129 +359,180 @@ impl<'a> Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     /// Lex a number (integer or float). Sign has already been consumed if present.
-    fn lex_number(&mut self, negative: bool) -> Result<TokenKind, LexError> {
+    fn lex_number(&mut self, negative: bool, has_sign: bool) -> Result<TokenKind, LexError> {
+        let start = self.cursor.position();
+
         // Check for special float values: inf, nan
         if matches!(self.cursor.peek(), Some('i') | Some('n')) {
-            return self.lex_special_float(negative);
+            let result = self.lex_special_float(negative)?;
+            self.check_token_boundary(start)?;
+            return Ok(result);
         }
 
         // Check for hex prefix
         let is_hex = self.cursor.peek() == Some('0') && matches!(self.cursor.peek_second(), Some('x') | Some('X'));
 
-        if is_hex {
+        let result = if is_hex {
             self.cursor.advance(); // '0'
             self.cursor.advance(); // 'x'
-            self.lex_hex_number(negative)
+            self.lex_hex_number(negative, has_sign)?
         } else {
-            self.lex_decimal_number(negative)
+            self.lex_decimal_number(negative, has_sign)?
+        };
+
+        self.check_token_boundary(start)?;
+        Ok(result)
+    }
+
+    /// Verify the next character is a valid token boundary (whitespace, parens,
+    /// comment start, or EOF). WAT requires whitespace or parentheses between
+    /// all non-paren tokens. e.g. `1x`, `$l"a"`, and `"a""b"` are all invalid.
+    fn check_token_boundary(&self, start: Position) -> Result<(), LexError> {
+        match self.cursor.peek() {
+            None => Ok(()),
+            Some(c) if c.is_ascii_whitespace() => Ok(()),
+            Some('(' | ')' | ';') => Ok(()),
+            _ => Err(self.error("unknown operator", start)),
         }
     }
 
     /// Lex a hexadecimal number (after 0x prefix).
-    fn lex_hex_number(&mut self, negative: bool) -> Result<TokenKind, LexError> {
+    fn lex_hex_number(&mut self, negative: bool, has_sign: bool) -> Result<TokenKind, LexError> {
         let start = self.cursor.position();
-        self.cursor.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
+        let digits = self.cursor.take_while(|c| c.is_ascii_hexdigit() || c == '_');
 
         // Check for hex float (has '.' or 'p' exponent)
         if matches!(self.cursor.peek(), Some('.') | Some('p') | Some('P')) {
-            return self.lex_hex_float(negative, start);
+            return self.lex_float(negative, start, true);
         }
 
-        let digits = self.cursor.slice_from(&start);
         if digits.is_empty() || digits == "_" {
             return Err(self.error("expected hex digits after '0x'", start));
         }
 
-        let digits_clean: String = digits.chars().filter(|&c| c != '_').collect();
-        let value = u64::from_str_radix(&digits_clean, 16).map_err(|_| self.error("hex integer too large", start))?;
+        if !validate_num_underscores(digits, true) {
+            return Err(self.error("unknown operator", start));
+        }
 
-        Ok(TokenKind::Integer(SignedValue::new(value, negative)))
+        let digits_clean: String = digits.chars().filter(|&c| c != '_').collect();
+        match u64::from_str_radix(&digits_clean, 16) {
+            Ok(value) => Ok(TokenKind::Integer(if has_sign {
+                SignedValue::signed(value, negative)
+            } else {
+                SignedValue::unsigned(value)
+            })),
+            Err(_) => {
+                // Overflow: emit as hex float so fhex handles precision correctly.
+                // Large hex integers are only valid in float contexts (f32.const / f64.const).
+                Ok(TokenKind::Float(FloatLit::Hex {
+                    negative,
+                    hex_str: format!("0x{}", digits_clean),
+                }))
+            }
+        }
     }
 
     /// Lex a decimal number.
-    fn lex_decimal_number(&mut self, negative: bool) -> Result<TokenKind, LexError> {
+    fn lex_decimal_number(&mut self, negative: bool, has_sign: bool) -> Result<TokenKind, LexError> {
         let start = self.cursor.position();
-        self.cursor.skip_while(|c| c.is_ascii_digit() || c == '_');
+        let digits = self.cursor.take_while(|c| c.is_ascii_digit() || c == '_');
 
         // Check for float (has '.' or 'e' exponent)
         if matches!(self.cursor.peek(), Some('.') | Some('e') | Some('E')) {
-            return self.lex_decimal_float(negative, start);
+            return self.lex_float(negative, start, false);
         }
 
-        let digits = self.cursor.slice_from(&start);
         if digits.is_empty() || digits == "_" {
             return Err(self.error("expected decimal digits", start));
         }
 
+        if !validate_num_underscores(digits, false) {
+            return Err(self.error("unknown operator", start));
+        }
+
         let digits_clean: String = digits.chars().filter(|&c| c != '_').collect();
-        let value = digits_clean
-            .parse::<u64>()
-            .map_err(|_| self.error("decimal integer too large", start))?;
-
-        Ok(TokenKind::Integer(SignedValue::new(value, negative)))
+        match digits_clean.parse::<u64>() {
+            Ok(value) => Ok(TokenKind::Integer(if has_sign {
+                SignedValue::signed(value, negative)
+            } else {
+                SignedValue::unsigned(value)
+            })),
+            Err(_) => {
+                // Overflow: emit as decimal float so str::parse handles precision correctly.
+                // Large decimal integers are only valid in float contexts.
+                Ok(TokenKind::Float(FloatLit::Decimal {
+                    negative,
+                    decimal_str: digits_clean,
+                }))
+            }
+        }
     }
 
-    /// Lex a decimal float. `start` is position of first digit.
-    fn lex_decimal_float(&mut self, negative: bool, start: Position) -> Result<TokenKind, LexError> {
+    /// Lex a float literal (decimal or hex). `start` is position of first digit.
+    ///
+    /// For hex floats, stores the original hex string as `FloatLit::Hex` so that
+    /// f32 and f64 conversions can each round independently via `fhex::FromHex`.
+    fn lex_float(&mut self, negative: bool, start: Position, hex: bool) -> Result<TokenKind, LexError> {
         // Consume fractional part if present
         if self.cursor.peek() == Some('.') {
             self.cursor.advance();
-            self.cursor.skip_while(|c| c.is_ascii_digit() || c == '_');
+            if hex {
+                self.cursor.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
+            } else {
+                self.cursor.skip_while(|c| c.is_ascii_digit() || c == '_');
+            }
         }
 
-        // Consume exponent if present
-        if matches!(self.cursor.peek(), Some('e') | Some('E')) {
+        // Consume exponent if present (p/P for hex, e/E for decimal)
+        let has_exp = if hex {
+            matches!(self.cursor.peek(), Some('p' | 'P'))
+        } else {
+            matches!(self.cursor.peek(), Some('e' | 'E'))
+        };
+        if has_exp {
             self.cursor.advance();
-            if matches!(self.cursor.peek(), Some('+') | Some('-')) {
+            if matches!(self.cursor.peek(), Some('+' | '-')) {
                 self.cursor.advance();
             }
-            self.cursor.skip_while(|c| c.is_ascii_digit() || c == '_');
+            let exp_digits = self.cursor.take_while(|c| c.is_ascii_digit() || c == '_');
+            if !exp_digits.contains(|c: char| c.is_ascii_digit()) {
+                return Err(self.error("unknown operator", start));
+            }
         }
 
         let text = self.cursor.slice_from(&start);
-        let text_clean: String = text.chars().filter(|&c| c != '_').collect();
 
-        let value: f64 = text_clean
-            .parse()
-            .map_err(|_| self.error("invalid float literal", start))?;
-
-        let value = if negative { -value } else { value };
-        Ok(TokenKind::Float(FloatLit::Value(value)))
-    }
-
-    /// Lex a hex float. `start` is position after '0x'.
-    fn lex_hex_float(&mut self, negative: bool, start: Position) -> Result<TokenKind, LexError> {
-        // Consume fractional part if present
-        if self.cursor.peek() == Some('.') {
-            self.cursor.advance();
-            self.cursor.skip_while(|c| c.is_ascii_hexdigit() || c == '_');
+        if !validate_num_underscores(text, hex) {
+            return Err(self.error("unknown operator", start));
         }
 
-        // Consume exponent if present
-        if matches!(self.cursor.peek(), Some('p') | Some('P')) {
-            self.cursor.advance();
-            if matches!(self.cursor.peek(), Some('+') | Some('-')) {
-                self.cursor.advance();
+        let text_clean: String = text.chars().filter(|&c| c != '_').collect();
+
+        if hex {
+            if !text_clean.chars().any(|c| c.is_ascii_hexdigit()) {
+                return Err(self.error("invalid hex float", start));
             }
-            self.cursor.skip_while(|c| c.is_ascii_digit() || c == '_');
+            Ok(TokenKind::Float(FloatLit::Hex {
+                negative,
+                hex_str: format!("0x{text_clean}"),
+            }))
+        } else {
+            text_clean
+                .parse::<f64>()
+                .map_err(|_| self.error("invalid float literal", start))?;
+            Ok(TokenKind::Float(FloatLit::Decimal {
+                negative,
+                decimal_str: text_clean,
+            }))
         }
-
-        let text = self.cursor.slice_from(&start);
-        let text_clean: String = text.chars().filter(|&c| c != '_').collect();
-        let hex_str = format!("0x{text_clean}");
-
-        let value = f64::from_hex(&hex_str).ok_or_else(|| self.error("invalid hex float literal", start))?;
-
-        let value = if negative { -value } else { value };
-        Ok(TokenKind::Float(FloatLit::Value(value)))
     }
 
     /// Lex special float values (inf, nan) after sign has been consumed.
     fn lex_special_float(&mut self, negative: bool) -> Result<TokenKind, LexError> {
         let start = self.cursor.position();
-        self.cursor
-            .skip_while(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_');
-        let text = self.cursor.slice_from(&start);
+        let text = self
+            .cursor
+            .take_while(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_');
 
         parse_special_float(text, negative)
             .map(TokenKind::Float)
@@ -487,6 +543,40 @@ impl<'a> Lexer<'a> {
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+/// Validate underscore placement in a numeric literal.
+///
+/// Per the WebAssembly spec, underscores in numeric literals may only appear
+/// between two digits. Leading, trailing, or consecutive underscores are
+/// rejected, as are underscores adjacent to non-digit characters like `.`,
+/// `p`, `e`, `+`, or `-`.
+///
+/// For hex numbers, hex digits are valid around underscores in the
+/// integer/fractional parts; the exponent part (after p/P) uses decimal digits.
+fn validate_num_underscores(s: &str, is_hex: bool) -> bool {
+    // Split at structural characters and validate each digit group
+    let bytes = s.as_bytes();
+    let hex_digit = |b: u8| -> bool { b.is_ascii_hexdigit() };
+    let dec_digit = |b: u8| -> bool { b.is_ascii_digit() };
+
+    // Walk through the string tracking which digit class is expected
+    let mut in_exponent = false;
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'_' {
+            if i == 0 || i == bytes.len() - 1 {
+                return false;
+            }
+            let check_digit: fn(u8) -> bool = if is_hex && !in_exponent { hex_digit } else { dec_digit };
+            if !check_digit(bytes[i - 1]) || !check_digit(bytes[i + 1]) {
+                return false;
+            }
+        } else if b == b'p' || b == b'P' || (!is_hex && (b == b'e' || b == b'E')) {
+            in_exponent = true;
+        }
+    }
+    true
+}
 
 /// Check if a character is valid in a WAT identifier.
 ///
@@ -538,7 +628,11 @@ fn parse_special_float(text: &str, negative: bool) -> Option<FloatLit> {
             payload: None,
         })
     } else if let Some(payload_hex) = text.strip_prefix("nan:0x") {
-        let payload = u64::from_str_radix(payload_hex, 16).ok()?;
+        if payload_hex.is_empty() || !validate_num_underscores(payload_hex, true) {
+            return None;
+        }
+        let clean: String = payload_hex.chars().filter(|&c| c != '_').collect();
+        let payload = u64::from_str_radix(&clean, 16).ok()?;
         Some(FloatLit::Nan {
             negative,
             payload: Some(payload),
@@ -577,9 +671,14 @@ mod tests {
         );
     }
 
-    /// Helper to create an integer token kind.
-    fn int(value: u64, negative: bool) -> TokenKind {
-        TokenKind::Integer(SignedValue::new(value, negative))
+    /// Helper to create an unsigned integer token kind (bare literal).
+    fn int(value: u64) -> TokenKind {
+        TokenKind::Integer(SignedValue::unsigned(value))
+    }
+
+    /// Helper to create an explicitly signed integer token kind (+N or -N).
+    fn signed_int(value: u64, negative: bool) -> TokenKind {
+        TokenKind::Integer(SignedValue::signed(value, negative))
     }
 
     // =========================================================================
@@ -746,38 +845,38 @@ mod tests {
 
     #[test]
     fn decimal_integers() {
-        assert_eq!(kinds("0 42 123"), vec![int(0, false), int(42, false), int(123, false)]);
+        assert_eq!(kinds("0 42 123"), vec![int(0), int(42), int(123)]);
     }
 
     #[test]
     fn signed_integers() {
-        assert_eq!(kinds("-1 +42 -0"), vec![int(1, true), int(42, false), int(0, true)]);
-    }
-
-    #[test]
-    fn hex_integers() {
         assert_eq!(
-            kinds("0x0 0xDEAD 0xff"),
-            vec![int(0, false), int(0xDEAD, false), int(0xFF, false)]
+            kinds("-1 +42 -0"),
+            vec![signed_int(1, true), signed_int(42, false), signed_int(0, true)]
         );
     }
 
     #[test]
+    fn hex_integers() {
+        assert_eq!(kinds("0x0 0xDEAD 0xff"), vec![int(0), int(0xDEAD), int(0xFF)]);
+    }
+
+    #[test]
     fn signed_hex() {
-        assert_eq!(kinds("-0x10"), vec![int(0x10, true)]);
+        assert_eq!(kinds("-0x10"), vec![signed_int(0x10, true)]);
     }
 
     #[test]
     fn integer_with_underscores() {
-        assert_eq!(kinds("1_000_000"), vec![int(1_000_000, false)]);
-        assert_eq!(kinds("0xFF_FF"), vec![int(0xFFFF, false)]);
+        assert_eq!(kinds("1_000_000"), vec![int(1_000_000)]);
+        assert_eq!(kinds("0xFF_FF"), vec![int(0xFFFF)]);
     }
 
     #[test]
     fn max_u64() {
         // This would overflow with i64, but works with our representation
         let tokens = kinds("0xFFFFFFFFFFFFFFFF");
-        assert_eq!(tokens, vec![int(u64::MAX, false)]);
+        assert_eq!(tokens, vec![int(u64::MAX)]);
 
         // Verify it converts correctly
         if let TokenKind::Integer(sv) = &tokens[0] {
@@ -788,15 +887,15 @@ mod tests {
 
     #[test]
     fn mixed_case_hex() {
-        assert_eq!(kinds("0xAbCd"), vec![int(0xABCD, false)]);
-        assert_eq!(kinds("0xDeAdBeEf"), vec![int(0xDEADBEEF, false)]);
+        assert_eq!(kinds("0xAbCd"), vec![int(0xABCD)]);
+        assert_eq!(kinds("0xDeAdBeEf"), vec![int(0xDEADBEEF)]);
     }
 
     #[test]
     fn consecutive_underscores() {
-        // WAT allows consecutive underscores in numbers
-        assert_eq!(kinds("1__2"), vec![int(12, false)]);
-        assert_eq!(kinds("0x1__f"), vec![int(0x1F, false)]);
+        // Spec forbids consecutive underscores: underscore must be between two digits
+        expect_error("1__2", "unknown operator");
+        expect_error("0x1__f", "unknown operator");
     }
 
     #[test]
@@ -815,14 +914,38 @@ mod tests {
 
     #[test]
     fn simple_floats() {
-        assert_eq!(kinds("3.14"), vec![TokenKind::Float(FloatLit::Value(3.14))]);
-        assert_eq!(kinds("0.5"), vec![TokenKind::Float(FloatLit::Value(0.5))]);
+        assert_eq!(
+            kinds("3.14"),
+            vec![TokenKind::Float(FloatLit::Decimal {
+                negative: false,
+                decimal_str: "3.14".into()
+            })]
+        );
+        assert_eq!(
+            kinds("0.5"),
+            vec![TokenKind::Float(FloatLit::Decimal {
+                negative: false,
+                decimal_str: "0.5".into()
+            })]
+        );
     }
 
     #[test]
     fn float_with_exponent() {
-        assert_eq!(kinds("1e10"), vec![TokenKind::Float(FloatLit::Value(1e10))]);
-        assert_eq!(kinds("1.5e-3"), vec![TokenKind::Float(FloatLit::Value(1.5e-3))]);
+        assert_eq!(
+            kinds("1e10"),
+            vec![TokenKind::Float(FloatLit::Decimal {
+                negative: false,
+                decimal_str: "1e10".into()
+            })]
+        );
+        assert_eq!(
+            kinds("1.5e-3"),
+            vec![TokenKind::Float(FloatLit::Decimal {
+                negative: false,
+                decimal_str: "1.5e-3".into()
+            })]
+        );
     }
 
     #[test]
@@ -861,16 +984,61 @@ mod tests {
                 payload: Some(0xABCD)
             })]
         );
+        // Underscores in NaN payload
+        assert_eq!(
+            kinds("nan:0x7f_ffff"),
+            vec![TokenKind::Float(FloatLit::Nan {
+                negative: false,
+                payload: Some(0x7f_ffff)
+            })]
+        );
+        assert_eq!(
+            kinds("nan:0xf_ffff_ffff_ffff"),
+            vec![TokenKind::Float(FloatLit::Nan {
+                negative: false,
+                payload: Some(0xf_ffff_ffff_ffff)
+            })]
+        );
     }
 
     #[test]
     fn hex_float() {
         // 0x1.8p1 = 1.5 * 2 = 3.0
-        if let [TokenKind::Float(FloatLit::Value(v))] = kinds("0x1.8p1").as_slice() {
-            assert!((v - 3.0).abs() < 0.0001);
+        if let [TokenKind::Float(fl)] = kinds("0x1.8p1").as_slice() {
+            assert!((fl.to_f64() - 3.0).abs() < 0.0001);
+            assert!((fl.to_f32() - 3.0f32).abs() < 0.0001);
         } else {
             panic!("expected hex float");
         }
+    }
+
+    #[test]
+    fn hex_integer_with_underscores() {
+        // Valid underscore placement: between hex digits
+        assert_eq!(
+            kinds("0x0125_6789_ADEF_bcef"),
+            vec![TokenKind::Integer(SignedValue::unsigned(0x01256789ADEFbcef))]
+        );
+        // Valid: simple hex with underscore
+        assert_eq!(kinds("0x1_0"), vec![TokenKind::Integer(SignedValue::unsigned(0x10))]);
+    }
+
+    #[test]
+    fn underscore_validation() {
+        // Invalid: trailing underscore
+        assert!(Lexer::tokenise("0x100_").is_err());
+        // Invalid: leading underscore after 0x
+        assert!(Lexer::tokenise("0x_100").is_err());
+        // Invalid: underscore adjacent to dot
+        assert!(Lexer::tokenise("0x1_.0p1").is_err());
+        assert!(Lexer::tokenise("0x1._0p1").is_err());
+        // Invalid: underscore adjacent to p
+        assert!(Lexer::tokenise("0x1.0_p1").is_err());
+        assert!(Lexer::tokenise("0x1.0p_1").is_err());
+        // Invalid: decimal trailing underscore
+        assert!(Lexer::tokenise("100_").is_err());
+        // Invalid: decimal leading underscore
+        // Note: _100 is lexed as a keyword, not a number
     }
 
     // =========================================================================
@@ -989,7 +1157,7 @@ mod tests {
         let wat = r#"(data (i32.const 8) "Hello\n")"#;
         let tokens = kinds(wat);
         assert!(tokens.contains(&TokenKind::Keyword("data".into())));
-        assert!(tokens.contains(&int(8, false)));
+        assert!(tokens.contains(&int(8)));
         assert!(tokens.contains(&TokenKind::String(b"Hello\n".to_vec())));
     }
 
@@ -1163,7 +1331,11 @@ mod proptests {
             value in 0u64..=u64::MAX,
             negative in proptest::bool::ANY
         ) {
-            let sv = SignedValue::new(value, negative);
+            let sv = if negative {
+                SignedValue::signed(value, true)
+            } else {
+                SignedValue::unsigned(value)
+            };
             let displayed = format!("{}", TokenKind::Integer(sv));
 
             // Parse it back (simplified check)

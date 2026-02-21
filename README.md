@@ -11,8 +11,8 @@ An experimental & educational WebAssembly runtime implementation in Rust that pr
 - **Binary parser** with full section support and validation
 - **WAT parser** for the WebAssembly text format
 - **Binary encoder** producing spec-compliant `.wasm` from any parsed Module
-- **State machine interpreter** supporting WebAssembly 1.0 + SIMD (427+ instructions)
-- **Full SIMD (v128)** support: all 236 SIMD instructions across integer, float, bitwise, comparison, shuffle, conversion, and memory operations
+- **State machine interpreter** supporting WebAssembly 1.0 + SIMD
+- **Full SIMD (v128)** support: all v128 instructions across integer, float, bitwise, comparison, shuffle, conversion, and memory operations
 - **WASI preview1** support: fd_read/write, args, environ, proc_exit, filesystem preopens
 - **AssemblyScript** compatibility (env.abort with UTF-16 string extraction)
 - Disassembler compatible with WABT wasm-objdump format
@@ -20,7 +20,8 @@ An experimental & educational WebAssembly runtime implementation in Rust that pr
 - Linear memory with bounds checking and page-based growth
 - Tables with indirect function calls (call_indirect)
 - Cross-module linking via Store-based architecture
-- Passes 147/147 specification tests (90 core + 57 SIMD)
+- Native `.wast` spec test runner for core and SIMD specification conformance
+- Comprehensive test suite: unit, encoder round-trip, dump comparison, wast spec, WASI integration
 
 ## CLI
 

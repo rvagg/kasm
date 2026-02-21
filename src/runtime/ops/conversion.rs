@@ -241,16 +241,12 @@ pub fn i32_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
 
     // Check for NaN
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     // Check for infinity
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first, then check range
@@ -261,7 +257,7 @@ pub fn i32_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f32 = 2147483648.0; // 2^31 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I32(truncated as i32));
@@ -274,15 +270,11 @@ pub fn i32_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f32()?;
 
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first to handle subnormals that become -0.0
@@ -298,7 +290,7 @@ pub fn i32_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f32 = 4294967296.0; // 2^32 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I32(truncated as u32 as i32));
@@ -311,15 +303,11 @@ pub fn i32_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f64()?;
 
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first, then check range
@@ -330,7 +318,7 @@ pub fn i32_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f64 = 2147483648.0; // 2^31 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I32(truncated as i32));
@@ -343,15 +331,11 @@ pub fn i32_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f64()?;
 
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first to handle subnormals that become -0.0
@@ -367,7 +351,7 @@ pub fn i32_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f64 = 4294967296.0; // 2^32 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I32(truncated as u32 as i32));
@@ -380,15 +364,11 @@ pub fn i64_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f32()?;
 
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first, then check range
@@ -399,7 +379,7 @@ pub fn i64_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f32 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I64(truncated as i64));
@@ -412,15 +392,11 @@ pub fn i64_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f32()?;
 
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first to handle subnormals that become -0.0
@@ -436,7 +412,7 @@ pub fn i64_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f32 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I64(truncated as u64 as i64));
@@ -449,15 +425,11 @@ pub fn i64_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f64()?;
 
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first, then check range
@@ -468,7 +440,7 @@ pub fn i64_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f64 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I64(truncated as i64));
@@ -481,15 +453,11 @@ pub fn i64_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f64()?;
 
     if value.is_nan() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: NaN to integer".to_string(),
-        ));
+        return Err(RuntimeError::InvalidConversion("NaN".to_string()));
     }
 
     if value.is_infinite() {
-        return Err(RuntimeError::InvalidConversion(
-            "invalid conversion: infinity to integer".to_string(),
-        ));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     // Truncate first to handle subnormals that become -0.0
@@ -505,7 +473,7 @@ pub fn i64_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
     const MAX: f64 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
 
     if !(MIN..MAX).contains(&truncated) {
-        return Err(RuntimeError::InvalidConversion("integer overflow".to_string()));
+        return Err(RuntimeError::IntegerOverflow);
     }
 
     stack.push(Value::I64(truncated as u64 as i64));
@@ -993,25 +961,25 @@ mod tests {
         ExecutorTest::new()
             .inst(InstructionKind::F32Const { value: f32::NAN })
             .inst(InstructionKind::I32TruncF32S)
-            .expect_error("NaN to integer");
+            .expect_error("invalid conversion to integer: NaN");
 
         ExecutorTest::new()
             .inst(InstructionKind::F64Const { value: f64::NAN })
             .inst(InstructionKind::I64TruncF64S)
-            .expect_error("NaN to integer");
+            .expect_error("invalid conversion to integer: NaN");
 
         // Infinity handling - should trap
         ExecutorTest::new()
             .inst(InstructionKind::F32Const { value: f32::INFINITY })
             .inst(InstructionKind::I32TruncF32S)
-            .expect_error("infinity to integer");
+            .expect_error("integer overflow");
 
         ExecutorTest::new()
             .inst(InstructionKind::F64Const {
                 value: f64::NEG_INFINITY,
             })
             .inst(InstructionKind::I64TruncF64S)
-            .expect_error("infinity to integer");
+            .expect_error("integer overflow");
     }
 
     // ============================================================================

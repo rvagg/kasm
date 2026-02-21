@@ -3385,11 +3385,7 @@ mod utf8_tests {
                 }
                 Err(e) => {
                     let error_string = e.to_string();
-                    // Accept different UTF-8 error messages
-                    if error_string.contains(test_case.expected_error)
-                        || (test_case.expected_error.contains("malformed UTF-8")
-                            && error_string.contains("invalid utf-8"))
-                    {
+                    if error_string.contains(test_case.expected_error) {
                         passed += 1;
                     } else {
                         eprintln!(

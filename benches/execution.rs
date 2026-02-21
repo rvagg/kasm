@@ -3,10 +3,11 @@
 //! These benchmarks measure instruction dispatch, memory operations,
 //! and overall execution throughput.
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use kasm::parser::module::Module;
 use kasm::runtime::store::Store;
 use kasm::runtime::value::Value;
+use std::hint::black_box;
 
 /// Load and parse a WAT module from benches/modules/
 fn load_module(name: &str) -> Module {
@@ -16,7 +17,7 @@ fn load_module(name: &str) -> Module {
 }
 
 /// Create a store and instantiate a module
-fn instantiate(module: &parser::module::Module) -> (Store<'_>, usize) {
+fn instantiate(module: &Module) -> (Store<'_>, usize) {
     let mut store = Store::new();
     let instance_id = store.create_instance(module, None).expect("Failed to instantiate");
     (store, instance_id)
