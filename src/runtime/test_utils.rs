@@ -10,6 +10,7 @@ pub mod test {
     use crate::parser::structure_builder::StructureBuilder;
     use crate::runtime::Value;
     use crate::runtime::executor::Executor;
+    use std::sync::Arc;
 
     /// Test builder for creating executor tests fluently
     pub struct ExecutorTest {
@@ -104,7 +105,8 @@ pub mod test {
         pub fn expect_stack(mut self, expected: Vec<Value>) {
             let (module, structured_func) = self.build_executor();
 
-            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
+            let (mut executor, mut resources) =
+                Executor::new(Arc::new(module)).expect("Executor creation should succeed");
 
             if !self.globals.is_empty() {
                 for (i, (_value_type, initial_value, _mutable)) in self.globals.iter().enumerate() {
@@ -129,7 +131,8 @@ pub mod test {
         pub fn expect_error(mut self, error_contains: &str) {
             let (module, structured_func) = self.build_executor();
 
-            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
+            let (mut executor, mut resources) =
+                Executor::new(Arc::new(module)).expect("Executor creation should succeed");
 
             if !self.globals.is_empty() {
                 for (i, (_value_type, initial_value, _mutable)) in self.globals.iter().enumerate() {

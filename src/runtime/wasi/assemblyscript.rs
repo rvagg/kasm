@@ -33,7 +33,7 @@ use std::sync::Arc;
 ///
 /// This registers the `env.abort` function required by AssemblyScript's runtime.
 /// Call this after `create_wasi_imports` if your module is compiled from AssemblyScript.
-pub fn add_assemblyscript_imports(store: &mut Store<'_>, imports: &mut ImportObject, ctx: Arc<WasiContext>) {
+pub fn add_assemblyscript_imports<T>(store: &mut Store<T>, imports: &mut ImportObject, ctx: Arc<WasiContext>) {
     // env.abort: AssemblyScript abort function
     // Called when an assertion fails or abort() is called explicitly.
     // Signature: (message: i32, fileName: i32, line: i32, column: i32) -> void
@@ -93,7 +93,7 @@ fn read_as_string(memory: &Memory, ptr: u32) -> Option<String> {
 /// Called when an assertion fails or when `abort()` is called explicitly in
 /// AssemblyScript code. The message and filename pointers reference UTF-16
 /// encoded strings in linear memory (AssemblyScript's native string format).
-fn env_abort(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn env_abort<T>(ctx: &WasiContext, caller: &mut Caller<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let message_ptr = extract_i32(&args, 0).unwrap_or(0) as u32;
     let filename_ptr = extract_i32(&args, 1).unwrap_or(0) as u32;
     let line = extract_i32(&args, 2).unwrap_or(0);
@@ -158,7 +158,8 @@ mod tests {
             Value::I32(42), // line
             Value::I32(10), // column
         ];
-        let mut caller = Caller::for_test(Some(&mut memory));
+        let mut data = ();
+        let mut caller = Caller::for_test(Some(&mut memory), &mut data);
         let result = env_abort(&ctx, &mut caller, args);
 
         assert!(result.is_err());
@@ -213,7 +214,8 @@ mod tests {
             Value::I32(42),  // line
             Value::I32(10),  // column
         ];
-        let mut caller = Caller::for_test(Some(&mut memory));
+        let mut data = ();
+        let mut caller = Caller::for_test(Some(&mut memory), &mut data);
         let result = env_abort(&ctx, &mut caller, args);
 
         assert!(result.is_err());

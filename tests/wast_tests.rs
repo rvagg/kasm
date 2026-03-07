@@ -6,6 +6,7 @@ mod tests {
     use rstest::rstest;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     /*
      * Native .wast spec test runner.
@@ -14,23 +15,19 @@ mod tests {
      * Executes all assertion types against our runtime.
      */
 
-    struct WastRunner<'a> {
-        store: Store<'a>,
+    struct WastRunner {
+        store: Store,
         spectest_imports: ImportObject,
         /// Maps $name identifiers to instance IDs
         named_instances: HashMap<String, usize>,
         /// Maps registered "as" names to instance IDs
         registered_instances: HashMap<String, usize>,
         last_instance: Option<usize>,
-        /// Owned modules (Store borrows these). Boxed so Vec reallocation doesn't move them.
-        modules: Vec<Box<module::Module>>,
-        /// Maps instance ID → index in self.modules
-        instance_module: HashMap<usize, usize>,
         /// Module registry for binary parser (spectest etc.)
         module_registry: HashMap<String, module::Module>,
     }
 
-    impl<'a> WastRunner<'a> {
+    impl WastRunner {
         fn new() -> Self {
             let mut module_registry = HashMap::new();
             module_registry.insert("spectest".to_string(), create_spectest_module());
@@ -44,8 +41,6 @@ mod tests {
                 named_instances: HashMap::new(),
                 registered_instances: HashMap::new(),
                 last_instance: None,
-                modules: Vec::new(),
-                instance_module: HashMap::new(),
                 module_registry,
             }
         }
@@ -68,21 +63,11 @@ mod tests {
         fn instantiate_module(&mut self, wast_module: &WastModule, name: Option<&str>) -> Result<usize, String> {
             let module = self.parse_module(wast_module)?;
 
-            // Store the module in a Box so its address is stable across Vec resizes.
-            self.modules.push(Box::new(module));
-            let module_ref = self.modules.last().unwrap();
-
-            // SAFETY: Modules are boxed and the Vec is append-only, so the heap
-            // allocation for each module remains at a fixed address.
-            let module_ref: &'a module::Module = unsafe { &*(&**module_ref as *const module::Module) };
-
-            let module_idx = self.modules.len() - 1;
             let instance_id = self
                 .store
-                .create_instance(module_ref, Some(&self.spectest_imports))
+                .create_instance(Arc::new(module), Some(&self.spectest_imports))
                 .map_err(|e| format!("{e}"))?;
 
-            self.instance_module.insert(instance_id, module_idx);
             if let Some(n) = name {
                 self.named_instances.insert(n.to_string(), instance_id);
             }

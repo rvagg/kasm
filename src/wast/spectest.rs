@@ -55,7 +55,7 @@ pub fn create_spectest_module() -> Module {
 ///
 /// Allocates globals (`i32`/`i64`/`f32`/`f64` = 666), no-op print functions,
 /// a memory (1 page min, 2 max), and a funcref table (10 min, 20 max).
-pub fn create_spectest_imports(store: &mut Store) -> ImportObject {
+pub fn create_spectest_imports<T>(store: &mut Store<T>) -> ImportObject {
     let mut imports = ImportObject::new();
 
     let g_i32 = store.allocate_global(Value::I32(666));

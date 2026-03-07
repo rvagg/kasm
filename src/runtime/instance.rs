@@ -6,10 +6,11 @@ use super::{
 };
 use crate::parser::module::{ExportIndex, Module, Positional};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A WebAssembly module instance
-pub struct Instance<'a> {
-    module: &'a Module,
+pub struct Instance {
+    module: Arc<Module>,
     exports: HashMap<String, u32>, // Maps export name to function index
     /// Maps local function index to global FuncAddr
     function_addresses: Vec<FuncAddr>,
@@ -19,17 +20,17 @@ pub struct Instance<'a> {
     table_addresses: Vec<TableAddr>,
     /// Maps local global index to global GlobalAddr
     global_addresses: Vec<GlobalAddr>,
-    executor: Executor<'a>,
+    executor: Executor,
 }
 
-impl<'a> Instance<'a> {
+impl Instance {
     /// Create a new unlinked instance with resource address maps
     ///
     /// Resources (memories, tables, globals) live in the Store. The instance
     /// holds address maps that translate module-local indices to global addresses.
     /// Function addresses are linked separately via link_functions().
     pub(super) fn new_unlinked(
-        module: &'a Module,
+        module: Arc<Module>,
         memory_addresses: Vec<MemoryAddr>,
         table_addresses: Vec<TableAddr>,
         global_addresses: Vec<GlobalAddr>,
@@ -43,7 +44,7 @@ impl<'a> Instance<'a> {
         }
 
         let executor = Executor::new_unlinked(
-            module,
+            Arc::clone(&module),
             memory_addresses.clone(),
             table_addresses.clone(),
             global_addresses.clone(),
@@ -299,7 +300,7 @@ impl<'a> Instance<'a> {
 
     /// Get the module reference
     pub fn module(&self) -> &Module {
-        self.module
+        &self.module
     }
 
     /// Get an exported global value by name

@@ -29,17 +29,83 @@ use crate::parser::instruction::{BlockType, Instruction, InstructionKind, SimdOp
 use crate::parser::module::{DataMode, ElementMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// Maximum call stack depth to prevent stack overflow
 const MAX_CALL_DEPTH: usize = 1000;
 
+/// A non-owning handle to an instruction slice, backed by Arc<Module>.
+///
+/// Bypasses Rust's borrow checker for instruction slice references that would
+/// otherwise create self-referential structs (Executor owns Arc<Module> but
+/// also stores slices into the module's instruction data via saved_contexts).
+///
+/// Safety invariant: the underlying data must remain valid for the lifetime of
+/// this handle. This is guaranteed when the instructions come from an
+/// Arc<Module> held by the Executor.
+#[derive(Clone, Copy)]
+struct InstructionSlice {
+    ptr: *const StructuredInstruction,
+    len: usize,
+}
+
+// SAFETY: InstructionSlice is effectively a &[StructuredInstruction] reference
+// to immutable data owned by an Arc<Module>. The data is never mutated through
+// this handle, and the Arc guarantees the data outlives the Executor.
+unsafe impl Send for InstructionSlice {}
+unsafe impl Sync for InstructionSlice {}
+
+impl std::fmt::Debug for InstructionSlice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InstructionSlice").field("len", &self.len).finish()
+    }
+}
+
+impl InstructionSlice {
+    /// Create a handle from an instruction slice.
+    fn new(slice: &[StructuredInstruction]) -> Self {
+        InstructionSlice {
+            ptr: slice.as_ptr(),
+            len: slice.len(),
+        }
+    }
+
+    /// An empty instruction slice.
+    fn empty() -> Self {
+        InstructionSlice {
+            ptr: std::ptr::NonNull::dangling().as_ptr(),
+            len: 0,
+        }
+    }
+
+    /// Dereference to a slice.
+    ///
+    /// SAFETY: The caller must ensure the underlying instruction data is still
+    /// valid. This is guaranteed when used within an Executor holding an
+    /// Arc<Module> that owns the instruction data.
+    #[inline]
+    unsafe fn as_slice(&self) -> &[StructuredInstruction] {
+        if self.len == 0 {
+            &[]
+        } else {
+            // SAFETY: Caller guarantees the pointer is valid (Arc<Module> invariant)
+            unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
 /// Execution state for the state machine executor
 #[derive(Debug)]
-enum ExecutionState<'a> {
+enum ExecutionState {
     /// Continue to next instruction
     Continue,
     /// Enter a nested instruction sequence (block/loop/if body)
-    EnterNested(&'a [StructuredInstruction]),
+    EnterNested(InstructionSlice),
     /// Call a local function (by local func_idx)
     CallFunction(u32),
     /// Call an external function (cross-module, by FuncAddr)
@@ -55,9 +121,9 @@ enum ExecutionState<'a> {
 
 /// Execution context representing a sequence of instructions being executed
 #[derive(Debug, Clone, Copy)]
-struct ExecutionContext<'a> {
-    /// Borrowed instruction slice (from module, never cloned)
-    instructions: &'a [StructuredInstruction],
+struct ExecutionContext {
+    /// Instruction handle (backed by Arc<Module>, see InstructionSlice)
+    instructions: InstructionSlice,
     /// Current position in instruction sequence
     position: usize,
     /// What to do when this context completes
@@ -87,8 +153,8 @@ enum CallHandled {
 /// translate module-local indices to global resource addresses in the Store.
 /// Resources (memories, tables, globals) are owned by the Store and passed
 /// to execution methods via `&mut Resources`.
-pub struct Executor<'a> {
-    module: &'a Module,
+pub struct Executor {
+    module: Arc<Module>,
     stack: Stack,
     /// Call stack for managing function calls (always has at least one frame during execution)
     call_stack: Vec<CallFrame>,
@@ -105,7 +171,7 @@ pub struct Executor<'a> {
     /// Maps module-local global index to global GlobalAddr in the Store
     global_addresses: Vec<GlobalAddr>,
     /// Saved execution contexts when paused for external call
-    saved_contexts: Option<Vec<ExecutionContext<'a>>>,
+    saved_contexts: Option<Vec<ExecutionContext>>,
     /// Expected return types when resuming from external call
     saved_return_types: Vec<ValueType>,
     /// Optional instruction budget - execution stops when exhausted
@@ -114,14 +180,14 @@ pub struct Executor<'a> {
     dropped_data: HashSet<u32>,
 }
 
-impl<'a> Executor<'a> {
+impl Executor {
     /// Create an unlinked executor with address maps for resources in the Store
     ///
     /// Resources (memories, tables, globals) are owned by the Store and accessed
     /// via address maps during execution. Function addresses are linked later
     /// via `link_function_addresses()`.
     pub(super) fn new_unlinked(
-        module: &'a Module,
+        module: Arc<Module>,
         memory_addresses: Vec<MemoryAddr>,
         table_addresses: Vec<TableAddr>,
         global_addresses: Vec<GlobalAddr>,
@@ -150,7 +216,7 @@ impl<'a> Executor<'a> {
     /// Allocates memories, tables, and globals from the module definition into a
     /// fresh Resources struct. Returns both the executor and its resources.
     #[cfg(test)]
-    pub fn new(module: &'a Module) -> Result<(Self, Resources), RuntimeError> {
+    pub fn new(module: Arc<Module>) -> Result<(Self, Resources), RuntimeError> {
         use super::memory::Memory;
         use super::table::Table;
 
@@ -616,7 +682,7 @@ impl<'a> Executor<'a> {
     /// Execute a function
     pub fn execute_function(
         &mut self,
-        func: &'a StructuredFunction,
+        func: &StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
         resources: &mut Resources,
@@ -630,7 +696,7 @@ impl<'a> Executor<'a> {
     /// `ExecutionOutcome::NeedsExternalCall` if a cross-module call is needed.
     pub fn execute_function_with_locals(
         &mut self,
-        func: &'a StructuredFunction,
+        func: &StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
         locals_info: Option<&Locals>,
@@ -665,9 +731,9 @@ impl<'a> Executor<'a> {
         let func_label = self.create_function_label(return_types);
         self.current_label_stack_mut()?.push(func_label);
 
-        // Create initial execution context (borrow from module, zero-copy)
+        // Create initial execution context
         let contexts = vec![ExecutionContext {
-            instructions: &func.body,
+            instructions: InstructionSlice::new(&func.body),
             position: 0,
             on_complete: ContextCompletion::ReturnFunction,
         }];
@@ -705,23 +771,23 @@ impl<'a> Executor<'a> {
     /// Main execution loop shared by execute_function_with_locals and resume_with_results
     fn run_execution_loop(
         &mut self,
-        mut contexts: Vec<ExecutionContext<'a>>,
+        mut contexts: Vec<ExecutionContext>,
         return_types: Vec<ValueType>,
         resources: &mut Resources,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         'execution: loop {
-            // Get current context
-            let context = match contexts.last_mut() {
-                Some(ctx) => ctx,
+            // Extract context fields as copies (InstructionSlice is Copy).
+            // This avoids borrowing contexts, allowing mutation in match arms.
+            let (instr_slice, pos, on_complete) = match contexts.last() {
+                Some(ctx) => (ctx.instructions, ctx.position, ctx.on_complete),
                 None => break 'execution,
             };
 
             // Check if we've reached end of current context
-            if context.position >= context.instructions.len() {
-                let completion = context.on_complete;
+            if pos >= instr_slice.len() {
                 contexts.pop();
 
-                match completion {
+                match on_complete {
                     ContextCompletion::PopLabel => {
                         self.current_label_stack_mut()?.pop();
                     }
@@ -745,27 +811,28 @@ impl<'a> Executor<'a> {
                 *remaining -= 1;
             }
 
-            // Execute current instruction
-            let instruction = &context.instructions[context.position];
+            // SAFETY: Instructions are owned by Arc<Module> held by this Executor
+            let instructions = unsafe { instr_slice.as_slice() };
+            let instruction = &instructions[pos];
 
             let state = self.execute_instruction_state_machine(instruction, resources)?;
 
             match state {
                 ExecutionState::Continue => {
-                    context.position += 1;
+                    contexts.last_mut().unwrap().position += 1;
                 }
 
-                ExecutionState::EnterNested(instructions) => {
-                    context.position += 1;
+                ExecutionState::EnterNested(nested_instructions) => {
+                    contexts.last_mut().unwrap().position += 1;
                     contexts.push(ExecutionContext {
-                        instructions,
+                        instructions: nested_instructions,
                         position: 0,
                         on_complete: ContextCompletion::PopLabel,
                     });
                 }
 
                 ExecutionState::CallFunction(func_idx) => {
-                    context.position += 1;
+                    contexts.last_mut().unwrap().position += 1;
                     match self.handle_call_function(func_idx, &mut contexts)? {
                         CallHandled::LocalCall => {}
                         CallHandled::NeedsExternal(request) => {
@@ -777,7 +844,7 @@ impl<'a> Executor<'a> {
                 }
 
                 ExecutionState::CallExternalFunction { func_addr, func_type } => {
-                    context.position += 1;
+                    contexts.last_mut().unwrap().position += 1;
                     let args = self.pop_args_for_call(&func_type)?;
                     self.saved_contexts = Some(contexts);
                     self.saved_return_types = return_types;
@@ -821,7 +888,7 @@ impl<'a> Executor<'a> {
     fn handle_call_function(
         &mut self,
         func_idx: u32,
-        contexts: &mut Vec<ExecutionContext<'a>>,
+        contexts: &mut Vec<ExecutionContext>,
     ) -> Result<CallHandled, RuntimeError> {
         // Check if this is an imported function (needs external call)
         if (func_idx as usize) < self.num_imported_functions {
@@ -875,19 +942,22 @@ impl<'a> Executor<'a> {
         let args = self.pop_args_for_call(&func_type)?;
         self.push_call_frame(func_idx, args, func_type.return_types.len())?;
 
-        // Borrow function body directly from module (zero-copy)
-        let function_body = self
-            .module
-            .code
-            .code
-            .get(local_func_idx)
-            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+        // Extract instruction slice before mutably borrowing self for label stack
+        let body_instructions = {
+            let function_body = self
+                .module
+                .code
+                .code
+                .get(local_func_idx)
+                .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
+            InstructionSlice::new(&function_body.body.body)
+        };
 
         let func_label = self.create_function_label(&func_type.return_types);
         self.current_label_stack_mut()?.push(func_label);
 
         contexts.push(ExecutionContext {
-            instructions: &function_body.body.body,
+            instructions: body_instructions,
             position: 0,
             on_complete: ContextCompletion::ReturnFunction,
         });
@@ -907,7 +977,7 @@ impl<'a> Executor<'a> {
     }
 
     /// Handle return from function, returns true if execution should end
-    fn handle_return_from_function(&mut self, contexts: &mut Vec<ExecutionContext<'a>>) -> Result<bool, RuntimeError> {
+    fn handle_return_from_function(&mut self, contexts: &mut Vec<ExecutionContext>) -> Result<bool, RuntimeError> {
         let mut found_function_boundary = false;
 
         while !contexts.is_empty() {
@@ -939,9 +1009,9 @@ impl<'a> Executor<'a> {
     /// Execute a single instruction and return execution state (for state machine)
     fn execute_instruction_state_machine(
         &mut self,
-        instruction: &'a StructuredInstruction,
+        instruction: &StructuredInstruction,
         resources: &mut Resources,
-    ) -> Result<ExecutionState<'a>, RuntimeError> {
+    ) -> Result<ExecutionState, RuntimeError> {
         match instruction {
             StructuredInstruction::Plain(inst) => {
                 // Special handling for Call instruction
@@ -1029,16 +1099,14 @@ impl<'a> Executor<'a> {
                 // Setup block label and parameters
                 self.setup_block_structure(LabelType::Block, *block_type)?;
 
-                // Return state to enter block body (borrow, no clone)
-                Ok(ExecutionState::EnterNested(body))
+                Ok(ExecutionState::EnterNested(InstructionSlice::new(body)))
             }
 
             StructuredInstruction::Loop { block_type, body, .. } => {
                 // Setup loop label
                 self.setup_block_structure(LabelType::Loop, *block_type)?;
 
-                // Return state to enter loop body (borrow, no clone)
-                Ok(ExecutionState::EnterNested(body))
+                Ok(ExecutionState::EnterNested(InstructionSlice::new(body)))
             }
 
             StructuredInstruction::If {
@@ -1057,13 +1125,12 @@ impl<'a> Executor<'a> {
                 // Setup if label
                 self.setup_block_structure(LabelType::Block, *block_type)?;
 
-                // Choose branch (borrow, no clone)
-                let body: &'a [StructuredInstruction] = if condition != 0 {
-                    then_branch
+                let body = if condition != 0 {
+                    InstructionSlice::new(then_branch)
                 } else {
                     match else_branch {
-                        Some(v) => v,
-                        None => &[],
+                        Some(v) => InstructionSlice::new(v),
+                        None => InstructionSlice::empty(),
                     }
                 };
 
@@ -1073,7 +1140,7 @@ impl<'a> Executor<'a> {
     }
 
     /// Handle branching by unwinding contexts (for state machine)
-    fn handle_branch(&mut self, contexts: &mut Vec<ExecutionContext<'a>>, depth: u32) -> Result<(), RuntimeError> {
+    fn handle_branch(&mut self, contexts: &mut Vec<ExecutionContext>, depth: u32) -> Result<(), RuntimeError> {
         let mut labels_to_pop = depth as usize;
 
         // Pop contexts and labels until we reach the target
@@ -1466,7 +1533,7 @@ impl<'a> Executor<'a> {
                     .get(*global_idx as usize)
                     .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
 
-                if !is_global_mutable(self.module, *global_idx)? {
+                if !is_global_mutable(&self.module, *global_idx)? {
                     return Err(RuntimeError::InvalidConversion(
                         "cannot set immutable global".to_string(),
                     ));
@@ -2939,7 +3006,8 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
+            let (mut executor, mut resources) =
+                Executor::new(Arc::new(module)).expect("Executor creation should succeed");
             let outcome = executor
                 .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
                 .expect("Execution should succeed");
@@ -2967,7 +3035,8 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
+            let (mut executor, mut resources) =
+                Executor::new(Arc::new(module)).expect("Executor creation should succeed");
             let outcome = executor
                 .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
                 .expect("Execution should succeed");
@@ -3090,7 +3159,7 @@ mod tests {
             imports.add_function("env", "log", log_addr);
 
             let instance_id = store
-                .create_instance(&module, Some(&imports))
+                .create_instance(Arc::new(module), Some(&imports))
                 .expect("Instance creation should succeed");
             let result = store
                 .invoke_export(instance_id, "main", vec![], None)
@@ -3148,7 +3217,7 @@ mod tests {
             // Create store and instance
             let mut store = Store::new();
             let instance_id = store
-                .create_instance(&module, None)
+                .create_instance(Arc::new(module), None)
                 .expect("Instance creation should succeed");
 
             // Test factorial(5) = 120
@@ -3240,7 +3309,7 @@ mod tests {
             // Create store and instance
             let mut store = Store::new();
             let instance_id = store
-                .create_instance(&module, None)
+                .create_instance(Arc::new(module), None)
                 .expect("Instance creation should succeed");
 
             // Call main - should return 100 (caller's local 0)

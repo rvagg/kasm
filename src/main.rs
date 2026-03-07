@@ -187,7 +187,9 @@ fn run_wasi_module(file: &str, dirs: Vec<String>, module_args: Vec<String>) -> E
     let ctx = Arc::new(builder.build());
 
     let mut store = Store::new();
-    let instance_id = match create_wasi_instance(&mut store, &module, ctx.clone(), true) {
+    #[allow(clippy::arc_with_non_send_sync)]
+    let module = Arc::new(module);
+    let instance_id = match create_wasi_instance(&mut store, module, ctx.clone(), true) {
         Ok(id) => id,
         Err(e) => {
             eprintln!("Error instantiating module: {}", e);

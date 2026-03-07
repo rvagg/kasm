@@ -11,8 +11,9 @@
 //! # Architecture
 //!
 //! WASI functions are closures that capture `Arc<WasiContext>`. Linear memory is
-//! accessed through `Caller` at each host function invocation — the context itself
-//! does not hold a memory reference.
+//! accessed through `Caller<T>` at each host function invocation — the context
+//! itself does not hold a memory reference. The functions are generic over `T`
+//! (the Store's user data type) but do not use it.
 //!
 //! # Usage
 //!
@@ -28,7 +29,7 @@
 //!     .build());
 //!
 //! let imports = create_wasi_imports(&mut store, ctx.clone());
-//! let instance_id = store.create_instance(&module, Some(&imports))?;
+//! let instance_id = store.create_instance(module, Some(&imports))?;
 //! store.invoke_export(instance_id, "_start", vec![], None)?;
 //! ```
 
@@ -62,9 +63,9 @@ use std::sync::Arc;
 /// # Returns
 ///
 /// The instance ID on success, or a RuntimeError on failure.
-pub fn create_wasi_instance<'a>(
-    store: &mut Store<'a>,
-    module: &'a Module,
+pub fn create_wasi_instance<T>(
+    store: &mut Store<T>,
+    module: Arc<Module>,
     ctx: Arc<WasiContext>,
     include_assemblyscript: bool,
 ) -> Result<usize, RuntimeError> {
@@ -80,7 +81,7 @@ pub fn create_wasi_instance<'a>(
 }
 
 /// Helper: extract memory from Caller, returning a RuntimeError if absent
-fn require_memory<'a>(caller: &'a mut Caller<'_>) -> Result<&'a mut Memory, RuntimeError> {
+fn require_memory<'a, T>(caller: &'a mut Caller<'_, T>) -> Result<&'a mut Memory, RuntimeError> {
     caller
         .memory_mut()
         .ok_or_else(|| RuntimeError::MemoryError("wasi: no linear memory available".to_string()))
@@ -111,7 +112,7 @@ fn extract_i64(args: &[Value], index: usize) -> Result<i64, RuntimeError> {
 /// Create WASI import functions and register them in the store
 ///
 /// Returns an ImportObject with all WASI functions registered.
-pub fn create_wasi_imports(store: &mut Store<'_>, ctx: Arc<WasiContext>) -> ImportObject {
+pub fn create_wasi_imports<T>(store: &mut Store<T>, ctx: Arc<WasiContext>) -> ImportObject {
     let mut imports = ImportObject::new();
 
     // fd_write: (fd, iovs_ptr, iovs_len, nwritten_ptr) -> errno
@@ -292,7 +293,11 @@ pub fn create_wasi_imports(store: &mut Store<'_>, ctx: Arc<WasiContext>) -> Impo
 /// fd_write: Write to a file descriptor using scatter/gather I/O.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_write>
-fn wasi_fd_write(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn wasi_fd_write<T>(
+    ctx: &WasiContext,
+    caller: &mut Caller<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, RuntimeError> {
     let fd = extract_i32(&args, 0)? as u32;
     let iovs_ptr = extract_i32(&args, 1)? as u32;
     let iovs_len = extract_i32(&args, 2)? as u32;
@@ -312,7 +317,11 @@ fn wasi_fd_write(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -
 /// fd_read: Read from a file descriptor using scatter/gather I/O.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_read>
-fn wasi_fd_read(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn wasi_fd_read<T>(
+    ctx: &WasiContext,
+    caller: &mut Caller<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, RuntimeError> {
     let fd = extract_i32(&args, 0)? as u32;
     let iovs_ptr = extract_i32(&args, 1)? as u32;
     let iovs_len = extract_i32(&args, 2)? as u32;
@@ -344,9 +353,9 @@ fn wasi_fd_close(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, Runt
 /// args_sizes_get: Return the number of arguments and the size of the argument string data.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#args_sizes_get>
-fn wasi_args_sizes_get(
+fn wasi_args_sizes_get<T>(
     ctx: &WasiContext,
-    caller: &mut Caller<'_>,
+    caller: &mut Caller<'_, T>,
     args: Vec<Value>,
 ) -> Result<Vec<Value>, RuntimeError> {
     let argc_ptr = extract_i32(&args, 0)? as u32;
@@ -366,7 +375,11 @@ fn wasi_args_sizes_get(
 /// args_get: Read command-line argument data into provided buffers.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#args_get>
-fn wasi_args_get(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn wasi_args_get<T>(
+    ctx: &WasiContext,
+    caller: &mut Caller<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, RuntimeError> {
     let argv_ptr = extract_i32(&args, 0)? as u32;
     let argv_buf_ptr = extract_i32(&args, 1)? as u32;
 
@@ -390,9 +403,9 @@ fn wasi_args_get(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -
 /// environ_sizes_get: Return the number of environment variables and the size of the data.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#environ_sizes_get>
-fn wasi_environ_sizes_get(
+fn wasi_environ_sizes_get<T>(
     ctx: &WasiContext,
-    caller: &mut Caller<'_>,
+    caller: &mut Caller<'_, T>,
     args: Vec<Value>,
 ) -> Result<Vec<Value>, RuntimeError> {
     let environc_ptr = extract_i32(&args, 0)? as u32;
@@ -411,7 +424,11 @@ fn wasi_environ_sizes_get(
 /// environ_get: Read environment variable data into provided buffers.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#environ_get>
-fn wasi_environ_get(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn wasi_environ_get<T>(
+    ctx: &WasiContext,
+    caller: &mut Caller<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, RuntimeError> {
     let environ_ptr = extract_i32(&args, 0)? as u32;
     let environ_buf_ptr = extract_i32(&args, 1)? as u32;
 
@@ -435,9 +452,9 @@ fn wasi_environ_get(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>
 /// fd_prestat_get: Return preopen directory info for a given fd.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_get>
-fn wasi_fd_prestat_get(
+fn wasi_fd_prestat_get<T>(
     ctx: &WasiContext,
-    caller: &mut Caller<'_>,
+    caller: &mut Caller<'_, T>,
     args: Vec<Value>,
 ) -> Result<Vec<Value>, RuntimeError> {
     let fd = extract_i32(&args, 0)? as u32;
@@ -459,9 +476,9 @@ fn wasi_fd_prestat_get(
 /// fd_prestat_dir_name: Return the path for a preopened fd.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_dir_name>
-fn wasi_fd_prestat_dir_name(
+fn wasi_fd_prestat_dir_name<T>(
     ctx: &WasiContext,
-    caller: &mut Caller<'_>,
+    caller: &mut Caller<'_, T>,
     args: Vec<Value>,
 ) -> Result<Vec<Value>, RuntimeError> {
     let fd = extract_i32(&args, 0)? as u32;
@@ -485,7 +502,11 @@ fn wasi_fd_prestat_dir_name(
 /// path_open: Open a file or directory.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#path_open>
-fn wasi_path_open(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn wasi_path_open<T>(
+    ctx: &WasiContext,
+    caller: &mut Caller<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, RuntimeError> {
     let dir_fd = extract_i32(&args, 0)? as u32;
     let _dirflags = extract_i32(&args, 1)?;
     let path_ptr = extract_i32(&args, 2)? as u32;
@@ -565,9 +586,9 @@ fn wasi_path_open(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) 
 /// fd_fdstat_get: Get the attributes of a file descriptor.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_fdstat_get>
-fn wasi_fd_fdstat_get(
+fn wasi_fd_fdstat_get<T>(
     ctx: &WasiContext,
-    caller: &mut Caller<'_>,
+    caller: &mut Caller<'_, T>,
     args: Vec<Value>,
 ) -> Result<Vec<Value>, RuntimeError> {
     let fd = extract_i32(&args, 0)? as u32;
@@ -602,7 +623,11 @@ fn wasi_fd_fdstat_get(
 /// fd_seek: Move the offset of a file descriptor.
 ///
 /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_seek>
-fn wasi_fd_seek(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn wasi_fd_seek<T>(
+    ctx: &WasiContext,
+    caller: &mut Caller<'_, T>,
+    args: Vec<Value>,
+) -> Result<Vec<Value>, RuntimeError> {
     let fd = extract_i32(&args, 0)? as u32;
     let offset = extract_i64(&args, 1)?;
     let whence = extract_i32(&args, 2)? as u32;
@@ -685,7 +710,8 @@ mod tests {
         let mut memory = Memory::new(1, None).unwrap();
 
         let args = vec![Value::I32(0), Value::I32(4)]; // argc_ptr=0, argv_buf_size_ptr=4
-        let mut caller = Caller::for_test(Some(&mut memory));
+        let mut data = ();
+        let mut caller = Caller::for_test(Some(&mut memory), &mut data);
         let result = wasi_args_sizes_get(&ctx, &mut caller, args).unwrap();
 
         assert_eq!(result, vec![Value::I32(0)]); // Success
@@ -702,7 +728,8 @@ mod tests {
         let mut memory = Memory::new(1, None).unwrap();
 
         let args = vec![Value::I32(0), Value::I32(100)];
-        let mut caller = Caller::for_test(Some(&mut memory));
+        let mut data = ();
+        let mut caller = Caller::for_test(Some(&mut memory), &mut data);
         let result = wasi_args_get(&ctx, &mut caller, args).unwrap();
 
         assert_eq!(result, vec![Value::I32(0)]); // Success
@@ -732,7 +759,8 @@ mod tests {
         let ctx = WasiContext::builder().args(["prog"]).build();
 
         let args = vec![Value::I32(0), Value::I32(4)];
-        let mut caller = Caller::for_test(None);
+        let mut data = ();
+        let mut caller = Caller::for_test(None, &mut data);
         let result = wasi_args_sizes_get(&ctx, &mut caller, args);
 
         assert!(result.is_err());

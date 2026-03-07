@@ -8,9 +8,12 @@
 //!
 //! ```text
 //! +-------------------------------------------------------------+
-//! |                          Store                              |
+//! |                        Store<T>                             |
 //! |  +--------------------------------------------------------+ |
-//! |  | Function Space (FuncAddr -> FunctionInstance)          | |
+//! |  | data: T  (embedder user data, accessible via Caller)   | |
+//! |  +--------------------------------------------------------+ |
+//! |  +--------------------------------------------------------+ |
+//! |  | Function Space (FuncAddr -> FunctionInstance<T>)        | |
 //! |  |  [0]: Host { print }                                   | |
 //! |  |  [1]: Host { print_i32 }                               | |
 //! |  |  [2]: Wasm { instance: 0, func: 0 }                    | |
@@ -34,10 +37,10 @@
 //!
 //! - **FuncAddr is globally unique**: Allocated by Store, works across module boundaries
 //! - **Store owns all resources**: Memories, tables, globals live in Store directly
-//! - **Borrow splitting**: During execution, Store's fields (functions, instances, resources)
-//!   are borrowed independently, allowing the compiler to prove safety
-//! - **Caller context**: Host functions receive a `Caller` providing access to the calling
-//!   instance's memory, eliminating the need for `bind_memory` hacks
+//! - **Borrow splitting**: During execution, Store's fields (functions, instances, resources,
+//!   data) are borrowed independently, allowing the compiler to prove safety
+//! - **Caller context**: Host functions receive a `Caller<T>` providing access to the calling
+//!   instance's memory and the embedder's user data via `data()`/`data_mut()`
 //! - **Resumable execution**: Cross-module calls return `NeedsExternalCall`, Store handles delegation
 //!
 //! # Cross-Module Execution Flow
@@ -56,22 +59,26 @@
 use super::imports::{global_value_type, is_global_mutable};
 use super::{ExecutionOutcome, Instance, Memory, RuntimeError, Table, Value};
 use crate::parser::module::{ExportIndex, ExternalKind, FunctionType, Limits};
+use std::sync::Arc;
 
 /// Type alias for host function implementations
 ///
 /// Host functions receive a `Caller` providing access to the calling instance's
-/// linear memory, and the function arguments as `Vec<Value>`.
-pub type HostFunc = Box<dyn Fn(&mut Caller<'_>, Vec<Value>) -> Result<Vec<Value>, RuntimeError>>;
+/// linear memory and the embedder's user data, plus the function arguments as
+/// `Vec<Value>`.
+pub type HostFunc<T = ()> = Box<dyn Fn(&mut Caller<'_, T>, Vec<Value>) -> Result<Vec<Value>, RuntimeError>>;
 
 /// Context passed to host functions during execution
 ///
-/// Provides access to the calling instance's linear memory. Constructed by Store
-/// for each host function call and destroyed when the call returns.
-pub struct Caller<'a> {
+/// Provides access to the calling instance's linear memory and the embedder's
+/// user data stored in `Store<T>`. Constructed by Store for each host function
+/// call and destroyed when the call returns.
+pub struct Caller<'a, T = ()> {
     memory: Option<&'a mut Memory>,
+    data: &'a mut T,
 }
 
-impl<'a> Caller<'a> {
+impl<'a, T> Caller<'a, T> {
     /// Access the calling instance's linear memory (read-only)
     pub fn memory(&self) -> Option<&Memory> {
         self.memory.as_deref()
@@ -82,17 +89,28 @@ impl<'a> Caller<'a> {
         self.memory.as_deref_mut()
     }
 
+    /// Access the embedder's user data (read-only)
+    pub fn data(&self) -> &T {
+        self.data
+    }
+
+    /// Access the embedder's user data (mutable)
+    pub fn data_mut(&mut self) -> &mut T {
+        self.data
+    }
+
     /// Create a Caller for unit tests
     #[cfg(test)]
-    pub fn for_test(memory: Option<&'a mut Memory>) -> Self {
-        Caller { memory }
+    pub fn for_test(memory: Option<&'a mut Memory>, data: &'a mut T) -> Self {
+        Caller { memory, data }
     }
 }
 
 /// Runtime resources owned directly by the Store
 ///
 /// Grouped as a struct to enable field-level borrow splitting: the compiler can
-/// prove that `&mut resources` and `&self.functions` are disjoint borrows.
+/// prove that `&mut resources`, `&self.functions`, and `&mut self.data` are
+/// disjoint borrows.
 #[derive(Default)]
 pub struct Resources {
     /// All memory instances, indexed by MemoryAddr
@@ -150,7 +168,7 @@ pub struct GlobalAddr(pub usize);
 ///
 /// Functions can either be WebAssembly functions (executed by an instance)
 /// or host functions (native Rust functions provided for imports).
-pub enum FunctionInstance {
+pub enum FunctionInstance<T = ()> {
     /// WebAssembly function - reference to function within an instance
     Wasm {
         /// Index of the instance in Store.instances
@@ -163,7 +181,7 @@ pub enum FunctionInstance {
     /// Host function - native Rust function
     Host {
         /// The host function implementation
-        func: HostFunc,
+        func: HostFunc<T>,
         /// Function type signature
         func_type: FunctionType,
     },
@@ -205,37 +223,72 @@ fn validate_import_limits(
 /// The Store manages the lifetime of all module instances and provides a global
 /// function address space. All function calls are routed through the Store, which
 /// delegates to the appropriate instance.
-pub struct Store<'a> {
+///
+/// The generic parameter `T` holds embedder-defined user data accessible from
+/// host functions via [`Caller::data()`] / [`Caller::data_mut()`]. Use
+/// [`Store::new()`] for `Store<()>` (no user data) or [`Store::with_data()`]
+/// to provide a context value.
+pub struct Store<T = ()> {
     /// All function instances, indexed by FuncAddr
-    functions: Vec<FunctionInstance>,
+    pub(super) functions: Vec<FunctionInstance<T>>,
 
     /// All module instances owned by this store
-    instances: Vec<Instance<'a>>,
+    instances: Vec<Instance>,
 
     /// All runtime resources (memories, tables, globals) owned directly
     pub(super) resources: Resources,
+
+    /// Embedder-defined user data, accessible via Caller<T> in host functions
+    data: T,
 }
 
-impl<'a> Default for Store<'a> {
+impl Default for Store<()> {
     fn default() -> Self {
         Store {
             functions: Vec::new(),
             instances: Vec::new(),
             resources: Resources::new(),
+            data: (),
         }
     }
 }
 
-impl<'a> Store<'a> {
-    /// Create a new empty Store
+impl Store<()> {
+    /// Create a new empty Store with no user data
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+impl<T> Store<T> {
+    /// Create a new Store with embedder-defined user data
+    ///
+    /// The data is accessible from host functions via `caller.data()` and
+    /// `caller.data_mut()`, and from the store via `store.data()` and
+    /// `store.data_mut()`.
+    pub fn with_data(data: T) -> Self {
+        Store {
+            functions: Vec::new(),
+            instances: Vec::new(),
+            resources: Resources::new(),
+            data,
+        }
+    }
+
+    /// Access the embedder's user data (read-only)
+    pub fn data(&self) -> &T {
+        &self.data
+    }
+
+    /// Access the embedder's user data (mutable)
+    pub fn data_mut(&mut self) -> &mut T {
+        &mut self.data
     }
 
     /// Allocate a new function address and register a function instance
     ///
     /// Returns the FuncAddr that can be used to call this function.
-    pub fn allocate_function(&mut self, func: FunctionInstance) -> FuncAddr {
+    pub fn allocate_function(&mut self, func: FunctionInstance<T>) -> FuncAddr {
         let addr = FuncAddr(self.functions.len());
         self.functions.push(func);
         addr
@@ -301,16 +354,17 @@ impl<'a> Store<'a> {
     /// the instance. Returns the instance ID.
     pub fn create_instance(
         &mut self,
-        module: &'a crate::parser::module::Module,
+        module: Arc<crate::parser::module::Module>,
         imports: Option<&super::ImportObject>,
     ) -> Result<usize, RuntimeError> {
         let instance_id = self.instances.len();
 
-        let (memory_addresses, table_addresses, global_addresses) = self.resolve_resources(module, imports)?;
+        let (memory_addresses, table_addresses, global_addresses) = self.resolve_resources(&module, imports)?;
 
-        let mut instance = Instance::new_unlinked(module, memory_addresses, table_addresses, global_addresses)?;
+        let mut instance =
+            Instance::new_unlinked(Arc::clone(&module), memory_addresses, table_addresses, global_addresses)?;
 
-        let function_addresses = self.resolve_functions(module, imports, instance_id)?;
+        let function_addresses = self.resolve_functions(&module, imports, instance_id)?;
 
         // Link functions, then push instance before propagating errors.
         // The spec requires side effects on shared tables/memories to persist
@@ -561,7 +615,7 @@ impl<'a> Store<'a> {
     }
 
     /// Get a reference to an instance by ID
-    pub fn get_instance(&self, instance_id: usize) -> Option<&Instance<'a>> {
+    pub fn get_instance(&self, instance_id: usize) -> Option<&Instance> {
         self.instances.get(instance_id)
     }
 
@@ -575,7 +629,7 @@ impl<'a> Store<'a> {
     }
 
     /// Get a mutable reference to an instance by ID
-    pub fn get_instance_mut(&mut self, instance_id: usize) -> Option<&mut Instance<'a>> {
+    pub fn get_instance_mut(&mut self, instance_id: usize) -> Option<&mut Instance> {
         self.instances.get_mut(instance_id)
     }
 
@@ -618,13 +672,19 @@ impl<'a> Store<'a> {
             let outcome = instance.invoke_by_index(func_idx, args, resources)?;
             Ok((outcome, Some(instance_id)))
         } else {
-            // Host function: construct Caller with calling instance's memory
-            let memory = calling_instance
+            // Host function: construct Caller with calling instance's memory and user data.
+            // Split the borrow: extract the memory address as a Copy value first (releasing
+            // the borrow on self.instances), then borrow self.resources and self.data as
+            // disjoint fields.
+            let mem_addr = calling_instance
                 .and_then(|id| self.instances.get(id))
-                .and_then(|inst| inst.memory_addresses.first().copied())
-                .and_then(|mem_addr| self.resources.memories.get_mut(mem_addr.0));
+                .and_then(|inst| inst.memory_addresses.first().copied());
 
-            let mut caller = Caller { memory };
+            let memory = mem_addr.and_then(|addr| self.resources.memories.get_mut(addr.0));
+            let mut caller = Caller {
+                memory,
+                data: &mut self.data,
+            };
 
             match &self.functions[addr.0] {
                 FunctionInstance::Host { func, .. } => {
@@ -775,6 +835,7 @@ mod tests {
     use crate::parser::structure_builder::StructureBuilder;
     use crate::parser::structured::StructuredFunction;
     use crate::runtime::ImportObject;
+    use std::sync::Arc;
 
     #[test]
     fn store_new_is_empty() {
@@ -831,8 +892,10 @@ mod tests {
         let mut memory = Memory::new(1, None).unwrap();
         memory.write_u32(0, 42).unwrap();
 
+        let mut data = ();
         let mut caller = Caller {
             memory: Some(&mut memory),
+            data: &mut data,
         };
 
         // Read via immutable access
@@ -847,9 +910,68 @@ mod tests {
 
     #[test]
     fn caller_no_memory() {
-        let mut caller = Caller { memory: None };
+        let mut data = ();
+        let mut caller = Caller {
+            memory: None,
+            data: &mut data,
+        };
         assert!(caller.memory().is_none());
         assert!(caller.memory_mut().is_none());
+    }
+
+    #[test]
+    fn caller_data_access() {
+        let mut data = 42u32;
+        let mut caller: Caller<'_, u32> = Caller {
+            memory: None,
+            data: &mut data,
+        };
+        assert_eq!(*caller.data(), 42);
+        *caller.data_mut() = 99;
+        assert_eq!(*caller.data(), 99);
+    }
+
+    #[test]
+    fn store_with_data() {
+        let store = Store::with_data(42u32);
+        assert_eq!(*store.data(), 42);
+    }
+
+    #[test]
+    fn store_data_mut() {
+        let mut store = Store::with_data(String::from("hello"));
+        store.data_mut().push_str(" world");
+        assert_eq!(store.data(), "hello world");
+    }
+
+    #[test]
+    fn host_function_accesses_store_data() {
+        let mut store = Store::with_data(0u32);
+
+        // Host function that increments the counter and returns the old value
+        let addr = store.allocate_function(FunctionInstance::Host {
+            func: Box::new(|caller, _args| {
+                let count = *caller.data();
+                *caller.data_mut() += 1;
+                Ok(vec![Value::I32(count as i32)])
+            }),
+            func_type: FunctionType {
+                parameters: vec![],
+                return_types: vec![ValueType::I32],
+            },
+        });
+
+        // Call it three times via Store::execute
+        let r1 = store.execute(addr, vec![]).unwrap();
+        assert_eq!(r1, vec![Value::I32(0)]);
+
+        let r2 = store.execute(addr, vec![]).unwrap();
+        assert_eq!(r2, vec![Value::I32(1)]);
+
+        let r3 = store.execute(addr, vec![]).unwrap();
+        assert_eq!(r3, vec![Value::I32(2)]);
+
+        assert_eq!(*store.data(), 3);
     }
 
     // === Import type checking tests ===
@@ -903,7 +1025,7 @@ mod tests {
 
         // Module imports (i32) -> i32 — should match
         let module = module_with_function_import("env", "add_one", 0, vec![ValueType::I32], vec![ValueType::I32]);
-        let result = store.create_instance(&module, Some(&imports));
+        let result = store.create_instance(Arc::new(module), Some(&imports));
         assert!(result.is_ok(), "Expected instantiation to succeed");
     }
 
@@ -926,7 +1048,7 @@ mod tests {
 
         // Module expects i64, but host provides i32 — parameter type mismatch
         let module = module_with_function_import("env", "my_func", 0, vec![ValueType::I64], vec![ValueType::I32]);
-        let result = store.create_instance(&module, Some(&imports));
+        let result = store.create_instance(Arc::new(module), Some(&imports));
         assert!(result.is_err(), "Expected instantiation to fail");
 
         let err = result.unwrap_err();
@@ -965,7 +1087,7 @@ mod tests {
 
         // Module expects i64 return, but host returns i32
         let module = module_with_function_import("env", "get_value", 0, vec![], vec![ValueType::I64]);
-        let result = store.create_instance(&module, Some(&imports));
+        let result = store.create_instance(Arc::new(module), Some(&imports));
         assert!(result.is_err(), "Expected instantiation to fail");
 
         let err = result.unwrap_err();
@@ -995,7 +1117,7 @@ mod tests {
 
         // Module expects (i32) -> i32 — different arity
         let module = module_with_function_import("env", "binary_op", 0, vec![ValueType::I32], vec![ValueType::I32]);
-        let result = store.create_instance(&module, Some(&imports));
+        let result = store.create_instance(Arc::new(module), Some(&imports));
         assert!(result.is_err(), "Expected instantiation to fail");
 
         let err = result.unwrap_err();
@@ -1210,7 +1332,7 @@ mod tests {
 
         let module = module_calling_import("host", "get_value", "call_host");
         let instance_id = store
-            .create_instance(&module, Some(&imports))
+            .create_instance(Arc::new(module), Some(&imports))
             .expect("Instance creation should succeed");
 
         let result = store
@@ -1226,7 +1348,7 @@ mod tests {
 
         // Module B: exports "get_value" returning 100
         let module_b = module_returning_constant(100, "get_value");
-        let instance_b = store.create_instance(&module_b, None).unwrap();
+        let instance_b = store.create_instance(Arc::new(module_b), None).unwrap();
         let func_addr_b = store
             .get_instance(instance_b)
             .unwrap()
@@ -1237,7 +1359,7 @@ mod tests {
         let mut imports_a = ImportObject::new();
         imports_a.add_function("module_b", "get_value", func_addr_b);
         let module_a = module_calling_import("module_b", "get_value", "call_b");
-        let instance_a = store.create_instance(&module_a, Some(&imports_a)).unwrap();
+        let instance_a = store.create_instance(Arc::new(module_a), Some(&imports_a)).unwrap();
 
         let result = store
             .invoke_export(instance_a, "call_b", vec![], None)
@@ -1253,7 +1375,7 @@ mod tests {
 
         // Module C: returns 999
         let module_c = module_returning_constant(999, "get_value");
-        let instance_c = store.create_instance(&module_c, None).unwrap();
+        let instance_c = store.create_instance(Arc::new(module_c), None).unwrap();
         let func_addr_c = store
             .get_instance(instance_c)
             .unwrap()
@@ -1264,7 +1386,7 @@ mod tests {
         let mut imports_b = ImportObject::new();
         imports_b.add_function("module_c", "get_value", func_addr_c);
         let module_b = module_calling_import("module_c", "get_value", "call_c");
-        let instance_b = store.create_instance(&module_b, Some(&imports_b)).unwrap();
+        let instance_b = store.create_instance(Arc::new(module_b), Some(&imports_b)).unwrap();
         let func_addr_b = store
             .get_instance(instance_b)
             .unwrap()
@@ -1275,7 +1397,7 @@ mod tests {
         let mut imports_a = ImportObject::new();
         imports_a.add_function("module_b", "call_c", func_addr_b);
         let module_a = module_calling_import("module_b", "call_c", "call_chain");
-        let instance_a = store.create_instance(&module_a, Some(&imports_a)).unwrap();
+        let instance_a = store.create_instance(Arc::new(module_a), Some(&imports_a)).unwrap();
 
         let result = store
             .invoke_export(instance_a, "call_chain", vec![], None)
@@ -1292,7 +1414,7 @@ mod tests {
 
         // Module C: returns 10
         let module_c = module_returning_constant(10, "get_value");
-        let instance_c = store.create_instance(&module_c, None).unwrap();
+        let instance_c = store.create_instance(Arc::new(module_c), None).unwrap();
         let func_addr_c = store
             .get_instance(instance_c)
             .unwrap()
@@ -1303,7 +1425,7 @@ mod tests {
         let mut imports_b = ImportObject::new();
         imports_b.add_function("module_c", "get_value", func_addr_c);
         let module_b = module_calling_import_and_add("module_c", "get_value", 100, "call_c");
-        let instance_b = store.create_instance(&module_b, Some(&imports_b)).unwrap();
+        let instance_b = store.create_instance(Arc::new(module_b), Some(&imports_b)).unwrap();
         let func_addr_b = store
             .get_instance(instance_b)
             .unwrap()
@@ -1314,7 +1436,7 @@ mod tests {
         let mut imports_a = ImportObject::new();
         imports_a.add_function("module_b", "call_c", func_addr_b);
         let module_a = module_calling_import_and_add("module_b", "call_c", 1000, "call_chain");
-        let instance_a = store.create_instance(&module_a, Some(&imports_a)).unwrap();
+        let instance_a = store.create_instance(Arc::new(module_a), Some(&imports_a)).unwrap();
 
         // Expected: 10 + 100 + 1000 = 1110
         let result = store
@@ -1347,7 +1469,7 @@ mod tests {
         let mut imports_b = ImportObject::new();
         imports_b.add_function("host", "get_value", host_addr);
         let module_b = module_calling_import("host", "get_value", "call_host");
-        let instance_b = store.create_instance(&module_b, Some(&imports_b)).unwrap();
+        let instance_b = store.create_instance(Arc::new(module_b), Some(&imports_b)).unwrap();
         let func_addr_b = store
             .get_instance(instance_b)
             .unwrap()
@@ -1358,7 +1480,7 @@ mod tests {
         let mut imports_a = ImportObject::new();
         imports_a.add_function("module_b", "call_host", func_addr_b);
         let module_a = module_calling_import("module_b", "call_host", "start_chain");
-        let instance_a = store.create_instance(&module_a, Some(&imports_a)).unwrap();
+        let instance_a = store.create_instance(Arc::new(module_a), Some(&imports_a)).unwrap();
 
         // A -> B -> Host chain
         let result = store
