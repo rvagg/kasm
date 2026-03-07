@@ -6,6 +6,7 @@
 pub mod control;
 pub mod executor;
 pub mod frame;
+pub mod host;
 pub mod imports;
 pub mod instance;
 pub mod memory;
@@ -17,6 +18,7 @@ pub mod test_utils;
 pub mod value;
 pub mod wasi;
 
+pub use host::{IntoHostFunc, IntoHostFuncWithCaller, WasmResult, WasmType};
 pub use imports::ImportObject;
 pub use instance::Instance;
 pub use memory::Memory;

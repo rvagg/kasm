@@ -20,6 +20,7 @@
 //! use kasm::wat;
 //! use kasm::runtime::store::Store;
 //! use kasm::runtime::Value;
+//! use std::sync::Arc;
 //!
 //! let module = wat::parse(r#"
 //!     (module
@@ -30,7 +31,7 @@
 //! "#).unwrap();
 //!
 //! let mut store = Store::new();
-//! let id = store.create_instance(&module, None).unwrap();
+//! let id = store.create_instance(Arc::new(module), None).unwrap();
 //! let results = store.invoke_export(id, "add", vec![Value::I32(2), Value::I32(3)], None).unwrap();
 //! assert_eq!(results, vec![Value::I32(5)]);
 //! ```

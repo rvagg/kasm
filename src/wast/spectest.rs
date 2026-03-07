@@ -9,7 +9,7 @@ use crate::parser::module::{
     RefType, SectionPosition, TableType, ValueType,
 };
 use crate::parser::structured::StructuredFunction;
-use crate::runtime::{FuncAddr, FunctionInstance, ImportObject, Memory as RuntimeMemory, Store, Table, Value};
+use crate::runtime::{ImportObject, Memory as RuntimeMemory, Store, Table, Value};
 
 /// Build a [`Module`] representing the spectest host module.
 ///
@@ -67,31 +67,13 @@ pub fn create_spectest_imports<T>(store: &mut Store<T>) -> ImportObject {
     imports.add_global("spectest", "global_f32", g_f32, ValueType::F32, false);
     imports.add_global("spectest", "global_f64", g_f64, ValueType::F64, false);
 
-    let mut host_fn = |params: Vec<ValueType>| -> FuncAddr {
-        store.allocate_function(FunctionInstance::Host {
-            func: Box::new(|_caller, _args| Ok(vec![])),
-            func_type: FunctionType {
-                parameters: params,
-                return_types: vec![],
-            },
-        })
-    };
-
-    imports.add_function("spectest", "print", host_fn(vec![]));
-    imports.add_function("spectest", "print_i32", host_fn(vec![ValueType::I32]));
-    imports.add_function("spectest", "print_i64", host_fn(vec![ValueType::I64]));
-    imports.add_function("spectest", "print_f32", host_fn(vec![ValueType::F32]));
-    imports.add_function("spectest", "print_f64", host_fn(vec![ValueType::F64]));
-    imports.add_function(
-        "spectest",
-        "print_i32_f32",
-        host_fn(vec![ValueType::I32, ValueType::F32]),
-    );
-    imports.add_function(
-        "spectest",
-        "print_f64_f64",
-        host_fn(vec![ValueType::F64, ValueType::F64]),
-    );
+    imports.add_function("spectest", "print", store.wrap(|| {}));
+    imports.add_function("spectest", "print_i32", store.wrap(|_: i32| {}));
+    imports.add_function("spectest", "print_i64", store.wrap(|_: i64| {}));
+    imports.add_function("spectest", "print_f32", store.wrap(|_: f32| {}));
+    imports.add_function("spectest", "print_f64", store.wrap(|_: f64| {}));
+    imports.add_function("spectest", "print_i32_f32", store.wrap(|_: i32, _: f32| {}));
+    imports.add_function("spectest", "print_f64_f64", store.wrap(|_: f64, _: f64| {}));
 
     let spectest_memory = RuntimeMemory::new(1, Some(2)).unwrap();
     let mem_addr = store.allocate_memory(spectest_memory);

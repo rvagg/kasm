@@ -238,7 +238,7 @@ pub struct Store<T = ()> {
     /// All runtime resources (memories, tables, globals) owned directly
     pub(super) resources: Resources,
 
-    /// Embedder-defined user data, accessible via Caller<T> in host functions
+    /// Embedder-defined user data, accessible via `Caller<T>` in host functions
     data: T,
 }
 
@@ -292,6 +292,48 @@ impl<T> Store<T> {
         let addr = FuncAddr(self.functions.len());
         self.functions.push(func);
         addr
+    }
+
+    /// Register a typed closure as a host function
+    ///
+    /// The function type is inferred from the closure signature. Supported
+    /// parameter types are `i32`, `i64`, `f32`, `f64` (up to 8 parameters).
+    /// Return type can be `()`, a single `WasmType`, or `Result<R, RuntimeError>`.
+    ///
+    /// ```ignore
+    /// let add = store.wrap(|a: i32, b: i32| -> i32 { a + b });
+    /// ```
+    pub fn wrap<Params, Returns, F>(&mut self, func: F) -> FuncAddr
+    where
+        F: super::host::IntoHostFunc<T, Params, Returns>,
+    {
+        let (host_func, func_type) = func.into_host_func();
+        self.allocate_function(FunctionInstance::Host {
+            func: host_func,
+            func_type,
+        })
+    }
+
+    /// Register a typed closure as a host function with caller access
+    ///
+    /// Like [`wrap`](Self::wrap), but the closure receives `&mut Caller<T>` as
+    /// its first argument, providing access to the calling instance's memory
+    /// and the embedder's user data.
+    ///
+    /// ```ignore
+    /// let log = store.wrap_with_caller(|caller: &mut Caller<MyState>, val: i32| {
+    ///     caller.data_mut().log.push(val);
+    /// });
+    /// ```
+    pub fn wrap_with_caller<Params, Returns, F>(&mut self, func: F) -> FuncAddr
+    where
+        F: super::host::IntoHostFuncWithCaller<T, Params, Returns>,
+    {
+        let (host_func, func_type) = func.into_host_func();
+        self.allocate_function(FunctionInstance::Host {
+            func: host_func,
+            func_type,
+        })
     }
 
     /// Allocate a new memory in the Store
@@ -1540,5 +1582,51 @@ mod tests {
         // Read back through immutable access
         let value = store.get_memory(addr).unwrap().read_u32(0).unwrap();
         assert_eq!(value, 0xDEAD_BEEF);
+    }
+
+    // === Typed host function (wrap) tests ===
+
+    #[test]
+    fn wrap_simple_add() {
+        let mut store = Store::new();
+        let addr = store.wrap(|a: i32, b: i32| -> i32 { a + b });
+        let result = store.execute(addr, vec![Value::I32(3), Value::I32(4)]).unwrap();
+        assert_eq!(result, vec![Value::I32(7)]);
+    }
+
+    #[test]
+    fn wrap_no_args_no_return() {
+        let mut store = Store::new();
+        let addr = store.wrap(|| {});
+        let result = store.execute(addr, vec![]).unwrap();
+        assert_eq!(result, vec![]);
+    }
+
+    #[test]
+    fn wrap_fallible() {
+        let mut store = Store::new();
+        let addr = store.wrap(|x: i32| -> Result<i32, RuntimeError> {
+            if x == 0 {
+                Err(RuntimeError::Trap("zero".into()))
+            } else {
+                Ok(x * 2)
+            }
+        });
+        assert_eq!(store.execute(addr, vec![Value::I32(5)]).unwrap(), vec![Value::I32(10)]);
+        assert!(store.execute(addr, vec![Value::I32(0)]).is_err());
+    }
+
+    #[test]
+    fn wrap_with_caller_accesses_data() {
+        let mut store = Store::with_data(0u32);
+        let addr = store.wrap_with_caller(|caller: &mut Caller<'_, u32>, x: i32| -> i32 {
+            let count = *caller.data();
+            *caller.data_mut() += x as u32;
+            count as i32
+        });
+
+        assert_eq!(store.execute(addr, vec![Value::I32(10)]).unwrap(), vec![Value::I32(0)]);
+        assert_eq!(store.execute(addr, vec![Value::I32(5)]).unwrap(), vec![Value::I32(10)]);
+        assert_eq!(*store.data(), 15);
     }
 }
