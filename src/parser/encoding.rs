@@ -1,13 +1,8 @@
 //! Binary encoding primitives for WebAssembly values.
 //!
-//! Provides LEB128 integer encoding, IEEE 754 float encoding, and byte vector
-//! encoding as specified by the WebAssembly binary format.
-//!
-//! All functions write directly into a caller-provided `&mut Vec<u8>` buffer,
-//! avoiding intermediate allocations.
-
-use byteorder::{LittleEndian, WriteBytesExt};
-use std::io;
+//! Provides LEB128 integer encoding as specified by the WebAssembly binary
+//! format. All functions write directly into a caller-provided `&mut Vec<u8>`
+//! buffer, avoiding intermediate allocations.
 
 // ---------------------------------------------------------------------------
 // WebAssembly binary format constants (spec section 5)
@@ -85,11 +80,6 @@ pub fn write_vu32(buf: &mut Vec<u8>, v: u32) {
     write_vu(buf, v as u64);
 }
 
-/// Appends the unsigned LEB128 encoding of a u64 value to `buf`.
-pub fn write_vu64(buf: &mut Vec<u8>, v: u64) {
-    write_vu(buf, v);
-}
-
 /// Appends a single-bit boolean as a one-byte LEB128 value (0x00 or 0x01).
 pub fn write_vu1(buf: &mut Vec<u8>, v: bool) {
     buf.push(if v { 1 } else { 0 });
@@ -124,45 +114,6 @@ pub fn write_vs64(buf: &mut Vec<u8>, v: i64) {
 }
 
 // ---------------------------------------------------------------------------
-// IEEE 754 floats (little-endian)
-// ---------------------------------------------------------------------------
-
-/// Appends the little-endian IEEE 754 encoding of an f32 value to `buf`.
-pub fn write_f32(buf: &mut Vec<u8>, v: f32) {
-    let mut bytes = [0u8; 4];
-    let mut wtr = io::Cursor::new(&mut bytes[..]);
-    wtr.write_f32::<LittleEndian>(v).unwrap();
-    buf.extend_from_slice(&bytes);
-}
-
-/// Appends the little-endian IEEE 754 encoding of an f64 value to `buf`.
-pub fn write_f64(buf: &mut Vec<u8>, v: f64) {
-    let mut bytes = [0u8; 8];
-    let mut wtr = io::Cursor::new(&mut bytes[..]);
-    wtr.write_f64::<LittleEndian>(v).unwrap();
-    buf.extend_from_slice(&bytes);
-}
-
-// ---------------------------------------------------------------------------
-// v128 (16-byte SIMD vector, raw bytes)
-// ---------------------------------------------------------------------------
-
-/// Appends 16 raw bytes to `buf`.
-pub fn write_v128(buf: &mut Vec<u8>, v: [u8; 16]) {
-    buf.extend_from_slice(&v);
-}
-
-// ---------------------------------------------------------------------------
-// Length-prefixed byte vector
-// ---------------------------------------------------------------------------
-
-/// Appends a length-prefixed byte vector (vu32 length + raw bytes) to `buf`.
-pub fn write_u8vec(buf: &mut Vec<u8>, v: &[u8]) {
-    write_vu32(buf, v.len() as u32);
-    buf.extend_from_slice(v);
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -181,13 +132,6 @@ mod tests {
     fn encode_vu32(v: u32) -> Vec<u8> {
         let mut buf = Vec::new();
         write_vu32(&mut buf, v);
-        buf
-    }
-
-    /// Encodes a u64 via write_vu64 and returns the resulting bytes.
-    fn encode_vu64(v: u64) -> Vec<u8> {
-        let mut buf = Vec::new();
-        write_vu64(&mut buf, v);
         buf
     }
 
@@ -253,57 +197,6 @@ mod tests {
             let mut reader = Reader::new(byts);
             let actual = reader.read_vu32().unwrap_or_else(|_| {
                 panic!("Failed to read vu32");
-            });
-            assert_eq_with_diag(actual, expected);
-        }
-    }
-
-    #[test]
-    fn test_write_vu64() {
-        assert_eq_with_diag(encode_vu64(0), vec![0]);
-        assert_eq_with_diag(encode_vu64(1), vec![1]);
-        assert_eq_with_diag(encode_vu64(624485), vec![0b11100101, 0b10001110, 0b00100110]);
-        assert_eq_with_diag(encode_vu64(127), vec![0x7f]);
-        assert_eq_with_diag(encode_vu64(16256), vec![0x80, 0x7f]);
-        assert_eq_with_diag(encode_vu64(0x3b4), vec![0xb4, 0x07]);
-        assert_eq_with_diag(encode_vu64(0x40c), vec![0x8c, 0x08]);
-        assert_eq_with_diag(encode_vu64(0xffffffff), vec![0xff, 0xff, 0xff, 0xff, 0xf]);
-        assert_eq_with_diag(encode_vu64(0x80000000), vec![128, 128, 128, 128, 8]);
-    }
-
-    #[test]
-    fn test_rt_vu64() {
-        use crate::parser::reader::Reader;
-
-        let mut test_values = vec![0, 1, u64::MAX, u64::MIN, 128, 129, 130, 624485];
-
-        for i in 0..63 {
-            let value = 1u64 << i;
-            test_values.push(value);
-            test_values.push(value + 1);
-            test_values.push(value - 1);
-        }
-
-        for i in 1..8 {
-            let max_value = (1u64 << (i * 8)) - 1;
-            test_values.push(max_value);
-        }
-
-        use rand::RngExt;
-        let mut rng = rand::rng();
-        for _ in 0..100 {
-            test_values.push(rng.random::<u64>());
-        }
-
-        for i in 0..1000 {
-            test_values.push(i);
-        }
-
-        for &expected in &test_values {
-            let byts = encode_vu64(expected);
-            let mut reader = Reader::new(byts);
-            let actual = reader.read_vu64().unwrap_or_else(|_| {
-                panic!("Failed to read vu64");
             });
             assert_eq_with_diag(actual, expected);
         }
@@ -480,33 +373,5 @@ mod tests {
         let mut buf = vec![0xBB];
         write_vs32(&mut buf, -1);
         assert_eq!(buf, vec![0xBB, 0x7f]);
-    }
-
-    #[test]
-    fn test_write_f32_into_buffer() {
-        let mut buf = Vec::new();
-        write_f32(&mut buf, 6.283_185_5);
-        assert_eq!(buf, vec![219, 15, 201, 64]);
-    }
-
-    #[test]
-    fn test_write_f64_into_buffer() {
-        let mut buf = Vec::new();
-        write_f64(&mut buf, std::f64::consts::TAU);
-        assert_eq!(buf, vec![24, 45, 68, 84, 251, 33, 25, 64]);
-    }
-
-    #[test]
-    fn test_write_v128_into_buffer() {
-        let mut buf = Vec::new();
-        write_v128(&mut buf, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-        assert_eq!(buf, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-    }
-
-    #[test]
-    fn test_write_u8vec_into_buffer() {
-        let mut buf = Vec::new();
-        write_u8vec(&mut buf, &[0xDE, 0xAD]);
-        assert_eq!(buf, vec![2, 0xDE, 0xAD]);
     }
 }

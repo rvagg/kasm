@@ -4,9 +4,7 @@
 //! and overall execution throughput.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use kasm::parser::module::Module;
-use kasm::runtime::store::Store;
-use kasm::runtime::value::Value;
+use kasm::{Module, Store, Value};
 use std::hint::black_box;
 use std::sync::Arc;
 

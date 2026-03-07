@@ -129,7 +129,8 @@ impl Instance {
     /// - `UnknownExport` if the export doesn't exist
     /// - `TypeMismatch` if argument count or types don't match
     /// - `FunctionIndexOutOfBounds` if the function index is invalid
-    pub fn invoke(
+    #[allow(dead_code)]
+    pub(crate) fn invoke(
         &mut self,
         name: &str,
         args: Vec<Value>,

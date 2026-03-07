@@ -8,12 +8,12 @@
 //! The entry point is [`parse()`], which consumes a [`reader::Reader`] and
 //! returns a fully decoded `Module`.
 
-pub mod encoding;
+pub(crate) mod encoding;
 pub mod instruction;
-pub mod limits;
+pub(crate) mod limits;
 pub mod module;
 pub mod reader;
-pub mod structure_builder;
+pub(crate) mod structure_builder;
 pub mod structured;
 pub(crate) mod validate;
 

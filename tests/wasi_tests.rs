@@ -4,10 +4,9 @@ mod common;
 
 use common::CapturedWriter;
 use kasm::parser;
-use kasm::parser::module::Module;
 use kasm::parser::reader::Reader;
-use kasm::runtime::store::Store;
-use kasm::runtime::wasi::{WasiContext, add_assemblyscript_imports, create_wasi_imports};
+use kasm::wasi::{WasiContext, add_assemblyscript_imports, create_wasi_imports};
+use kasm::{Module, Store};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 

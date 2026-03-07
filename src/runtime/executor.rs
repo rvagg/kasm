@@ -484,7 +484,7 @@ impl Executor {
     ///
     /// Looks up the function in the code section, initialises locals, and
     /// pushes the frame onto the call stack.
-    fn push_call_frame(&mut self, func_idx: u32, args: Vec<Value>, return_arity: usize) -> Result<(), RuntimeError> {
+    fn push_call_frame(&mut self, func_idx: u32, args: Vec<Value>) -> Result<(), RuntimeError> {
         if self.call_stack.len() >= MAX_CALL_DEPTH {
             return Err(RuntimeError::CallStackOverflow);
         }
@@ -547,11 +547,8 @@ impl Executor {
 
         // Create and push the new frame
         let frame = CallFrame {
-            function_idx: func_idx,
-            ip: 0,
             locals,
             label_stack: Vec::new(),
-            return_arity,
         };
 
         self.call_stack.push(frame);
@@ -629,22 +626,9 @@ impl Executor {
     /// Create a function label for the implicit function block
     /// In WebAssembly, a function body is an implicit block
     fn create_function_label(&self, return_types: &[ValueType]) -> Label {
-        let block_type = match return_types.len() {
-            0 => BlockType::Empty,
-            1 => BlockType::Value(return_types[0]),
-            _ => {
-                // For multi-value returns, we'd ideally use BlockType::FuncType
-                // but we don't have a function type index here.
-                // This is a temporary workaround - proper support would need BlockType::FuncType
-                BlockType::Empty
-            }
-        };
-
         Label {
-            label_type: LabelType::Block, // Function body is a block
-            block_type,
+            label_type: LabelType::Block, // Function body is an implicit block
             stack_height: self.stack.len(),
-            unreachable: false,
             param_types: vec![], // Functions don't consume parameters from stack
             return_types: return_types.to_vec(),
         }
@@ -679,7 +663,7 @@ impl Executor {
         self.instruction_budget = budget;
     }
 
-    /// Execute a function
+    #[cfg(test)]
     pub fn execute_function(
         &mut self,
         func: &StructuredFunction,
@@ -719,11 +703,8 @@ impl Executor {
 
         // Create initial call frame
         let initial_frame = CallFrame {
-            function_idx: 0,
-            ip: 0,
             locals,
             label_stack: Vec::new(),
-            return_arity: return_types.len(),
         };
         self.call_stack.push(initial_frame);
 
@@ -851,8 +832,6 @@ impl Executor {
                     return Ok(ExecutionOutcome::NeedsExternalCall(ExternalCallRequest {
                         func_addr,
                         args,
-                        return_types: func_type.return_types.clone(),
-                        func_type,
                     }));
                 }
 
@@ -912,12 +891,7 @@ impl Executor {
                 .copied()
                 .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
-            return Ok(CallHandled::NeedsExternal(ExternalCallRequest {
-                func_addr,
-                args,
-                return_types: func_type.return_types.clone(),
-                func_type,
-            }));
+            return Ok(CallHandled::NeedsExternal(ExternalCallRequest { func_addr, args }));
         }
 
         // Local function call - get body directly from module (no cloning)
@@ -940,7 +914,7 @@ impl Executor {
         }
 
         let args = self.pop_args_for_call(&func_type)?;
-        self.push_call_frame(func_idx, args, func_type.return_types.len())?;
+        self.push_call_frame(func_idx, args)?;
 
         // Extract instruction slice before mutably borrowing self for label stack
         let body_instructions = {
@@ -1209,9 +1183,7 @@ impl Executor {
 
         Ok(Label {
             label_type,
-            block_type,
             stack_height,
-            unreachable: false,
             param_types,
             return_types,
         })

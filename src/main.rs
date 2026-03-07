@@ -7,9 +7,8 @@
 
 use clap::{Parser, Subcommand};
 use kasm::parser;
-use kasm::parser::module::Module;
-use kasm::runtime::store::Store;
-use kasm::runtime::wasi::{WasiContext, create_wasi_instance};
+use kasm::wasi::{WasiContext, create_wasi_instance};
+use kasm::{Module, Store};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{stderr, stdin, stdout};

@@ -1,20 +1,20 @@
-//! WebAssembly runtime implementation
+//! WebAssembly runtime — interpreter, memory, tables, and host function support.
 //!
-//! This module provides the execution engine for WebAssembly modules,
-//! including the stack machine, value representation, and instruction interpreter.
+//! Most types are re-exported at the crate root for convenience. See the
+//! [crate-level documentation](crate) for usage examples.
 
-pub mod control;
-pub mod executor;
-pub mod frame;
+pub(crate) mod control;
+pub(crate) mod executor;
+pub(crate) mod frame;
 pub mod host;
 pub mod imports;
-pub mod instance;
+pub(crate) mod instance;
 pub mod memory;
-pub mod ops;
-pub mod stack;
+pub(crate) mod ops;
+pub(crate) mod stack;
 pub mod store;
 pub mod table;
-pub mod test_utils;
+pub(crate) mod test_utils;
 pub mod value;
 pub mod wasi;
 
@@ -26,11 +26,9 @@ pub use store::{Caller, FuncAddr, FunctionInstance, GlobalAddr, HostFunc, Memory
 pub use table::Table;
 pub use value::Value;
 
-use crate::parser::module::{FunctionType, ValueType};
-
-/// Outcome of executing a function - either complete or needs external call
+/// Outcome of executing a function — either complete or needs an external call
 #[derive(Debug)]
-pub enum ExecutionOutcome {
+pub(crate) enum ExecutionOutcome {
     /// Execution completed with these return values
     Complete(Vec<Value>),
     /// Execution paused, needs external function call before resuming
@@ -39,17 +37,17 @@ pub enum ExecutionOutcome {
 
 /// Request for an external function call (cross-module)
 #[derive(Debug)]
-pub struct ExternalCallRequest {
+pub(crate) struct ExternalCallRequest {
     /// The function address to call
-    pub func_addr: FuncAddr,
+    pub(crate) func_addr: FuncAddr,
     /// Arguments to pass to the function
-    pub args: Vec<Value>,
-    /// Expected return types (for validation)
-    pub return_types: Vec<ValueType>,
-    /// The function type for type checking
-    pub func_type: FunctionType,
+    pub(crate) args: Vec<Value>,
 }
 
+/// Runtime error type for WebAssembly execution failures.
+///
+/// Covers traps (division by zero, out-of-bounds memory access, stack overflow),
+/// type mismatches, missing imports/exports, and resource exhaustion.
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
     #[error("stack underflow")]

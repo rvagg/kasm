@@ -46,6 +46,12 @@ fn get_export_string_display(name: &str) -> &str {
     if is_wabt_empty_control_sequence(name) { "" } else { name }
 }
 
+/// A parsed WebAssembly module.
+///
+/// Produced by [`parser::parse()`](crate::parser::parse) (binary format) or
+/// [`wat::parse()`](crate::wat::parse) (text format). Passed to
+/// [`Store::create_instance()`](crate::Store::create_instance) wrapped in
+/// `Arc<Module>` for instantiation.
 #[derive(Debug)]
 pub struct Module {
     pub name: String,

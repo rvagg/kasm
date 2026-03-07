@@ -1,8 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use kasm::parser::module;
-    use kasm::runtime::{ImportObject, Store, Value};
     use kasm::wast::*;
+    use kasm::{ImportObject, Module, Store, Value};
     use rstest::rstest;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -24,7 +23,7 @@ mod tests {
         registered_instances: HashMap<String, usize>,
         last_instance: Option<usize>,
         /// Module registry for binary parser (spectest etc.)
-        module_registry: HashMap<String, module::Module>,
+        module_registry: HashMap<String, Module>,
     }
 
     impl WastRunner {
@@ -46,7 +45,7 @@ mod tests {
         }
 
         /// Parse and validate a WastModule. Both binary and WAT paths perform type-level validation.
-        fn parse_module(&self, wast_module: &WastModule) -> Result<module::Module, String> {
+        fn parse_module(&self, wast_module: &WastModule) -> Result<Module, String> {
             match wast_module {
                 WastModule::Binary(bytes) => {
                     let mut reader = kasm::parser::reader::Reader::new(bytes.clone());
