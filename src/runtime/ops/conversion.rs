@@ -13,6 +13,29 @@
 
 use super::*;
 
+// Truncation range bounds (spec 4.4.1.6)
+//
+// Each pair defines [MIN, MAX) — the half-open range of truncated float values
+// that fit in the target integer type. Values outside this range cause
+// IntegerOverflow traps.
+
+const I32_TRUNC_F32_S_MIN: f32 = -2147483648.0; // i32::MIN as f32
+const I32_TRUNC_F32_S_MAX: f32 = 2147483648.0; // 2^31
+const I32_TRUNC_F32_U_MIN: f32 = 0.0;
+const I32_TRUNC_F32_U_MAX: f32 = 4294967296.0; // 2^32
+const I32_TRUNC_F64_S_MIN: f64 = -2147483648.0; // i32::MIN as f64
+const I32_TRUNC_F64_S_MAX: f64 = 2147483648.0; // 2^31
+const I32_TRUNC_F64_U_MIN: f64 = 0.0;
+const I32_TRUNC_F64_U_MAX: f64 = 4294967296.0; // 2^32
+const I64_TRUNC_F32_S_MIN: f32 = -9223372036854775808.0; // i64::MIN as f32
+const I64_TRUNC_F32_S_MAX: f32 = 9223372036854775808.0; // 2^63
+const I64_TRUNC_F32_U_MIN: f32 = 0.0;
+const I64_TRUNC_F32_U_MAX: f32 = 18446744073709551616.0; // 2^64
+const I64_TRUNC_F64_S_MIN: f64 = -9223372036854775808.0; // i64::MIN as f64
+const I64_TRUNC_F64_S_MAX: f64 = 9223372036854775808.0; // 2^63
+const I64_TRUNC_F64_U_MIN: f64 = 0.0;
+const I64_TRUNC_F64_U_MAX: f64 = 18446744073709551616.0; // 2^64
+
 // ============================================================================
 // Integer Width Conversions
 // ============================================================================
@@ -252,11 +275,7 @@ pub fn i32_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     // Truncate first, then check range
     let truncated = value.trunc();
 
-    // Check if truncated value fits in i32
-    const MIN: f32 = -2147483648.0; // i32::MIN as f32
-    const MAX: f32 = 2147483648.0; // 2^31 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I32_TRUNC_F32_S_MIN..I32_TRUNC_F32_S_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 
@@ -286,10 +305,7 @@ pub fn i32_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         return Ok(());
     }
 
-    const MIN: f32 = 0.0;
-    const MAX: f32 = 4294967296.0; // 2^32 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I32_TRUNC_F32_U_MIN..I32_TRUNC_F32_U_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 
@@ -313,11 +329,7 @@ pub fn i32_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     // Truncate first, then check range
     let truncated = value.trunc();
 
-    // Check if truncated value fits in i32
-    const MIN: f64 = -2147483648.0; // i32::MIN as f64
-    const MAX: f64 = 2147483648.0; // 2^31 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I32_TRUNC_F64_S_MIN..I32_TRUNC_F64_S_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 
@@ -347,10 +359,7 @@ pub fn i32_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         return Ok(());
     }
 
-    const MIN: f64 = 0.0;
-    const MAX: f64 = 4294967296.0; // 2^32 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I32_TRUNC_F64_U_MIN..I32_TRUNC_F64_U_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 
@@ -374,11 +383,7 @@ pub fn i64_trunc_f32_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     // Truncate first, then check range
     let truncated = value.trunc();
 
-    // f32 can't represent the full i64 range precisely
-    const MIN: f32 = -9223372036854775808.0; // i64::MIN as f32
-    const MAX: f32 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I64_TRUNC_F32_S_MIN..I64_TRUNC_F32_S_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 
@@ -408,10 +413,7 @@ pub fn i64_trunc_f32_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         return Ok(());
     }
 
-    const MIN: f32 = 0.0;
-    const MAX: f32 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I64_TRUNC_F32_U_MIN..I64_TRUNC_F32_U_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 
@@ -435,11 +437,7 @@ pub fn i64_trunc_f64_s(stack: &mut Stack) -> Result<(), RuntimeError> {
     // Truncate first, then check range
     let truncated = value.trunc();
 
-    // f64 can't represent the full i64 range precisely at the extremes
-    const MIN: f64 = -9223372036854775808.0; // i64::MIN as f64
-    const MAX: f64 = 9223372036854775808.0; // 2^63 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I64_TRUNC_F64_S_MIN..I64_TRUNC_F64_S_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 
@@ -469,10 +467,7 @@ pub fn i64_trunc_f64_u(stack: &mut Stack) -> Result<(), RuntimeError> {
         return Ok(());
     }
 
-    const MIN: f64 = 0.0;
-    const MAX: f64 = 18446744073709551616.0; // 2^64 (exclusive upper bound)
-
-    if !(MIN..MAX).contains(&truncated) {
+    if !(I64_TRUNC_F64_U_MIN..I64_TRUNC_F64_U_MAX).contains(&truncated) {
         return Err(RuntimeError::IntegerOverflow);
     }
 

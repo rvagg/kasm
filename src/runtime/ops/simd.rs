@@ -241,7 +241,7 @@ fn f32x4_unary(stack: &mut Stack, op: fn(f32) -> f32) -> Result<(), RuntimeError
     Ok(())
 }
 
-/// Apply a binary f32 operation lane-wise across two v128 values
+/// Apply a binary f32 operation lane-wise, canonicalising NaN results.
 fn f32x4_binary(stack: &mut Stack, op: fn(f32, f32) -> f32) -> Result<(), RuntimeError> {
     let b = get_f32_lanes(stack.pop_v128()?);
     let a = get_f32_lanes(stack.pop_v128()?);

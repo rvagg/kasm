@@ -485,7 +485,7 @@ pub fn f64_abs(stack: &mut Stack) -> Result<(), RuntimeError> {
 /// Note: Flips sign bit, including for NaN and infinity
 pub fn f64_neg(stack: &mut Stack) -> Result<(), RuntimeError> {
     let value = stack.pop_f64()?;
-    stack.push(Value::F64(f64::from_bits(value.to_bits() ^ (1u64 << 63))));
+    stack.push(Value::F64(f64::from_bits(value.to_bits() ^ 0x8000000000000000)));
     Ok(())
 }
 

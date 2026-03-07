@@ -58,7 +58,8 @@ impl ImportObject {
     /// Get a function import
     ///
     /// # Errors
-    /// Returns `UnknownFunction` error if the import doesn't exist
+    /// - `IncompatibleImportType` if the name exists under a different kind
+    /// - `UnknownExport` if the import doesn't exist at all
     pub fn get_function(&self, module: &str, name: &str) -> Result<FuncAddr, RuntimeError> {
         self.functions
             .get(&(module.to_string(), name.to_string()))
@@ -121,7 +122,8 @@ impl ImportObject {
     /// Get a memory import
     ///
     /// # Errors
-    /// Returns `UnknownExport` error if the import doesn't exist
+    /// - `IncompatibleImportType` if the name exists under a different kind
+    /// - `UnknownExport` if the import doesn't exist at all
     pub fn get_memory(&self, module: &str, name: &str) -> Result<MemoryAddr, RuntimeError> {
         self.memories
             .get(&(module.to_string(), name.to_string()))
@@ -137,7 +139,8 @@ impl ImportObject {
     /// Get a table import
     ///
     /// # Errors
-    /// Returns `UnknownExport` error if the import doesn't exist
+    /// - `IncompatibleImportType` if the name exists under a different kind
+    /// - `UnknownExport` if the import doesn't exist at all
     pub fn get_table(&self, module: &str, name: &str) -> Result<TableAddr, RuntimeError> {
         self.tables
             .get(&(module.to_string(), name.to_string()))
@@ -183,62 +186,41 @@ pub fn count_imported_globals(module: &Module) -> usize {
         .count()
 }
 
-/// Check if a global is mutable (handles both imported and module-defined globals)
-pub fn is_global_mutable(module: &Module, global_idx: u32) -> Result<bool, RuntimeError> {
-    let num_imported_globals = count_imported_globals(module);
+/// Look up the GlobalType for a global by its index in the module's global index
+/// space (imported globals first, then module-defined globals).
+fn lookup_global_type(module: &Module, global_idx: u32) -> Result<&crate::parser::module::GlobalType, RuntimeError> {
+    let num_imported = count_imported_globals(module);
 
-    if (global_idx as usize) < num_imported_globals {
-        // This is an imported global - check the import declaration
+    if (global_idx as usize) < num_imported {
         let import = module
             .imports
             .imports
             .iter()
-            .filter(|imp| matches!(imp.external_kind, ExternalKind::Global(_)))
+            .filter_map(|imp| match &imp.external_kind {
+                ExternalKind::Global(gt) => Some(gt),
+                _ => None,
+            })
             .nth(global_idx as usize)
             .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))?;
-
-        if let ExternalKind::Global(global_type) = &import.external_kind {
-            Ok(global_type.mutable)
-        } else {
-            Ok(false)
-        }
+        Ok(import)
     } else {
-        // This is a module-defined global
-        let module_global_idx = (global_idx as usize - num_imported_globals) as u32;
-        Ok(module
+        let local_idx = (global_idx as usize - num_imported) as u32;
+        module
             .globals
-            .get(module_global_idx)
-            .map(|g| g.global_type.mutable)
-            .unwrap_or(false))
+            .get(local_idx)
+            .map(|g| &g.global_type)
+            .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))
     }
+}
+
+/// Check if a global is mutable (handles both imported and module-defined globals)
+pub fn is_global_mutable(module: &Module, global_idx: u32) -> Result<bool, RuntimeError> {
+    Ok(lookup_global_type(module, global_idx)?.mutable)
 }
 
 /// Get the value type of a global (handles both imported and module-defined globals)
 pub fn global_value_type(module: &Module, global_idx: u32) -> Result<ValueType, RuntimeError> {
-    let num_imported_globals = count_imported_globals(module);
-
-    if (global_idx as usize) < num_imported_globals {
-        let import = module
-            .imports
-            .imports
-            .iter()
-            .filter(|imp| matches!(imp.external_kind, ExternalKind::Global(_)))
-            .nth(global_idx as usize)
-            .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))?;
-
-        if let ExternalKind::Global(global_type) = &import.external_kind {
-            Ok(global_type.value_type)
-        } else {
-            Err(RuntimeError::GlobalIndexOutOfBounds(global_idx))
-        }
-    } else {
-        let module_global_idx = (global_idx as usize - num_imported_globals) as u32;
-        module
-            .globals
-            .get(module_global_idx)
-            .map(|g| g.global_type.value_type)
-            .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))
-    }
+    Ok(lookup_global_type(module, global_idx)?.value_type)
 }
 
 #[cfg(test)]

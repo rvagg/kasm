@@ -329,11 +329,7 @@ impl Executor {
                         _ => return Err(RuntimeError::InvalidConstExpr("element offset must be i32".to_string())),
                     };
 
-                    let table_addr = self
-                        .table_addresses
-                        .get(*table_index as usize)
-                        .ok_or(RuntimeError::TableIndexOutOfBounds(*table_index))?;
-                    let table = &mut resources.tables[table_addr.0];
+                    let table = &mut resources.tables[self.resolve_table_idx(*table_index)?];
                     table.init(start_idx, &values, 0, values.len() as u32)?;
 
                     // Active segments are dropped after instantiation per spec
@@ -365,9 +361,7 @@ impl Executor {
                         )));
                     }
 
-                    let mem_addr = self.memory_addresses.first().ok_or_else(|| {
-                        RuntimeError::MemoryError("data segment requires memory but none exists".to_string())
-                    })?;
+                    let mem_idx = self.resolve_memory_idx()?;
 
                     let offset_value = self.evaluate_const_expr(offset, resources)?;
                     let offset_addr = match offset_value {
@@ -379,7 +373,7 @@ impl Executor {
                         }
                     };
 
-                    let memory = &mut resources.memories[mem_addr.0];
+                    let memory = &mut resources.memories[mem_idx];
                     let data = &data_segment.init;
 
                     // Bounds check: data must fit within allocated memory pages
@@ -555,20 +549,24 @@ impl Executor {
         Ok(())
     }
 
-    /// Get the current frame's locals (mutable)
+    /// Get the current frame's locals (mutable).
+    ///
+    /// Returns `Trap` if the call stack is empty (internal invariant violation).
     fn current_locals_mut(&mut self) -> Result<&mut Vec<Value>, RuntimeError> {
         self.call_stack
             .last_mut()
             .map(|frame| &mut frame.locals)
-            .ok_or(RuntimeError::InvalidFunctionType)
+            .ok_or_else(|| RuntimeError::Trap("no active call frame".to_string()))
     }
 
-    /// Get the current frame's locals (immutable)
+    /// Get the current frame's locals (immutable).
+    ///
+    /// Returns `Trap` if the call stack is empty (internal invariant violation).
     fn current_locals(&self) -> Result<&Vec<Value>, RuntimeError> {
         self.call_stack
             .last()
             .map(|frame| &frame.locals)
-            .ok_or(RuntimeError::InvalidFunctionType)
+            .ok_or_else(|| RuntimeError::Trap("no active call frame".to_string()))
     }
 
     /// Get the function type for a given function index
@@ -599,6 +597,22 @@ impl Executor {
             .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))
     }
 
+    /// Resolve the Store-level index for memory 0 (the only memory in Wasm 1.0/2.0).
+    fn resolve_memory_idx(&self) -> Result<usize, RuntimeError> {
+        self.memory_addresses
+            .first()
+            .map(|addr| addr.0)
+            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))
+    }
+
+    /// Resolve a table's Store-level index from a module-local table index.
+    fn resolve_table_idx(&self, table_idx: u32) -> Result<usize, RuntimeError> {
+        self.table_addresses
+            .get(table_idx as usize)
+            .map(|addr| addr.0)
+            .ok_or(RuntimeError::TableIndexOutOfBounds(table_idx))
+    }
+
     /// Link function addresses after instance creation
     ///
     /// This is called by Instance::link_functions() to provide the executor
@@ -607,20 +621,24 @@ impl Executor {
         self.function_addresses = function_addresses;
     }
 
-    /// Get the current label stack (mutable)
+    /// Get the current frame's label stack (mutable).
+    ///
+    /// Returns `Trap` if the call stack is empty (internal invariant violation).
     fn current_label_stack_mut(&mut self) -> Result<&mut Vec<Label>, RuntimeError> {
         self.call_stack
             .last_mut()
             .map(|frame| &mut frame.label_stack)
-            .ok_or(RuntimeError::InvalidFunctionType)
+            .ok_or_else(|| RuntimeError::Trap("no active call frame".to_string()))
     }
 
-    /// Get the current label stack (immutable)
+    /// Get the current frame's label stack (immutable).
+    ///
+    /// Returns `Trap` if the call stack is empty (internal invariant violation).
     fn current_label_stack(&self) -> Result<&Vec<Label>, RuntimeError> {
         self.call_stack
             .last()
             .map(|frame| &frame.label_stack)
-            .ok_or(RuntimeError::InvalidFunctionType)
+            .ok_or_else(|| RuntimeError::Trap("no active call frame".to_string()))
     }
 
     /// Create a function label for the implicit function block
@@ -739,7 +757,10 @@ impl Executor {
         results: Vec<Value>,
         resources: &mut Resources,
     ) -> Result<ExecutionOutcome, RuntimeError> {
-        let contexts = self.saved_contexts.take().ok_or(RuntimeError::InvalidFunctionType)?;
+        let contexts = self
+            .saved_contexts
+            .take()
+            .ok_or_else(|| RuntimeError::Trap("resume called without saved execution state".to_string()))?;
         let return_types = std::mem::take(&mut self.saved_return_types);
 
         for value in results {
@@ -749,7 +770,17 @@ impl Executor {
         self.run_execution_loop(contexts, return_types, resources)
     }
 
-    /// Main execution loop shared by execute_function_with_locals and resume_with_results
+    /// Main execution loop driving the state machine interpreter.
+    ///
+    /// Walks a stack of `ExecutionContext`s — each representing an instruction
+    /// sequence (function body, block, loop, if-branch). When a context's
+    /// instructions are exhausted it is popped and its `on_complete` action
+    /// fires (pop label or return from function).
+    ///
+    /// Returns `NeedsExternalCall` when an imported function is called,
+    /// saving the context stack so execution can resume via
+    /// `resume_with_results`. Returns `Complete` with the function's return
+    /// values when the outermost context finishes.
     fn run_execution_loop(
         &mut self,
         mut contexts: Vec<ExecutionContext>,
@@ -950,7 +981,12 @@ impl Executor {
         Ok(args)
     }
 
-    /// Handle return from function, returns true if execution should end
+    /// Unwind execution contexts until the enclosing function boundary.
+    ///
+    /// Pops contexts and their associated labels until a `ReturnFunction`
+    /// context is reached. If the returning function is the top-level call
+    /// (call stack depth 1), returns `true` to signal the execution loop
+    /// should exit. Returns `false` otherwise.
     fn handle_return_from_function(&mut self, contexts: &mut Vec<ExecutionContext>) -> Result<bool, RuntimeError> {
         let mut found_function_boundary = false;
 
@@ -980,7 +1016,13 @@ impl Executor {
         Ok(!found_function_boundary && contexts.is_empty())
     }
 
-    /// Execute a single instruction and return execution state (for state machine)
+    /// Dispatch a single structured instruction and return the next state.
+    ///
+    /// Handles control flow constructs (block/loop/if) by pushing labels and
+    /// returning `EnterNested`. Call/call_indirect return `CallFunction` or
+    /// `CallExternalFunction`. Branch/return instructions return `BranchTo`
+    /// or `ReturnFromFunction`. All other instructions are delegated to
+    /// `execute_plain_instruction` and return `Continue`.
     fn execute_instruction_state_machine(
         &mut self,
         instruction: &StructuredInstruction,
@@ -1000,11 +1042,7 @@ impl Executor {
                     let table_elem_idx = self.stack.pop_i32()? as u32;
 
                     // Look up the table and retrieve the function reference
-                    let table_addr = self
-                        .table_addresses
-                        .get(*table_idx as usize)
-                        .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                    let table = &resources.tables[table_addr.0];
+                    let table = &resources.tables[self.resolve_table_idx(*table_idx)?];
 
                     // Spec: call_indirect OOB is "undefined element", not "out of bounds table access"
                     let func_ref = table.get(table_elem_idx).map_err(|e| match e {
@@ -1113,7 +1151,12 @@ impl Executor {
         }
     }
 
-    /// Handle branching by unwinding contexts (for state machine)
+    /// Execute a branch by unwinding `depth` label contexts.
+    ///
+    /// For block labels, the target context is popped (exiting the block).
+    /// For loop labels, the target context's position is reset to 0
+    /// (restarting the loop). Branch arity values are preserved on the
+    /// operand stack across the unwind.
     fn handle_branch(&mut self, contexts: &mut Vec<ExecutionContext>, depth: u32) -> Result<(), RuntimeError> {
         let mut labels_to_pop = depth as usize;
 
@@ -1217,7 +1260,12 @@ impl Executor {
         Ok(())
     }
 
-    /// Execute a plain (non-control-flow) instruction
+    /// Execute a single non-control-flow instruction.
+    ///
+    /// Dispatches numeric, memory, table, reference, SIMD, and variable
+    /// instructions to their respective handlers in the `ops` module.
+    /// Control flow (block/loop/if/br/call/return) is handled by
+    /// `execute_instruction_state_machine` before reaching this method.
     fn execute_plain_instruction(
         &mut self,
         inst: &Instruction,
@@ -1227,42 +1275,22 @@ impl Executor {
 
         macro_rules! with_memory {
             (load $op:ident($memarg:expr)) => {{
-                let mem_idx = self
-                    .memory_addresses
-                    .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                    .0;
-                let memory = &resources.memories[mem_idx];
+                let memory = &resources.memories[self.resolve_memory_idx()?];
                 ops::memory::$op(&mut self.stack, memory, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
             (store $op:ident($memarg:expr)) => {{
-                let mem_idx = self
-                    .memory_addresses
-                    .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                    .0;
-                let memory = &mut resources.memories[mem_idx];
+                let memory = &mut resources.memories[self.resolve_memory_idx()?];
                 ops::memory::$op(&mut self.stack, memory, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
             (size $op:ident()) => {{
-                let mem_idx = self
-                    .memory_addresses
-                    .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                    .0;
-                let memory = &resources.memories[mem_idx];
+                let memory = &resources.memories[self.resolve_memory_idx()?];
                 ops::memory::$op(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }};
             (grow $op:ident()) => {{
-                let mem_idx = self
-                    .memory_addresses
-                    .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                    .0;
-                let memory = &mut resources.memories[mem_idx];
+                let memory = &mut resources.memories[self.resolve_memory_idx()?];
                 ops::memory::$op(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }};
@@ -1506,9 +1534,7 @@ impl Executor {
                     .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
 
                 if !is_global_mutable(&self.module, *global_idx)? {
-                    return Err(RuntimeError::InvalidConversion(
-                        "cannot set immutable global".to_string(),
-                    ));
+                    return Err(RuntimeError::Trap("cannot set immutable global".to_string()));
                 }
 
                 resources.globals[addr.0] = value;
@@ -1615,12 +1641,7 @@ impl Executor {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, src_offset, length]
             MemoryInit { data_idx } => {
-                let mem_idx = self
-                    .memory_addresses
-                    .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                    .0;
-                let memory = &mut resources.memories[mem_idx];
+                let memory = &mut resources.memories[self.resolve_memory_idx()?];
                 ops::memory::memory_init(
                     &mut self.stack,
                     memory,
@@ -1635,12 +1656,7 @@ impl Executor {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, src_addr, length]
             MemoryCopy => {
-                let mem_idx = self
-                    .memory_addresses
-                    .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                    .0;
-                let memory = &mut resources.memories[mem_idx];
+                let memory = &mut resources.memories[self.resolve_memory_idx()?];
                 ops::memory::memory_copy(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }
@@ -1649,12 +1665,7 @@ impl Executor {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, value, length]
             MemoryFill => {
-                let mem_idx = self
-                    .memory_addresses
-                    .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                    .0;
-                let memory = &mut resources.memories[mem_idx];
+                let memory = &mut resources.memories[self.resolve_memory_idx()?];
                 ops::memory::memory_fill(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }
@@ -2338,11 +2349,7 @@ impl Executor {
             // spec: 4.4.6.1
             TableGet { table_idx } => {
                 let idx = self.stack.pop_i32()?;
-                let table_addr = self
-                    .table_addresses
-                    .get(*table_idx as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table = &resources.tables[table_addr.0];
+                let table = &resources.tables[self.resolve_table_idx(*table_idx)?];
 
                 let value = table.get(idx as u32)?;
                 self.stack.push(value);
@@ -2352,23 +2359,14 @@ impl Executor {
             TableSet { table_idx } => {
                 let value = self.stack.pop()?;
                 let idx = self.stack.pop_i32()?;
-
-                let table_addr = self
-                    .table_addresses
-                    .get(*table_idx as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table = &mut resources.tables[table_addr.0];
+                let table = &mut resources.tables[self.resolve_table_idx(*table_idx)?];
 
                 table.set(idx as u32, Some(value))?;
                 Ok(BlockEnd::Normal)
             }
             // spec: 4.4.6.3
             TableSize { table_idx } => {
-                let table_addr = self
-                    .table_addresses
-                    .get(*table_idx as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table = &resources.tables[table_addr.0];
+                let table = &resources.tables[self.resolve_table_idx(*table_idx)?];
                 self.stack.push(Value::I32(table.size() as i32));
                 Ok(BlockEnd::Normal)
             }
@@ -2376,12 +2374,7 @@ impl Executor {
             TableGrow { table_idx } => {
                 let delta = self.stack.pop_i32()?;
                 let init_value = self.stack.pop()?;
-
-                let table_addr = self
-                    .table_addresses
-                    .get(*table_idx as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table = &mut resources.tables[table_addr.0];
+                let table = &mut resources.tables[self.resolve_table_idx(*table_idx)?];
 
                 let result = table.grow(delta as u32, Some(init_value))?;
                 self.stack.push(Value::I32(result as i32));
@@ -2398,12 +2391,7 @@ impl Executor {
                     .get(*elem_idx as usize)
                     .ok_or(RuntimeError::ElementIndexOutOfBounds(*elem_idx))?;
 
-                let table_addr = self
-                    .table_addresses
-                    .get(*table_idx as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table = &mut resources.tables[table_addr.0];
-
+                let table = &mut resources.tables[self.resolve_table_idx(*table_idx)?];
                 table.init(dst_idx, src_segment, src_idx, count)?;
                 Ok(BlockEnd::Normal)
             }
@@ -2413,16 +2401,8 @@ impl Executor {
                 let src_idx = self.stack.pop_i32()? as u32;
                 let dst_idx = self.stack.pop_i32()? as u32;
 
-                let dst_addr = self
-                    .table_addresses
-                    .get(*dst_table as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?
-                    .0;
-                let src_addr = self
-                    .table_addresses
-                    .get(*src_table as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*src_table))?
-                    .0;
+                let dst_addr = self.resolve_table_idx(*dst_table)?;
+                let src_addr = self.resolve_table_idx(*src_table)?;
 
                 if dst_addr == src_addr {
                     // Same table - use copy_within
@@ -2446,12 +2426,7 @@ impl Executor {
                 let count = self.stack.pop_i32()? as u32;
                 let value = self.stack.pop()?;
                 let start = self.stack.pop_i32()? as u32;
-
-                let table_addr = self
-                    .table_addresses
-                    .get(*table_idx as usize)
-                    .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table = &mut resources.tables[table_addr.0];
+                let table = &mut resources.tables[self.resolve_table_idx(*table_idx)?];
 
                 table.fill(start, count, Some(value))?;
                 Ok(BlockEnd::Normal)
@@ -2469,22 +2444,12 @@ impl Executor {
             Simd(op) => {
                 macro_rules! simd_mem {
                     (load $fn:ident($memarg:expr)) => {{
-                        let mem_idx = self
-                            .memory_addresses
-                            .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                            .0;
-                        let memory = &resources.memories[mem_idx];
+                        let memory = &resources.memories[self.resolve_memory_idx()?];
                         ops::simd::$fn(&mut self.stack, memory, $memarg)?;
                         Ok(BlockEnd::Normal)
                     }};
                     (store $fn:ident($memarg:expr)) => {{
-                        let mem_idx = self
-                            .memory_addresses
-                            .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                            .0;
-                        let memory = &mut resources.memories[mem_idx];
+                        let memory = &mut resources.memories[self.resolve_memory_idx()?];
                         ops::simd::$fn(&mut self.stack, memory, $memarg)?;
                         Ok(BlockEnd::Normal)
                     }};
@@ -2506,22 +2471,12 @@ impl Executor {
                 // Dispatch SIMD load-lane ops (memarg + lane + v128 + i32 on stack)
                 macro_rules! simd_mem_lane {
                     (load $fn:ident($memarg:expr, $lane:expr)) => {{
-                        let mem_idx = self
-                            .memory_addresses
-                            .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                            .0;
-                        let memory = &resources.memories[mem_idx];
+                        let memory = &resources.memories[self.resolve_memory_idx()?];
                         ops::simd::$fn(&mut self.stack, memory, $memarg, *$lane)?;
                         Ok(BlockEnd::Normal)
                     }};
                     (store $fn:ident($memarg:expr, $lane:expr)) => {{
-                        let mem_idx = self
-                            .memory_addresses
-                            .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
-                            .0;
-                        let memory = &mut resources.memories[mem_idx];
+                        let memory = &mut resources.memories[self.resolve_memory_idx()?];
                         ops::simd::$fn(&mut self.stack, memory, $memarg, *$lane)?;
                         Ok(BlockEnd::Normal)
                     }};

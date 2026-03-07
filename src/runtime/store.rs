@@ -141,28 +141,28 @@ enum PendingAction {
 /// FuncAddr provides stable, globally-unique identifiers for functions that work
 /// across module boundaries, enabling proper funcref semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FuncAddr(pub usize);
+pub struct FuncAddr(pub(crate) usize);
 
 /// Global memory address - index into the Store's memory registry
 ///
 /// MemoryAddr provides stable, globally-unique identifiers for memory instances
 /// that can be shared across module boundaries for memory imports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MemoryAddr(pub usize);
+pub struct MemoryAddr(pub(crate) usize);
 
 /// Global table address - index into the Store's table registry
 ///
 /// TableAddr provides stable, globally-unique identifiers for table instances
 /// that can be shared across module boundaries for table imports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TableAddr(pub usize);
+pub struct TableAddr(pub(crate) usize);
 
 /// Global address - index into the Store's global registry
 ///
 /// GlobalAddr provides stable, globally-unique identifiers for global instances
 /// that can be shared across module boundaries for mutable global imports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct GlobalAddr(pub usize);
+pub struct GlobalAddr(pub(crate) usize);
 
 /// A function instance in the Store
 ///
@@ -354,17 +354,23 @@ impl<T> Store<T> {
         addr
     }
 
-    /// Get a reference to a memory by its address
+    /// Get a reference to a memory by its address.
+    ///
+    /// Returns `None` if `addr` does not correspond to an allocated memory.
     pub fn get_memory(&self, addr: MemoryAddr) -> Option<&Memory> {
         self.resources.memories.get(addr.0)
     }
 
-    /// Get a mutable reference to a memory by its address
+    /// Get a mutable reference to a memory by its address.
+    ///
+    /// Returns `None` if `addr` does not correspond to an allocated memory.
     pub fn get_memory_mut(&mut self, addr: MemoryAddr) -> Option<&mut Memory> {
         self.resources.memories.get_mut(addr.0)
     }
 
-    /// Get a reference to a table by its address
+    /// Get a reference to a table by its address.
+    ///
+    /// Returns `None` if `addr` does not correspond to an allocated table.
     pub fn get_table(&self, addr: TableAddr) -> Option<&Table> {
         self.resources.tables.get(addr.0)
     }
@@ -378,12 +384,17 @@ impl<T> Store<T> {
         addr
     }
 
-    /// Get a global value by its address
+    /// Get a global value by its address.
+    ///
+    /// Returns `None` if `addr` does not correspond to an allocated global.
     pub fn get_global(&self, addr: GlobalAddr) -> Option<Value> {
         self.resources.globals.get(addr.0).copied()
     }
 
-    /// Set a global value by its address
+    /// Set a global value by its address.
+    ///
+    /// Returns `None` if `addr` does not correspond to an allocated global.
+    /// Does not check mutability — callers are responsible for that.
     pub fn set_global(&mut self, addr: GlobalAddr, value: Value) -> Option<()> {
         let slot = self.resources.globals.get_mut(addr.0)?;
         *slot = value;
@@ -435,9 +446,9 @@ impl<T> Store<T> {
         Ok((memory_addresses, table_addresses, global_addresses))
     }
 
-    /// Resolve memory imports or create local memories.
+    /// Resolve memory imports and create local memories.
     ///
-    /// WebAssembly 1.0 allows at most one memory, either imported or locally defined.
+    /// Imported memories come first in the index space, followed by locally defined ones.
     fn resolve_memories(
         &mut self,
         module: &crate::parser::module::Module,
@@ -445,44 +456,36 @@ impl<T> Store<T> {
     ) -> Result<Vec<MemoryAddr>, RuntimeError> {
         let mut addresses = Vec::new();
 
-        let has_memory_import = module
-            .imports
-            .imports
-            .iter()
-            .any(|imp| matches!(imp.external_kind, ExternalKind::Memory(_)));
+        for import in &module.imports.imports {
+            if let ExternalKind::Memory(expected_limits) = &import.external_kind {
+                let import_obj = imports.ok_or_else(|| {
+                    RuntimeError::MemoryError(format!("memory import {}.{} not found", import.module, import.name))
+                })?;
 
-        if has_memory_import {
-            for import in &module.imports.imports {
-                if let ExternalKind::Memory(expected_limits) = &import.external_kind {
-                    let import_obj = imports.ok_or_else(|| {
-                        RuntimeError::MemoryError(format!("memory import {}.{} not found", import.module, import.name))
-                    })?;
+                let mem_addr = import_obj.get_memory(&import.module, &import.name)?;
+                let mem = self.resources.memories.get(mem_addr.0).ok_or_else(|| {
+                    RuntimeError::MemoryError(format!(
+                        "memory import {}.{} not found in store",
+                        import.module, import.name
+                    ))
+                })?;
 
-                    let mem_addr = import_obj.get_memory(&import.module, &import.name)?;
-                    let mem = self.resources.memories.get(mem_addr.0).ok_or_else(|| {
-                        RuntimeError::MemoryError(format!(
-                            "memory import {}.{} not found in store",
-                            import.module, import.name
-                        ))
-                    })?;
+                validate_import_limits(
+                    mem.size(),
+                    mem.max_pages(),
+                    expected_limits,
+                    &import.module,
+                    &import.name,
+                )?;
 
-                    validate_import_limits(
-                        mem.size(),
-                        mem.max_pages(),
-                        expected_limits,
-                        &import.module,
-                        &import.name,
-                    )?;
-
-                    addresses.push(mem_addr);
-                }
+                addresses.push(mem_addr);
             }
-        } else {
-            for mem_def in &module.memory.memory {
-                let memory = Memory::new(mem_def.limits.min, mem_def.limits.max)?;
-                let addr = self.allocate_memory(memory);
-                addresses.push(addr);
-            }
+        }
+
+        for mem_def in &module.memory.memory {
+            let memory = Memory::new(mem_def.limits.min, mem_def.limits.max)?;
+            let addr = self.allocate_memory(memory);
+            addresses.push(addr);
         }
 
         Ok(addresses)
@@ -502,10 +505,9 @@ impl<T> Store<T> {
             if let ExternalKind::Table(expected_table_type) = &import.external_kind {
                 let import_obj = imports
                     .ok_or_else(|| RuntimeError::UnknownFunction(format!("{}.{}", import.module, import.name)))?;
-
                 let table_addr = import_obj.get_table(&import.module, &import.name)?;
                 let tbl = self.resources.tables.get(table_addr.0).ok_or_else(|| {
-                    RuntimeError::MemoryError(format!(
+                    RuntimeError::Trap(format!(
                         "table import {}.{} not found in store",
                         import.module, import.name
                     ))
@@ -553,7 +555,6 @@ impl<T> Store<T> {
             if let ExternalKind::Global(global_type) = &import.external_kind {
                 let import_obj = imports
                     .ok_or_else(|| RuntimeError::UnknownFunction(format!("{}.{}", import.module, import.name)))?;
-
                 let global_addr = import_obj.get_global_addr(&import.module, &import.name)?;
                 import_obj.validate_global(
                     &import.module,
@@ -564,7 +565,7 @@ impl<T> Store<T> {
 
                 // Verify the global exists in the store
                 if self.resources.globals.get(global_addr.0).is_none() {
-                    return Err(RuntimeError::MemoryError(format!(
+                    return Err(RuntimeError::Trap(format!(
                         "global import {}.{} not found in store",
                         import.module, import.name
                     )));
@@ -666,7 +667,7 @@ impl<T> Store<T> {
         let instance = self
             .instances
             .get(instance_id)
-            .ok_or_else(|| RuntimeError::UnknownExport(format!("instance {instance_id} not found")))?;
+            .ok_or_else(|| RuntimeError::Trap(format!("instance {instance_id} not found")))?;
         instance.get_global_export(name, &self.resources)
     }
 

@@ -8,7 +8,17 @@ use crate::parser::module::{ExportIndex, Module, Positional};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// A WebAssembly module instance
+/// A WebAssembly module instance.
+///
+/// An instance is the runtime footprint of a [`Module`] within a [`Store`](super::Store).
+/// It holds address maps that translate module-local indices to global addresses
+/// in the Store's resource pools, plus an executor that drives interpretation.
+///
+/// Lifecycle (all called by Store):
+/// 1. `new_unlinked` — allocate with resource addresses
+/// 2. `link_functions` — populate function addresses, then initialise globals,
+///    element segments, and data sections
+/// 3. `execute_start` — run the start function if present
 pub struct Instance {
     module: Arc<Module>,
     exports: HashMap<String, u32>, // Maps export name to function index
@@ -120,97 +130,13 @@ impl Instance {
         Ok(None)
     }
 
-    /// Invoke an exported function by name
-    ///
-    /// Resolves the export, validates argument types, and delegates to the executor.
-    /// Cannot handle cross-module calls — use `Store::invoke_export()` for that.
-    ///
-    /// # Errors
-    /// - `UnknownExport` if the export doesn't exist
-    /// - `TypeMismatch` if argument count or types don't match
-    /// - `FunctionIndexOutOfBounds` if the function index is invalid
-    #[allow(dead_code)]
-    pub(crate) fn invoke(
-        &mut self,
-        name: &str,
-        args: Vec<Value>,
-        resources: &mut Resources,
-    ) -> Result<ExecutionOutcome, RuntimeError> {
-        // Find the export
-        let export_index = self
-            .exports
-            .get(name)
-            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
-
-        let func_idx = *export_index;
-        let num_imported_functions = self.module.imports.function_count();
-
-        // Imported functions can't be executed directly by the instance
-        if (func_idx as usize) < num_imported_functions {
-            return Err(RuntimeError::UnimplementedInstruction(
-                "Cannot execute imported functions".to_string(),
-            ));
-        }
-
-        // Functions section only contains non-imported functions
-        let code_idx = func_idx as usize - num_imported_functions;
-
-        let func = self
-            .module
-            .functions
-            .functions
-            .get(code_idx)
-            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
-
-        let func_type = self
-            .module
-            .types
-            .types
-            .get(func.ftype_index as usize)
-            .ok_or(RuntimeError::InvalidFunctionType)?;
-
-        // Check argument count
-        if args.len() != func_type.parameters.len() {
-            return Err(RuntimeError::TypeMismatch {
-                expected: format!("{} arguments", func_type.parameters.len()),
-                actual: format!("{} arguments", args.len()),
-            });
-        }
-
-        for (i, (arg, expected_type)) in args.iter().zip(&func_type.parameters).enumerate() {
-            if arg.typ() != *expected_type {
-                return Err(RuntimeError::TypeMismatch {
-                    expected: format!("{expected_type:?} for argument {i}"),
-                    actual: format!("{:?}", arg.typ()),
-                });
-            }
-        }
-
-        let body = self
-            .module
-            .code
-            .code
-            .get(code_idx)
-            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
-
-        let structured_func = &body.body;
-
-        self.executor.execute_function_with_locals(
-            structured_func,
-            args,
-            &func_type.return_types,
-            Some(&body.locals),
-            resources,
-        )
-    }
-
     /// Invoke a function by its local function index
     ///
     /// Used by Store to execute functions. The func_idx includes both imported
     /// and local functions in the module's function index space.
     ///
     /// # Errors
-    /// - `UnimplementedInstruction` if func_idx refers to an imported function
+    /// - `Trap` if func_idx refers to an imported function (Store handles these)
     /// - `FunctionIndexOutOfBounds` if the index is invalid
     /// - `TypeMismatch` if argument count or types don't match
     pub(super) fn invoke_by_index(
@@ -222,8 +148,8 @@ impl Instance {
         let num_imported_functions = self.module.imports.function_count();
 
         if (func_idx as usize) < num_imported_functions {
-            return Err(RuntimeError::UnimplementedInstruction(format!(
-                "Cannot execute imported function at index {func_idx}"
+            return Err(RuntimeError::Trap(format!(
+                "imported function {func_idx} must be dispatched by Store"
             )));
         }
 
@@ -239,7 +165,7 @@ impl Instance {
             .module
             .types
             .get(func.ftype_index)
-            .ok_or(RuntimeError::InvalidFunctionType)?;
+            .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         if args.len() != func_type.parameters.len() {
             return Err(RuntimeError::TypeMismatch {
@@ -309,17 +235,20 @@ impl Instance {
     /// # Errors
     /// - `UnknownExport` if the export doesn't exist or isn't a global
     pub fn get_global_export(&self, name: &str, resources: &Resources) -> Result<Value, RuntimeError> {
-        let export = self
-            .module
-            .exports
-            .get_by_name(name)
-            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
-
-        if let ExportIndex::Global(global_idx) = export.index {
+        if let ExportIndex::Global(global_idx) = self.find_export(name)? {
             self.executor.get_global(global_idx, resources)
         } else {
             Err(RuntimeError::UnknownExport(format!("{} is not a global export", name)))
         }
+    }
+
+    /// Look up an export by name, returning its ExportIndex.
+    fn find_export(&self, name: &str) -> Result<ExportIndex, RuntimeError> {
+        self.module
+            .exports
+            .get_by_name(name)
+            .map(|e| e.index)
+            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))
     }
 
     /// Get the GlobalAddr for an exported global by name
@@ -327,15 +256,9 @@ impl Instance {
     /// # Errors
     /// - `UnknownExport` if the export doesn't exist or isn't a global
     pub fn get_global_addr(&self, name: &str) -> Result<GlobalAddr, RuntimeError> {
-        let export = self
-            .module
-            .exports
-            .get_by_name(name)
-            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
-
-        if let ExportIndex::Global(global_idx) = export.index {
+        if let ExportIndex::Global(idx) = self.find_export(name)? {
             self.global_addresses
-                .get(global_idx as usize)
+                .get(idx as usize)
                 .copied()
                 .ok_or_else(|| RuntimeError::UnknownExport(format!("global {} not found", name)))
         } else {
@@ -348,15 +271,9 @@ impl Instance {
     /// # Errors
     /// - `UnknownExport` if the export doesn't exist or isn't a memory
     pub fn get_memory_addr(&self, name: &str) -> Result<MemoryAddr, RuntimeError> {
-        let export = self
-            .module
-            .exports
-            .get_by_name(name)
-            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
-
-        if let ExportIndex::Memory(mem_idx) = export.index {
+        if let ExportIndex::Memory(idx) = self.find_export(name)? {
             self.memory_addresses
-                .get(mem_idx as usize)
+                .get(idx as usize)
                 .copied()
                 .ok_or_else(|| RuntimeError::UnknownExport(format!("memory {} not found", name)))
         } else {
@@ -369,15 +286,9 @@ impl Instance {
     /// # Errors
     /// - `UnknownExport` if the export doesn't exist or isn't a table
     pub fn get_table_addr(&self, name: &str) -> Result<TableAddr, RuntimeError> {
-        let export = self
-            .module
-            .exports
-            .get_by_name(name)
-            .ok_or_else(|| RuntimeError::UnknownExport(name.to_string()))?;
-
-        if let ExportIndex::Table(table_idx) = export.index {
+        if let ExportIndex::Table(idx) = self.find_export(name)? {
             self.table_addresses
-                .get(table_idx as usize)
+                .get(idx as usize)
                 .copied()
                 .ok_or_else(|| RuntimeError::UnknownExport(format!("table {} not found", name)))
         } else {

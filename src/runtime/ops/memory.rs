@@ -451,7 +451,8 @@ pub fn memory_copy(stack: &mut Stack, memory: &mut Memory) -> Result<(), Runtime
         return Ok(());
     }
 
-    // Read all bytes first (to handle overlapping regions correctly)
+    // Buffer the source bytes before writing — src and dest may overlap within
+    // the same memory, so an in-place copy could corrupt unread source bytes.
     let mut bytes = Vec::with_capacity(length as usize);
     for i in 0..length {
         bytes.push(memory.read_u8(src_addr + i)?);
