@@ -25,8 +25,8 @@
 
 use super::WasiContext;
 use crate::parser::module::{FunctionType, ValueType};
-use crate::runtime::store::{FunctionInstance, Store};
-use crate::runtime::{ImportObject, RuntimeError, Value};
+use crate::runtime::store::{Caller, FunctionInstance, Store};
+use crate::runtime::{ImportObject, Memory, RuntimeError, Value};
 use std::sync::Arc;
 
 /// Add AssemblyScript-specific imports to an ImportObject.
@@ -42,7 +42,7 @@ pub fn add_assemblyscript_imports(store: &mut Store<'_>, imports: &mut ImportObj
         return_types: vec![],
     };
     let abort_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |args| env_abort(&ctx, args)),
+        func: Box::new(move |caller, args| env_abort(&ctx, caller, args)),
         func_type: abort_type,
     });
     imports.add_function("env", "abort", abort_addr);
@@ -63,13 +63,13 @@ fn extract_i32(args: &[Value], index: usize) -> Option<i32> {
 /// - ptr: UTF-16LE encoded string data
 ///
 /// Returns None if the pointer is 0 (null) or if reading fails.
-fn read_as_string(ctx: &WasiContext, ptr: u32) -> Option<String> {
+fn read_as_string(memory: &Memory, ptr: u32) -> Option<String> {
     if ptr == 0 {
         return None;
     }
 
     // Read length from ptr-4
-    let len_bytes = ctx.read_u32(ptr.wrapping_sub(4)).ok()?;
+    let len_bytes = memory.read_u32(ptr.wrapping_sub(4)).ok()?;
 
     // Sanity check: length should be reasonable and even (UTF-16)
     if len_bytes == 0 || len_bytes > 10000 || len_bytes % 2 != 0 {
@@ -77,7 +77,7 @@ fn read_as_string(ctx: &WasiContext, ptr: u32) -> Option<String> {
     }
 
     // Read UTF-16LE bytes
-    let bytes = ctx.read_bytes(ptr, len_bytes as usize).ok()?;
+    let bytes = memory.read_bytes(ptr, len_bytes as usize).ok()?;
 
     // Convert from UTF-16LE to String
     let utf16: Vec<u16> = bytes
@@ -93,15 +93,20 @@ fn read_as_string(ctx: &WasiContext, ptr: u32) -> Option<String> {
 /// Called when an assertion fails or when `abort()` is called explicitly in
 /// AssemblyScript code. The message and filename pointers reference UTF-16
 /// encoded strings in linear memory (AssemblyScript's native string format).
-fn env_abort(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
+fn env_abort(ctx: &WasiContext, caller: &mut Caller<'_>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let message_ptr = extract_i32(&args, 0).unwrap_or(0) as u32;
     let filename_ptr = extract_i32(&args, 1).unwrap_or(0) as u32;
     let line = extract_i32(&args, 2).unwrap_or(0);
     let column = extract_i32(&args, 3).unwrap_or(0);
 
-    // Try to read the message and filename from memory
-    let message = read_as_string(ctx, message_ptr);
-    let filename = read_as_string(ctx, filename_ptr);
+    // Try to read the message and filename from memory (best-effort)
+    let (message, filename) = match caller.memory() {
+        Some(memory) => (
+            read_as_string(memory, message_ptr),
+            read_as_string(memory, filename_ptr),
+        ),
+        None => (None, None),
+    };
 
     // Set exit code to 1 (abnormal termination)
     ctx.set_exit_code(1);
@@ -129,12 +134,10 @@ fn env_abort(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeE
 mod tests {
     use super::*;
     use crate::runtime::Memory;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     #[test]
     fn test_add_assemblyscript_imports() {
-        let mut store = Store::new();
+        let mut store = crate::runtime::store::Store::new();
         let ctx = Arc::new(WasiContext::builder().build());
         let mut imports = ImportObject::new();
 
@@ -147,10 +150,7 @@ mod tests {
     fn test_env_abort_sets_exit_code() {
         let ctx = WasiContext::builder().build();
 
-        // Bind memory (required for context)
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
         let args = vec![
             Value::I32(0),  // message ptr (null)
@@ -158,7 +158,8 @@ mod tests {
             Value::I32(42), // line
             Value::I32(10), // column
         ];
-        let result = env_abort(&ctx, args);
+        let mut caller = Caller::for_test(Some(&mut memory));
+        let result = env_abort(&ctx, &mut caller, args);
 
         assert!(result.is_err());
         assert_eq!(ctx.exit_code(), Some(1));
@@ -175,9 +176,7 @@ mod tests {
     fn test_env_abort_reads_strings() {
         let ctx = WasiContext::builder().build();
 
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
         // Write an AssemblyScript string "Error!" at address 100
         // Format: length at ptr-4, UTF-16LE data at ptr
@@ -187,26 +186,26 @@ mod tests {
         let len_bytes = (utf16.len() * 2) as u32;
 
         // Write length at address 96 (100 - 4)
-        ctx.write_u32(96, len_bytes).unwrap();
+        memory.write_u32(96, len_bytes).unwrap();
 
         // Write UTF-16LE data at address 100
         let mut utf16_bytes = Vec::new();
         for ch in &utf16 {
             utf16_bytes.extend_from_slice(&ch.to_le_bytes());
         }
-        ctx.write_bytes(100, &utf16_bytes).unwrap();
+        memory.write_bytes(100, &utf16_bytes).unwrap();
 
         // Write filename "test.ts" at address 200
         let filename = "test.ts";
         let utf16_fn: Vec<u16> = filename.encode_utf16().collect();
         let len_fn = (utf16_fn.len() * 2) as u32;
 
-        ctx.write_u32(196, len_fn).unwrap();
+        memory.write_u32(196, len_fn).unwrap();
         let mut utf16_fn_bytes = Vec::new();
         for ch in &utf16_fn {
             utf16_fn_bytes.extend_from_slice(&ch.to_le_bytes());
         }
-        ctx.write_bytes(200, &utf16_fn_bytes).unwrap();
+        memory.write_bytes(200, &utf16_fn_bytes).unwrap();
 
         let args = vec![
             Value::I32(100), // message ptr
@@ -214,7 +213,8 @@ mod tests {
             Value::I32(42),  // line
             Value::I32(10),  // column
         ];
-        let result = env_abort(&ctx, args);
+        let mut caller = Caller::for_test(Some(&mut memory));
+        let result = env_abort(&ctx, &mut caller, args);
 
         assert!(result.is_err());
         if let Err(RuntimeError::Trap(msg)) = result {
@@ -229,27 +229,23 @@ mod tests {
 
     #[test]
     fn test_read_as_string() {
-        let ctx = WasiContext::builder().build();
-
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
         // Null pointer returns None
-        assert_eq!(read_as_string(&ctx, 0), None);
+        assert_eq!(read_as_string(&memory, 0), None);
 
         // Write "Hello" as AssemblyScript string at address 104 (length at 100)
         let text = "Hello";
         let utf16: Vec<u16> = text.encode_utf16().collect();
         let len_bytes = (utf16.len() * 2) as u32;
 
-        ctx.write_u32(100, len_bytes).unwrap();
+        memory.write_u32(100, len_bytes).unwrap();
         let mut utf16_bytes = Vec::new();
         for ch in &utf16 {
             utf16_bytes.extend_from_slice(&ch.to_le_bytes());
         }
-        ctx.write_bytes(104, &utf16_bytes).unwrap();
+        memory.write_bytes(104, &utf16_bytes).unwrap();
 
-        assert_eq!(read_as_string(&ctx, 104), Some("Hello".to_string()));
+        assert_eq!(read_as_string(&memory, 104), Some("Hello".to_string()));
     }
 }

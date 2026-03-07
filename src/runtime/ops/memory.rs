@@ -519,8 +519,8 @@ mod tests {
     ) -> Result<Vec<Value>, RuntimeError> {
         let structured_func = StructureBuilder::build_function(&instructions, 0, return_types.to_vec())
             .expect("Structure building should succeed");
-        let mut executor = Executor::new(module).expect("Executor creation should succeed");
-        let outcome = executor.execute_function(&structured_func, args, return_types)?;
+        let (mut executor, mut resources) = Executor::new(module).expect("Executor creation should succeed");
+        let outcome = executor.execute_function(&structured_func, args, return_types, &mut resources)?;
         match outcome {
             crate::runtime::ExecutionOutcome::Complete(results) => Ok(results),
             crate::runtime::ExecutionOutcome::NeedsExternalCall(_) => {
@@ -593,7 +593,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(10) },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 2 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -604,7 +604,7 @@ mod tests {
             .expect("Structure building should succeed");
         let result = unwrap_complete(
             executor
-                .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32])
+                .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32], &mut resources)
                 .unwrap(),
         );
 
@@ -620,7 +620,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(2) },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 5 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -628,7 +628,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
+                .unwrap(),
+        );
 
         // Should return -1 (failure)
         assert_eq!(result, vec![Value::I32(-1)]);
@@ -642,7 +646,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: -1 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -650,7 +654,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
+                .unwrap(),
+        );
 
         // Should return -1 (failure)
         assert_eq!(result, vec![Value::I32(-1)]);
@@ -664,7 +672,7 @@ mod tests {
             limits: Limits { min: 2, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 0 }),
             make_instruction(InstructionKind::MemoryGrow),
@@ -672,7 +680,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
+                .unwrap(),
+        );
 
         // Should return current size (2)
         assert_eq!(result, vec![Value::I32(2)]);
@@ -686,7 +698,7 @@ mod tests {
             limits: Limits { min: 1, max: Some(5) },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::MemorySize),
             make_instruction(InstructionKind::I32Const { value: 1 }),
@@ -722,6 +734,7 @@ mod tests {
                         ValueType::I32,
                         ValueType::I32,
                     ],
+                    &mut resources,
                 )
                 .unwrap(),
         );
@@ -748,7 +761,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 100 }), // address,
             make_instruction(InstructionKind::I32Const { value: 42 }),  // value,
@@ -763,7 +776,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
+                .unwrap(),
+        );
 
         assert_eq!(result, vec![Value::I32(42)]);
     }
@@ -776,7 +793,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 100 }),
             make_instruction(InstructionKind::I32Const { value: 0x12345678 }),
@@ -791,7 +808,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
+                .unwrap(),
+        );
 
         assert_eq!(result, vec![Value::I32(0x12345678)]);
     }
@@ -804,7 +825,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: 0 }),
             make_instruction(InstructionKind::I32Const { value: 100 }),
@@ -840,7 +861,12 @@ mod tests {
                 .expect("Structure building should succeed");
         let result = unwrap_complete(
             executor
-                .execute_function(&func, vec![], &[ValueType::I32, ValueType::I32, ValueType::I32])
+                .execute_function(
+                    &func,
+                    vec![],
+                    &[ValueType::I32, ValueType::I32, ValueType::I32],
+                    &mut resources,
+                )
                 .unwrap(),
         );
 
@@ -855,7 +881,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
 
         // Try to load from last valid address (PAGE_SIZE - 4)
         let instructions = vec![
@@ -869,7 +895,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
+                .unwrap(),
+        );
         assert_eq!(result, vec![Value::I32(0)]); // Memory is zero-initialised
 
         // Try to load from out of bounds address
@@ -884,7 +914,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![].to_vec())
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[]);
+        let result = executor.execute_function(&func, vec![], &[], &mut resources);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("out of bounds"));
     }
@@ -897,7 +927,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
 
         // Try to store at last valid address
         let instructions = vec![
@@ -913,7 +943,11 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = unwrap_complete(executor.execute_function(&func, vec![], &[ValueType::I32]).unwrap());
+        let result = unwrap_complete(
+            executor
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
+                .unwrap(),
+        );
         assert_eq!(result, vec![Value::I32(1)]);
 
         // Try to store at out of bounds address
@@ -929,7 +963,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![].to_vec())
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[]);
+        let result = executor.execute_function(&func, vec![], &[], &mut resources);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("out of bounds"));
     }
@@ -942,7 +976,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
         let instructions = vec![
             make_instruction(InstructionKind::I32Const { value: i32::MAX }),
             make_instruction(InstructionKind::I32Load {
@@ -952,7 +986,7 @@ mod tests {
         ];
         let func = StructureBuilder::build_function(&instructions, 0, vec![ValueType::I32])
             .expect("Structure building should succeed");
-        let result = executor.execute_function(&func, vec![], &[ValueType::I32]);
+        let result = executor.execute_function(&func, vec![], &[ValueType::I32], &mut resources);
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
         assert!(
@@ -1011,7 +1045,7 @@ mod tests {
             limits: Limits { min: 1, max: None },
         });
 
-        let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+        let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
 
         // First call: store a value
         let store_instructions = vec![
@@ -1025,7 +1059,9 @@ mod tests {
         let store_func = StructureBuilder::build_function(&store_instructions, 0, vec![])
             .expect("Structure building should succeed");
 
-        executor.execute_function(&store_func, vec![], &[]).unwrap();
+        executor
+            .execute_function(&store_func, vec![], &[], &mut resources)
+            .unwrap();
 
         // Second call: load the value back
         let load_instructions = vec![
@@ -1040,7 +1076,7 @@ mod tests {
 
         let result = unwrap_complete(
             executor
-                .execute_function(&load_func, vec![], &[ValueType::I32])
+                .execute_function(&load_func, vec![], &[ValueType::I32], &mut resources)
                 .unwrap(),
         );
 

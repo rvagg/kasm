@@ -69,7 +69,7 @@ pub fn create_spectest_imports(store: &mut Store) -> ImportObject {
 
     let mut host_fn = |params: Vec<ValueType>| -> FuncAddr {
         store.allocate_function(FunctionInstance::Host {
-            func: Box::new(|_args| Ok(vec![])),
+            func: Box::new(|_caller, _args| Ok(vec![])),
             func_type: FunctionType {
                 parameters: params,
                 return_types: vec![],

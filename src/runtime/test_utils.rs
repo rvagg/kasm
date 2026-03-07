@@ -61,18 +61,15 @@ pub mod test {
             self
         }
 
-        pub fn expect_stack(mut self, expected: Vec<Value>) {
+        /// Build a module and executor+resources for testing
+        fn build_executor(&mut self) -> (Module, crate::parser::structured::StructuredFunction) {
             self.instructions.push(make_instruction(InstructionKind::End));
             let mut module = Module::new("test");
 
-            // Add memory if requested
             if self.with_memory {
                 use crate::parser::module::{Limits, Memory, MemorySection, SectionPosition};
                 let mem = Memory {
-                    limits: Limits {
-                        min: 1, // 1 page (64KB)
-                        max: None,
-                    },
+                    limits: Limits { min: 1, max: None },
                 };
                 module.memory = MemorySection {
                     memory: vec![mem],
@@ -80,7 +77,6 @@ pub mod test {
                 };
             }
 
-            // Add globals if any
             if !self.globals.is_empty() {
                 use crate::parser::module::SectionPosition;
                 let mut globals = Vec::new();
@@ -90,7 +86,7 @@ pub mod test {
                             value_type: *value_type,
                             mutable: *mutable,
                         },
-                        init: vec![], // Empty init for now - will be handled by executor
+                        init: vec![],
                     });
                 }
                 module.globals = GlobalSection {
@@ -99,26 +95,26 @@ pub mod test {
                 };
             }
 
-            // Build structured representation
-            let structured_func = StructureBuilder::build_function(
-                &self.instructions,
-                0, // Most tests don't use locals
-                self.return_types.clone(),
-            )
-            .expect("Structure building should succeed");
+            let structured_func = StructureBuilder::build_function(&self.instructions, 0, self.return_types.clone())
+                .expect("Structure building should succeed");
 
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            (module, structured_func)
+        }
 
-            // Set initial global values if any were specified
+        pub fn expect_stack(mut self, expected: Vec<Value>) {
+            let (module, structured_func) = self.build_executor();
+
+            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
+
             if !self.globals.is_empty() {
                 for (i, (_value_type, initial_value, _mutable)) in self.globals.iter().enumerate() {
                     executor
-                        .set_global_for_test(i as u32, initial_value.clone())
+                        .set_global_for_test(i as u32, initial_value.clone(), &mut resources)
                         .expect("Setting global should succeed");
                 }
             }
             let outcome = executor
-                .execute_function(&structured_func, self.args, &self.return_types)
+                .execute_function(&structured_func, self.args, &self.return_types, &mut resources)
                 .expect("Execution should succeed");
             match outcome {
                 crate::runtime::ExecutionOutcome::Complete(results) => {
@@ -131,59 +127,19 @@ pub mod test {
         }
 
         pub fn expect_error(mut self, error_contains: &str) {
-            self.instructions.push(make_instruction(InstructionKind::End));
-            let mut module = Module::new("test");
+            let (module, structured_func) = self.build_executor();
 
-            // Add memory if requested
-            if self.with_memory {
-                use crate::parser::module::{Limits, Memory, MemorySection, SectionPosition};
-                let mem = Memory {
-                    limits: Limits {
-                        min: 1, // 1 page (64KB)
-                        max: None,
-                    },
-                };
-                module.memory = MemorySection {
-                    memory: vec![mem],
-                    position: SectionPosition { start: 0, end: 0 },
-                };
-            }
+            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
 
-            // Add globals if any
-            if !self.globals.is_empty() {
-                use crate::parser::module::SectionPosition;
-                let mut globals = Vec::new();
-                for (value_type, _initial_value, mutable) in &self.globals {
-                    globals.push(Global {
-                        global_type: GlobalType {
-                            value_type: *value_type,
-                            mutable: *mutable,
-                        },
-                        init: vec![], // Empty init for now - will be handled by executor
-                    });
-                }
-                module.globals = GlobalSection {
-                    globals,
-                    position: SectionPosition { start: 0, end: 0 },
-                };
-            }
-
-            // Build structured representation
-            let structured_func = StructureBuilder::build_function(&self.instructions, 0, self.return_types.clone())
-                .expect("Structure building should succeed");
-
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
-
-            // Set initial global values if any were specified
             if !self.globals.is_empty() {
                 for (i, (_value_type, initial_value, _mutable)) in self.globals.iter().enumerate() {
                     executor
-                        .set_global_for_test(i as u32, initial_value.clone())
+                        .set_global_for_test(i as u32, initial_value.clone(), &mut resources)
                         .expect("Setting global should succeed");
                 }
             }
 
-            let result = executor.execute_function(&structured_func, self.args, &self.return_types);
+            let result = executor.execute_function(&structured_func, self.args, &self.return_types, &mut resources);
 
             match result {
                 Err(e) => {

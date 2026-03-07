@@ -2,9 +2,12 @@
 //!
 //! This module provides the `WasiContext` which holds all WASI-related state
 //! including file descriptors, arguments, and environment variables.
+//!
+//! Memory access is provided by the calling instance via `Caller` — the context
+//! itself does not hold a reference to linear memory.
 
 use super::types::{WasiErrno, WasiFileType};
-use crate::runtime::{RuntimeError, SharedMemory};
+use crate::runtime::Memory;
 use std::cell::RefCell;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -26,9 +29,9 @@ pub struct FileDescriptor {
 }
 
 impl FileDescriptor {
-    /// Create a new readable file descriptor (character device, e.g. stdin)
+    /// Create a new FileDescriptor for a reader (e.g. stdin)
     pub fn new_reader(reader: Box<dyn Read + Send>) -> Self {
-        Self {
+        FileDescriptor {
             reader: Some(reader),
             writer: None,
             seeker: None,
@@ -38,9 +41,9 @@ impl FileDescriptor {
         }
     }
 
-    /// Create a new writable file descriptor (character device, e.g. stdout/stderr)
+    /// Create a new FileDescriptor for a writer (e.g. stdout/stderr)
     pub fn new_writer(writer: Box<dyn Write + Send>) -> Self {
-        Self {
+        FileDescriptor {
             reader: None,
             writer: Some(writer),
             seeker: None,
@@ -50,34 +53,9 @@ impl FileDescriptor {
         }
     }
 
-    /// Create a file descriptor backed by a real file
-    ///
-    /// Uses `try_clone()` to obtain separate handles for reading, writing, and seeking.
-    pub fn new_file(file: std::fs::File, readable: bool, writable: bool) -> std::io::Result<Self> {
-        let reader = if readable {
-            Some(Box::new(file.try_clone()?) as Box<dyn Read + Send>)
-        } else {
-            None
-        };
-        let writer = if writable {
-            Some(Box::new(file.try_clone()?) as Box<dyn Write + Send>)
-        } else {
-            None
-        };
-        let seeker = Some(Box::new(file) as Box<dyn Seek + Send>);
-        Ok(Self {
-            reader,
-            writer,
-            seeker,
-            readable,
-            writable,
-            file_type: WasiFileType::RegularFile,
-        })
-    }
-
-    /// Create a directory file descriptor (for preopens)
+    /// Create a new FileDescriptor for a directory (preopens)
     pub fn new_directory() -> Self {
-        Self {
+        FileDescriptor {
             reader: None,
             writer: None,
             seeker: None,
@@ -85,6 +63,34 @@ impl FileDescriptor {
             writable: false,
             file_type: WasiFileType::Directory,
         }
+    }
+
+    /// Create a new FileDescriptor for a regular file
+    ///
+    /// Uses the same underlying std::fs::File for reading, writing, and seeking.
+    pub fn new_file(file: std::fs::File, readable: bool, writable: bool) -> Result<Self, std::io::Error> {
+        let reader: Option<Box<dyn Read + Send>> = if readable {
+            Some(Box::new(file.try_clone()?))
+        } else {
+            None
+        };
+
+        let writer: Option<Box<dyn Write + Send>> = if writable {
+            Some(Box::new(file.try_clone()?))
+        } else {
+            None
+        };
+
+        let seeker: Option<Box<dyn Seek + Send>> = Some(Box::new(file));
+
+        Ok(FileDescriptor {
+            reader,
+            writer,
+            seeker,
+            readable,
+            writable,
+            file_type: WasiFileType::RegularFile,
+        })
     }
 
     /// Read from this file descriptor
@@ -118,7 +124,7 @@ impl FileDescriptor {
     }
 
     /// Seek within this file descriptor
-    pub fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+    pub fn seek(&mut self, pos: SeekFrom) -> Result<u64, std::io::Error> {
         match &mut self.seeker {
             Some(seeker) => seeker.seek(pos),
             None => Err(std::io::Error::new(
@@ -142,10 +148,9 @@ impl std::fmt::Debug for FileDescriptor {
 /// WASI context holding all WASI-related state
 ///
 /// The context is shared between all WASI functions via `Arc<WasiContext>`.
-/// Memory is bound lazily after module instantiation.
+/// Linear memory is accessed through `Caller` at each host function invocation,
+/// not stored in the context.
 pub struct WasiContext {
-    /// The WebAssembly linear memory (bound after instantiation)
-    memory: RefCell<Option<SharedMemory>>,
     /// File descriptors (0=stdin, 1=stdout, 2=stderr, 3+=preopens/files)
     fds: RefCell<Vec<Option<FileDescriptor>>>,
     /// Preopened directories: (fd number, guest path, host path)
@@ -162,19 +167,6 @@ impl WasiContext {
     /// Create a new builder for WasiContext
     pub fn builder() -> WasiContextBuilder {
         WasiContextBuilder::new()
-    }
-
-    /// Bind the linear memory to this context
-    ///
-    /// This must be called after module instantiation but before
-    /// any WASI functions are invoked.
-    pub fn bind_memory(&self, memory: SharedMemory) {
-        *self.memory.borrow_mut() = Some(memory);
-    }
-
-    /// Check if memory is bound
-    pub fn has_memory(&self) -> bool {
-        self.memory.borrow().is_some()
     }
 
     /// Get the exit code if proc_exit was called
@@ -202,53 +194,6 @@ impl WasiContext {
         self.fds.borrow()
     }
 
-    // === Memory helper methods ===
-
-    /// Read a u32 from linear memory
-    pub fn read_u32(&self, addr: u32) -> Result<u32, RuntimeError> {
-        let memory_ref = self.memory.borrow();
-        let shared_memory = memory_ref
-            .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
-        let memory = shared_memory.borrow();
-        memory.read_u32(addr)
-    }
-
-    /// Write a u32 to linear memory
-    pub fn write_u32(&self, addr: u32, value: u32) -> Result<(), RuntimeError> {
-        let memory_ref = self.memory.borrow();
-        let shared_memory = memory_ref
-            .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
-        let mut memory = shared_memory.borrow_mut();
-        memory.write_u32(addr, value)
-    }
-
-    /// Read bytes from linear memory
-    pub fn read_bytes(&self, addr: u32, len: usize) -> Result<Vec<u8>, RuntimeError> {
-        let memory_ref = self.memory.borrow();
-        let shared_memory = memory_ref
-            .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
-        let memory = shared_memory.borrow();
-        memory.read_bytes(addr, len)
-    }
-
-    /// Write bytes to linear memory
-    pub fn write_bytes(&self, addr: u32, bytes: &[u8]) -> Result<(), RuntimeError> {
-        let memory_ref = self.memory.borrow();
-        let shared_memory = memory_ref
-            .as_ref()
-            .ok_or_else(|| RuntimeError::MemoryError("wasi memory not bound".to_string()))?;
-        let mut memory = shared_memory.borrow_mut();
-        memory.write_bytes(addr, bytes)
-    }
-
-    /// Write a u64 to linear memory (little-endian)
-    pub fn write_u64(&self, addr: u32, value: u64) -> Result<(), RuntimeError> {
-        self.write_bytes(addr, &value.to_le_bytes())
-    }
-
     // === Preopen methods ===
 
     /// Get the guest path for a preopened fd
@@ -267,9 +212,6 @@ impl WasiContext {
             .collect()
     }
 
-    /// Resolve a path relative to a preopened directory
-    ///
-    /// Verifies the resolved path does not escape the preopen directory.
     /// Resolve a guest path relative to a preopened directory.
     ///
     /// Canonicalises the result and verifies it does not escape the preopen
@@ -365,9 +307,8 @@ impl WasiContext {
     /// Read from a file descriptor into memory
     ///
     /// Returns the number of bytes read or a WASI errno.
-    pub fn fd_read(&self, fd: u32, iovs_ptr: u32, iovs_len: u32) -> Result<usize, WasiErrno> {
-        // Read iovec structures from memory
-        let iovecs = self.read_iovecs(iovs_ptr, iovs_len)?;
+    pub fn fd_read(&self, memory: &mut Memory, fd: u32, iovs_ptr: u32, iovs_len: u32) -> Result<usize, WasiErrno> {
+        let iovecs = Self::read_iovecs(memory, iovs_ptr, iovs_len)?;
 
         let mut fds = self.fds.borrow_mut();
         let fd_entry = fds
@@ -386,17 +327,16 @@ impl WasiContext {
                 continue;
             }
 
-            // Read into a temporary buffer
             let mut temp_buf = vec![0u8; buf_len as usize];
             match fd_entry.read(&mut temp_buf) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
-                    // Write the read data to memory
-                    self.write_bytes(buf_ptr, &temp_buf[..n])
+                    memory
+                        .write_bytes(buf_ptr, &temp_buf[..n])
                         .map_err(|_| WasiErrno::Fault)?;
                     total_read += n;
                     if n < buf_len as usize {
-                        break; // Partial read, stop here
+                        break; // Partial read
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -410,9 +350,8 @@ impl WasiContext {
     /// Write from memory to a file descriptor
     ///
     /// Returns the number of bytes written or a WASI errno.
-    pub fn fd_write(&self, fd: u32, iovs_ptr: u32, iovs_len: u32) -> Result<usize, WasiErrno> {
-        // Read iovec structures from memory
-        let iovecs = self.read_iovecs(iovs_ptr, iovs_len)?;
+    pub fn fd_write(&self, memory: &Memory, fd: u32, iovs_ptr: u32, iovs_len: u32) -> Result<usize, WasiErrno> {
+        let iovecs = Self::read_iovecs(memory, iovs_ptr, iovs_len)?;
 
         let mut fds = self.fds.borrow_mut();
         let fd_entry = fds
@@ -431,17 +370,15 @@ impl WasiContext {
                 continue;
             }
 
-            // Read data from memory
-            let data = self
+            let data = memory
                 .read_bytes(buf_ptr, buf_len as usize)
                 .map_err(|_| WasiErrno::Fault)?;
 
-            // Write to the file descriptor
             match fd_entry.write(&data) {
                 Ok(n) => {
                     total_written += n;
                     if n < buf_len as usize {
-                        break; // Partial write, stop here
+                        break; // Partial write
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -460,12 +397,12 @@ impl WasiContext {
     /// Each iovec is 8 bytes: 4-byte pointer (buf) + 4-byte length (buf_len).
     ///
     /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#iovec>
-    fn read_iovecs(&self, ptr: u32, len: u32) -> Result<Vec<(u32, u32)>, WasiErrno> {
+    fn read_iovecs(memory: &Memory, ptr: u32, len: u32) -> Result<Vec<(u32, u32)>, WasiErrno> {
         let mut iovecs = Vec::with_capacity(len as usize);
         for i in 0..len {
             let base = ptr + i * 8;
-            let buf_ptr = self.read_u32(base).map_err(|_| WasiErrno::Fault)?;
-            let buf_len = self.read_u32(base + 4).map_err(|_| WasiErrno::Fault)?;
+            let buf_ptr = memory.read_u32(base).map_err(|_| WasiErrno::Fault)?;
+            let buf_len = memory.read_u32(base + 4).map_err(|_| WasiErrno::Fault)?;
             iovecs.push((buf_ptr, buf_len));
         }
         Ok(iovecs)
@@ -475,7 +412,6 @@ impl WasiContext {
 impl std::fmt::Debug for WasiContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WasiContext")
-            .field("has_memory", &self.has_memory())
             .field("args", &self.args)
             .field("env", &self.env)
             .field("exit_code", &self.exit_code)
@@ -567,7 +503,6 @@ impl WasiContextBuilder {
         }
 
         WasiContext {
-            memory: RefCell::new(None),
             fds: RefCell::new(fds),
             preopens,
             args: self.args,
@@ -587,9 +522,7 @@ impl Default for WasiContextBuilder {
 mod tests {
     use super::*;
     use crate::runtime::Memory;
-    use std::cell::RefCell;
     use std::io::Cursor;
-    use std::rc::Rc;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -607,43 +540,21 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_binding() {
-        let ctx = WasiContext::builder().build();
-
-        assert!(!ctx.has_memory());
-
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
-
-        assert!(ctx.has_memory());
-    }
-
-    #[test]
     fn test_read_write_u32() {
-        let ctx = WasiContext::builder().build();
+        let mut memory = Memory::new(1, None).unwrap();
 
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
-
-        // Write and read back
-        ctx.write_u32(100, 0x12345678).unwrap();
-        let value = ctx.read_u32(100).unwrap();
+        memory.write_u32(100, 0x12345678).unwrap();
+        let value = memory.read_u32(100).unwrap();
         assert_eq!(value, 0x12345678);
     }
 
     #[test]
     fn test_read_write_bytes() {
-        let ctx = WasiContext::builder().build();
-
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
         let data = b"Hello, WASI!";
-        ctx.write_bytes(200, data).unwrap();
-        let read_data = ctx.read_bytes(200, data.len()).unwrap();
+        memory.write_bytes(200, data).unwrap();
+        let read_data = memory.read_bytes(200, data.len()).unwrap();
         assert_eq!(read_data, data);
     }
 
@@ -659,7 +570,6 @@ mod tests {
 
     #[test]
     fn test_fd_write_to_captured_stdout() {
-        // Create a captured stdout
         let stdout_buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
         let stdout_clone = stdout_buffer.clone();
 
@@ -678,69 +588,52 @@ mod tests {
             .stdout(Box::new(CapturedWriter(stdout_clone)))
             .build();
 
-        // Bind memory
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
         // Set up iovec in memory: {ptr: 100, len: 13}
         let message = b"Hello, World!";
-        ctx.write_bytes(100, message).unwrap();
-        ctx.write_u32(0, 100).unwrap(); // iovec.ptr
-        ctx.write_u32(4, 13).unwrap(); // iovec.len
+        memory.write_bytes(100, message).unwrap();
+        memory.write_u32(0, 100).unwrap(); // iovec.ptr
+        memory.write_u32(4, 13).unwrap(); // iovec.len
 
-        // Call fd_write
-        let result = ctx.fd_write(1, 0, 1);
+        let result = ctx.fd_write(&memory, 1, 0, 1);
         assert_eq!(result, Ok(13));
 
-        // Check captured output
         let output = stdout_buffer.lock().unwrap();
         assert_eq!(&*output, b"Hello, World!");
     }
 
     #[test]
     fn test_fd_read_from_mock_stdin() {
-        // Create a mock stdin with some data
         let input = Cursor::new(b"test input\n".to_vec());
 
         let ctx = WasiContext::builder().stdin(Box::new(input)).build();
 
-        // Bind memory
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
         // Set up iovec in memory: {ptr: 100, len: 64}
-        ctx.write_u32(0, 100).unwrap(); // iovec.ptr
-        ctx.write_u32(4, 64).unwrap(); // iovec.len
+        memory.write_u32(0, 100).unwrap(); // iovec.ptr
+        memory.write_u32(4, 64).unwrap(); // iovec.len
 
-        // Call fd_read
-        let result = ctx.fd_read(0, 0, 1);
+        let result = ctx.fd_read(&mut memory, 0, 0, 1);
         assert_eq!(result, Ok(11)); // "test input\n" is 11 bytes
 
-        // Check data was written to memory
-        let data = ctx.read_bytes(100, 11).unwrap();
+        let data = memory.read_bytes(100, 11).unwrap();
         assert_eq!(&data, b"test input\n");
     }
 
     #[test]
     fn test_fd_read_eof() {
-        // Create an empty stdin
         let input = Cursor::new(Vec::<u8>::new());
 
         let ctx = WasiContext::builder().stdin(Box::new(input)).build();
 
-        // Bind memory
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
-        // Set up iovec
-        ctx.write_u32(0, 100).unwrap();
-        ctx.write_u32(4, 64).unwrap();
+        memory.write_u32(0, 100).unwrap();
+        memory.write_u32(4, 64).unwrap();
 
-        // Call fd_read - should return 0 for EOF
-        let result = ctx.fd_read(0, 0, 1);
+        let result = ctx.fd_read(&mut memory, 0, 0, 1);
         assert_eq!(result, Ok(0));
     }
 
@@ -748,16 +641,12 @@ mod tests {
     fn test_bad_fd_returns_error() {
         let ctx = WasiContext::builder().build();
 
-        // Bind memory
-        let memory = Memory::new(1, None).unwrap();
-        let shared_memory = Rc::new(RefCell::new(memory));
-        ctx.bind_memory(shared_memory);
+        let mut memory = Memory::new(1, None).unwrap();
 
-        ctx.write_u32(0, 100).unwrap();
-        ctx.write_u32(4, 64).unwrap();
+        memory.write_u32(0, 100).unwrap();
+        memory.write_u32(4, 64).unwrap();
 
-        // fd 99 doesn't exist
-        let result = ctx.fd_read(99, 0, 1);
+        let result = ctx.fd_read(&mut memory, 99, 0, 1);
         assert_eq!(result, Err(WasiErrno::BadF));
     }
 }

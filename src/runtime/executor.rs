@@ -21,18 +21,14 @@ use super::{
     control::{Label, LabelStack, LabelType},
     frame::CallFrame,
     imports::{default_value_for_type, is_global_mutable},
-    memory::Memory,
     ops,
     stack::Stack,
-    store::{SharedGlobal, SharedMemory, SharedTable},
-    table::Table,
+    store::{FuncAddr, GlobalAddr, MemoryAddr, Resources, TableAddr},
 };
 use crate::parser::instruction::{BlockType, Instruction, InstructionKind, SimdOp};
 use crate::parser::module::{DataMode, ElementMode, ExternalKind, FunctionType, Locals, Module, ValueType};
 use crate::parser::structured::{BlockEnd, StructuredFunction, StructuredInstruction};
-use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
-use std::rc::Rc;
 
 /// Maximum call stack depth to prevent stack overflow
 const MAX_CALL_DEPTH: usize = 1000;
@@ -48,7 +44,7 @@ enum ExecutionState<'a> {
     CallFunction(u32),
     /// Call an external function (cross-module, by FuncAddr)
     CallExternalFunction {
-        func_addr: super::FuncAddr,
+        func_addr: FuncAddr,
         func_type: FunctionType,
     },
     /// Return from current function
@@ -86,28 +82,28 @@ enum CallHandled {
 }
 
 /// Executes WebAssembly instructions
+///
+/// The Executor holds execution state (stack, call stack) and address maps that
+/// translate module-local indices to global resource addresses in the Store.
+/// Resources (memories, tables, globals) are owned by the Store and passed
+/// to execution methods via `&mut Resources`.
 pub struct Executor<'a> {
     module: &'a Module,
     stack: Stack,
     /// Call stack for managing function calls (always has at least one frame during execution)
     call_stack: Vec<CallFrame>,
-    /// Memory instances (shared for cross-module access)
-    /// WebAssembly 1.0 supports only 1 memory per module
-    memories: Vec<SharedMemory>,
-    /// Global variable values (shared via `Rc<Cell<Value>>` for cross-module mutable global aliasing)
-    globals: Vec<SharedGlobal>,
-    /// Table instances (shared for cross-module access)
-    tables: Vec<SharedTable>,
     /// Element segments (for table.init)
     element_segments: Vec<Vec<Option<Value>>>,
-    /// Number of imported functions (they have no local bodies)
+    /// Number of imported functions (cached from module, hot path)
     num_imported_functions: usize,
-    /// Function types for quick access
-    function_types: Vec<FunctionType>,
     /// Maps local function index to global FuncAddr (empty until linked)
-    function_addresses: Vec<super::FuncAddr>,
-    /// Module's global definitions (for initialisation after linking)
-    module_globals: Vec<crate::parser::module::Global>,
+    function_addresses: Vec<FuncAddr>,
+    /// Maps module-local memory index to global MemoryAddr in the Store
+    memory_addresses: Vec<MemoryAddr>,
+    /// Maps module-local table index to global TableAddr in the Store
+    table_addresses: Vec<TableAddr>,
+    /// Maps module-local global index to global GlobalAddr in the Store
+    global_addresses: Vec<GlobalAddr>,
     /// Saved execution contexts when paused for external call
     saved_contexts: Option<Vec<ExecutionContext<'a>>>,
     /// Expected return types when resuming from external call
@@ -119,135 +115,107 @@ pub struct Executor<'a> {
 }
 
 impl<'a> Executor<'a> {
-    /// Create a new executor for a module
+    /// Create an unlinked executor with address maps for resources in the Store
     ///
-    /// # Errors
-    /// - If the module has more than one memory (WebAssembly 1.0 limitation)
-    /// - If memory initialisation fails
-    pub fn new(module: &'a Module) -> Result<Self, RuntimeError> {
-        let (memories, tables) = Self::create_memories_and_tables(module)?;
-
-        // Build shared globals (standalone mode — no Store, so each global is independent)
-        let mut globals: Vec<SharedGlobal> = Vec::new();
-
-        // Imported globals
-        for import in &module.imports.imports {
-            if let ExternalKind::Global(global_type) = &import.external_kind {
-                let initial_value = default_value_for_type(global_type.value_type)?;
-                globals.push(Rc::new(Cell::new(initial_value)));
-            }
-        }
-
-        // Local globals (default values, initialised later)
-        for global in &module.globals.globals {
-            let default_value = default_value_for_type(global.global_type.value_type)?;
-            globals.push(Rc::new(Cell::new(default_value)));
-        }
-
-        Self::new_with_shared(module, memories, tables, globals)
-    }
-
-    /// Create a new executor with pre-provided shared memories, tables, and globals
-    ///
-    /// This is used by Store::create_instance(). All shared resources must be in the
-    /// correct order: imported first, then local.
-    pub fn new_with_shared(
+    /// Resources (memories, tables, globals) are owned by the Store and accessed
+    /// via address maps during execution. Function addresses are linked later
+    /// via `link_function_addresses()`.
+    pub(super) fn new_unlinked(
         module: &'a Module,
-        memories: Vec<SharedMemory>,
-        tables: Vec<SharedTable>,
-        globals: Vec<SharedGlobal>,
+        memory_addresses: Vec<MemoryAddr>,
+        table_addresses: Vec<TableAddr>,
+        global_addresses: Vec<GlobalAddr>,
     ) -> Result<Self, RuntimeError> {
-        // Store the module's global definitions for later initialisation
-        // Init expressions can contain ref.func, so they must be evaluated after function_addresses are linked
-        let module_globals = module.globals.globals.clone();
+        let num_imported_functions = module.imports.function_count();
 
-        // Count imported functions (they come first in the index space, but have no local bodies)
-        let num_imported_functions = module
-            .imports
-            .imports
-            .iter()
-            .filter(|import| matches!(import.external_kind, ExternalKind::Function(_)))
-            .count();
-
-        // Collect function types for quick access
-        let function_types = module.types.types.clone();
-
-        // Create executor instance
-        let mut executor = Executor {
+        Ok(Executor {
             module,
             stack: Stack::new(),
             call_stack: Vec::new(),
-            memories,
-            globals,
-            tables,
-            element_segments: Vec::new(), // Will be populated after linking
+            element_segments: Vec::new(),
             num_imported_functions,
-            function_types,
-            function_addresses: Vec::new(), // Will be populated when instance is linked
-            module_globals,                 // Store for later initialisation
-            saved_contexts: None,           // For resumable execution
-            saved_return_types: Vec::new(), // For resumable execution
-            instruction_budget: None,       // No budget limit by default
+            function_addresses: Vec::new(),
+            memory_addresses,
+            table_addresses,
+            global_addresses,
+            saved_contexts: None,
+            saved_return_types: Vec::new(),
+            instruction_budget: None,
             dropped_data: HashSet::new(),
-        };
-
-        // Note: Globals and element segments are NOT initialised here because their init
-        // expressions may contain ref.func instructions that require function_addresses to be linked first.
-        // They will be initialised by Instance::link_functions() after linking.
-
-        // Initialise memory with data sections
-        executor.initialise_data_sections()?;
-
-        Ok(executor)
+        })
     }
 
-    /// Create memories and tables from module definition
+    /// Create a standalone executor with its own Resources (test-only)
     ///
-    /// This is used when no external memories/tables are provided.
-    /// Imported memories/tables are created as new instances (for backward compatibility).
-    fn create_memories_and_tables(module: &Module) -> Result<(Vec<SharedMemory>, Vec<SharedTable>), RuntimeError> {
-        // Initialise memories from module definition
-        let memories: Vec<SharedMemory> = if module.memory.memory.is_empty() {
-            vec![]
-        } else {
-            // WebAssembly 1.0: Only one memory allowed per module
+    /// Allocates memories, tables, and globals from the module definition into a
+    /// fresh Resources struct. Returns both the executor and its resources.
+    #[cfg(test)]
+    pub fn new(module: &'a Module) -> Result<(Self, Resources), RuntimeError> {
+        use super::memory::Memory;
+        use super::table::Table;
+
+        let mut resources = Resources::new();
+
+        // Allocate memories from module definition
+        let mut memory_addresses = Vec::new();
+        if !module.memory.memory.is_empty() {
             if module.memory.memory.len() > 1 {
                 return Err(RuntimeError::MemoryError("multiple memories not supported".to_string()));
             }
-
             let mem_def = &module.memory.memory[0];
-            match Memory::new(mem_def.limits.min, mem_def.limits.max) {
-                Ok(memory) => vec![Rc::new(RefCell::new(memory))],
-                Err(e) => return Err(e),
-            }
-        };
+            let memory = Memory::new(mem_def.limits.min, mem_def.limits.max)?;
+            let addr = MemoryAddr(resources.memories.len());
+            resources.memories.push(memory);
+            memory_addresses.push(addr);
+        }
 
-        // Initialise tables from module definition
-        let mut tables: Vec<SharedTable> = Vec::new();
-
-        // First, initialise imported tables (they come first in the index space)
+        // Allocate tables (imported + local)
+        let mut table_addresses = Vec::new();
         for import in &module.imports.imports {
             if let ExternalKind::Table(table_type) = &import.external_kind {
-                // Create default table for import
                 let table = Table::new(table_type.ref_type, table_type.limits)?;
-                tables.push(Rc::new(RefCell::new(table)));
+                let addr = TableAddr(resources.tables.len());
+                resources.tables.push(table);
+                table_addresses.push(addr);
             }
         }
-
-        // Then, add locally defined tables
         for table_type in &module.table.tables {
             let table = Table::new(table_type.ref_type, table_type.limits)?;
-            tables.push(Rc::new(RefCell::new(table)));
+            let addr = TableAddr(resources.tables.len());
+            resources.tables.push(table);
+            table_addresses.push(addr);
         }
 
-        Ok((memories, tables))
+        // Allocate globals (imported + local)
+        let mut global_addresses = Vec::new();
+        for import in &module.imports.imports {
+            if let ExternalKind::Global(global_type) = &import.external_kind {
+                let initial = default_value_for_type(global_type.value_type)?;
+                let addr = GlobalAddr(resources.globals.len());
+                resources.globals.push(initial);
+                global_addresses.push(addr);
+            }
+        }
+        for global in &module.globals.globals {
+            let default = default_value_for_type(global.global_type.value_type)?;
+            let addr = GlobalAddr(resources.globals.len());
+            resources.globals.push(default);
+            global_addresses.push(addr);
+        }
+
+        let mut executor = Self::new_unlinked(module, memory_addresses, table_addresses, global_addresses)?;
+
+        // Initialise data sections (writes module data into memory)
+        executor.initialise_data_sections(&mut resources)?;
+
+        Ok((executor, resources))
     }
 
     /// Initialise module globals with their init expressions
     ///
     /// This must be called after function_addresses have been linked, as global init
     /// expressions can contain ref.func instructions that need the address mapping.
-    pub(super) fn initialise_globals(&mut self) -> Result<(), RuntimeError> {
+    pub(super) fn initialise_globals(&mut self, resources: &mut Resources) -> Result<(), RuntimeError> {
         // Calculate how many imported globals there are
         let num_imported_globals = self
             .module
@@ -257,23 +225,19 @@ impl<'a> Executor<'a> {
             .filter(|import| matches!(import.external_kind, ExternalKind::Global(_)))
             .count();
 
-        // Initialise module's own globals with their init expressions
-        // Globals can reference previously defined globals in their init expressions,
-        // so we need to evaluate them in order
-        for (idx, global) in self.module_globals.iter().enumerate() {
+        // Initialise module's own globals with their init expressions.
+        // Later globals can reference earlier ones, so order matters.
+        for (idx, global) in self.module.globals.globals.iter().enumerate() {
             let global_idx = num_imported_globals + idx;
 
             let initial_value = if global.init.is_empty() {
-                // No init expression, keep the default value that was already set
                 continue;
             } else {
-                // Evaluate the init expression with the current state of globals
-                // This allows later globals to reference earlier ones
-                self.evaluate_const_expr(&global.init)?
+                self.evaluate_const_expr(&global.init, resources)?
             };
 
-            // Update the global value via the shared cell
-            self.globals[global_idx].set(initial_value);
+            let addr = self.global_addresses[global_idx];
+            resources.globals[addr.0] = initial_value;
         }
 
         Ok(())
@@ -283,36 +247,28 @@ impl<'a> Executor<'a> {
     ///
     /// This must be called after function_addresses have been linked, as element
     /// segments can contain ref.func instructions that need the address mapping.
-    pub(super) fn initialise_element_segments(&mut self) -> Result<(), RuntimeError> {
-        // Process each element segment
+    pub(super) fn initialise_element_segments(&mut self, resources: &mut Resources) -> Result<(), RuntimeError> {
         for element in &self.module.elements.elements {
-            // Evaluate init expressions to get values
             let mut values = Vec::new();
             for init_expr in &element.init {
-                let val = self.evaluate_const_expr(init_expr)?;
+                let val = self.evaluate_const_expr(init_expr, resources)?;
                 values.push(Some(val));
             }
 
             match &element.mode {
                 ElementMode::Active { table_index, offset } => {
-                    // Evaluate offset expression
-                    let offset_val = self.evaluate_const_expr(offset)?;
+                    let offset_val = self.evaluate_const_expr(offset, resources)?;
                     let start_idx = match offset_val {
                         Value::I32(v) => v as u32,
                         _ => return Err(RuntimeError::InvalidConstExpr("element offset must be i32".to_string())),
                     };
 
-                    // Check table exists
-                    let table = self
-                        .tables
+                    let table_addr = self
+                        .table_addresses
                         .get(*table_index as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*table_index))?;
-
-                    // Initialize table with element values
-                    {
-                        let mut table_guard = table.borrow_mut();
-                        table_guard.init(start_idx, &values, 0, values.len() as u32)?;
-                    }
+                    let table = &mut resources.tables[table_addr.0];
+                    table.init(start_idx, &values, 0, values.len() as u32)?;
 
                     // Active segments are dropped after instantiation per spec
                     self.element_segments.push(Vec::new());
@@ -322,7 +278,7 @@ impl<'a> Executor<'a> {
                     self.element_segments.push(Vec::new());
                 }
                 ElementMode::Passive => {
-                    // Passive segments are available for table.init
+                    // Passive segments remain available for table.init
                     self.element_segments.push(values);
                 }
             }
@@ -332,12 +288,10 @@ impl<'a> Executor<'a> {
     }
 
     /// Initialise memory with data from data sections
-    fn initialise_data_sections(&mut self) -> Result<(), RuntimeError> {
-        // Process each data segment
+    pub(super) fn initialise_data_sections(&mut self, resources: &mut Resources) -> Result<(), RuntimeError> {
         for (seg_idx, data_segment) in self.module.data.data.iter().enumerate() {
             match &data_segment.mode {
                 DataMode::Active { memory_index, offset } => {
-                    // Check memory index is valid (WebAssembly 1.0 only supports one memory)
                     if *memory_index != 0 {
                         return Err(RuntimeError::MemoryError(format!(
                             "invalid memory index {} in data segment",
@@ -345,16 +299,11 @@ impl<'a> Executor<'a> {
                         )));
                     }
 
-                    // Check we have a memory
-                    let memory = self.memories.first().ok_or_else(|| {
+                    let mem_addr = self.memory_addresses.first().ok_or_else(|| {
                         RuntimeError::MemoryError("data segment requires memory but none exists".to_string())
                     })?;
 
-                    // Evaluate the offset expression to get the starting address
-                    // The offset expression should be a constant expression
-                    let offset_value = self.evaluate_const_expr(offset)?;
-
-                    // Extract the offset as u32
+                    let offset_value = self.evaluate_const_expr(offset, resources)?;
                     let offset_addr = match offset_value {
                         Value::I32(v) => v as u32,
                         _ => {
@@ -364,26 +313,22 @@ impl<'a> Executor<'a> {
                         }
                     };
 
-                    // Write the data to memory
-                    let mut mem_guard = memory.borrow_mut();
+                    let memory = &mut resources.memories[mem_addr.0];
                     let data = &data_segment.init;
 
-                    // Check if the data fits in memory
+                    // Bounds check: data must fit within allocated memory pages
                     let end_addr = offset_addr as usize + data.len();
-                    let memory_size_bytes = (mem_guard.size() as usize) * 65536; // Convert pages to bytes
+                    let memory_size_bytes = (memory.size() as usize) * 65536; // pages to bytes
                     if end_addr > memory_size_bytes {
                         return Err(RuntimeError::MemoryError("out of bounds memory access".to_string()));
                     }
 
-                    // Copy the data into memory using the shared helper
-                    ops::memory::copy_to_memory(&mut mem_guard, offset_addr, data)?;
-
+                    ops::memory::copy_to_memory(memory, offset_addr, data)?;
                     // Active segments are logically dropped after initialisation
                     self.dropped_data.insert(seg_idx as u32);
                 }
                 DataMode::Passive => {
-                    // Passive data segments are not automatically initialised
-                    // They're used with memory.init instruction
+                    // Passive data segments are used with memory.init instruction
                 }
             }
         }
@@ -392,7 +337,7 @@ impl<'a> Executor<'a> {
     }
 
     /// Evaluate a constant expression (used for data/element segment offsets and global init)
-    fn evaluate_const_expr(&self, instructions: &[Instruction]) -> Result<Value, RuntimeError> {
+    fn evaluate_const_expr(&self, instructions: &[Instruction], resources: &Resources) -> Result<Value, RuntimeError> {
         // Constant expressions are limited to a small set of instructions
         // They must end with an End instruction
         if instructions.is_empty() {
@@ -417,11 +362,15 @@ impl<'a> Executor<'a> {
                 InstructionKind::F32Const { value } => Ok(Value::F32(*value)),
                 InstructionKind::F64Const { value } => Ok(Value::F64(*value)),
                 InstructionKind::GlobalGet { global_idx } => {
-                    // Get the global value from the shared cell
-                    if (*global_idx as usize) >= self.globals.len() {
-                        return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
-                    }
-                    Ok(self.globals[*global_idx as usize].get())
+                    let addr = self
+                        .global_addresses
+                        .get(*global_idx as usize)
+                        .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
+                    resources
+                        .globals
+                        .get(addr.0)
+                        .copied()
+                        .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))
                 }
                 InstructionKind::RefNull { ref_type } => match ref_type {
                     ValueType::FuncRef => Ok(Value::FuncRef(None)),
@@ -465,26 +414,23 @@ impl<'a> Executor<'a> {
         }
     }
 
-    /// Push a new call frame for a function call
+    /// Push a new call frame for a local function call
+    ///
+    /// Looks up the function in the code section, initialises locals, and
+    /// pushes the frame onto the call stack.
     fn push_call_frame(&mut self, func_idx: u32, args: Vec<Value>, return_arity: usize) -> Result<(), RuntimeError> {
-        // Check call stack depth
         if self.call_stack.len() >= MAX_CALL_DEPTH {
             return Err(RuntimeError::CallStackOverflow);
         }
 
-        // Calculate the number of imported functions
-        let num_imported_functions = self.module.imports.function_count();
-
-        // Get the function declaration from the functions section
-        // Note: functions section only contains non-imported functions,
-        // so we need to subtract the number of imports if this is not an imported function
-        let func_decl_idx = if (func_idx as usize) < num_imported_functions {
-            // This shouldn't happen as we check for imports in handle_call, but be safe
+        // The functions section only contains non-imported functions,
+        // so subtract the import count to get the code section index
+        let func_decl_idx = if (func_idx as usize) < self.num_imported_functions {
             return Err(RuntimeError::UnimplementedInstruction(format!(
                 "Cannot push frame for imported function at index {func_idx}"
             )));
         } else {
-            func_idx as usize - num_imported_functions
+            func_idx as usize - self.num_imported_functions
         };
 
         let func = self
@@ -494,8 +440,9 @@ impl<'a> Executor<'a> {
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_type = self
-            .function_types
-            .get(func.ftype_index as usize)
+            .module
+            .types
+            .get(func.ftype_index)
             .ok_or(RuntimeError::InvalidFunctionType)?;
 
         // Verify argument count and types match
@@ -528,17 +475,7 @@ impl<'a> Executor<'a> {
         let mut locals = args;
         for (count, local_type) in body.locals.iter() {
             for _ in 0..*count {
-                // Initialise locals to zero (or null for reference types)
-                let zero_value = match local_type {
-                    ValueType::I32 => Value::I32(0),
-                    ValueType::I64 => Value::I64(0),
-                    ValueType::F32 => Value::F32(0.0),
-                    ValueType::F64 => Value::F64(0.0),
-                    ValueType::FuncRef => Value::FuncRef(None),
-                    ValueType::ExternRef => Value::ExternRef(None),
-                    ValueType::V128 => Value::V128([0u8; 16]),
-                };
-                locals.push(zero_value);
+                locals.push(default_value_for_type(*local_type)?);
             }
         }
 
@@ -587,10 +524,15 @@ impl<'a> Executor<'a> {
     ///
     /// # Errors
     /// - Returns `GlobalIndexOutOfBounds` if global_idx is invalid
-    pub fn get_global(&self, global_idx: u32) -> Result<Value, RuntimeError> {
-        self.globals
+    pub fn get_global(&self, global_idx: u32, resources: &Resources) -> Result<Value, RuntimeError> {
+        let addr = self
+            .global_addresses
             .get(global_idx as usize)
-            .map(|g| g.get())
+            .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))?;
+        resources
+            .globals
+            .get(addr.0)
+            .copied()
             .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))
     }
 
@@ -598,7 +540,7 @@ impl<'a> Executor<'a> {
     ///
     /// This is called by Instance::link_functions() to provide the executor
     /// with the mapping from local function indices to global FuncAddr.
-    pub(super) fn link_function_addresses(&mut self, function_addresses: Vec<super::FuncAddr>) {
+    pub(super) fn link_function_addresses(&mut self, function_addresses: Vec<FuncAddr>) {
         self.function_addresses = function_addresses;
     }
 
@@ -644,11 +586,21 @@ impl<'a> Executor<'a> {
 
     /// Set a global value for testing purposes
     #[cfg(test)]
-    pub fn set_global_for_test(&mut self, global_idx: u32, value: Value) -> Result<(), RuntimeError> {
-        if global_idx as usize >= self.globals.len() {
-            return Err(RuntimeError::GlobalIndexOutOfBounds(global_idx));
-        }
-        self.globals[global_idx as usize].set(value);
+    pub fn set_global_for_test(
+        &mut self,
+        global_idx: u32,
+        value: Value,
+        resources: &mut Resources,
+    ) -> Result<(), RuntimeError> {
+        let addr = self
+            .global_addresses
+            .get(global_idx as usize)
+            .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))?;
+        let slot = resources
+            .globals
+            .get_mut(addr.0)
+            .ok_or(RuntimeError::GlobalIndexOutOfBounds(global_idx))?;
+        *slot = value;
         Ok(())
     }
 
@@ -667,8 +619,9 @@ impl<'a> Executor<'a> {
         func: &'a StructuredFunction,
         args: Vec<Value>,
         return_types: &[ValueType],
+        resources: &mut Resources,
     ) -> Result<ExecutionOutcome, RuntimeError> {
-        self.execute_function_with_locals(func, args, return_types, None)
+        self.execute_function_with_locals(func, args, return_types, None, resources)
     }
 
     /// Execute a function with explicit locals information
@@ -681,6 +634,7 @@ impl<'a> Executor<'a> {
         args: Vec<Value>,
         return_types: &[ValueType],
         locals_info: Option<&Locals>,
+        resources: &mut Resources,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         // Initialise locals: parameters first, then local declarations
         let mut locals = args;
@@ -689,16 +643,7 @@ impl<'a> Executor<'a> {
         if let Some(locals_info) = locals_info {
             for (count, local_type) in locals_info.iter() {
                 for _ in 0..*count {
-                    let zero_value = match local_type {
-                        ValueType::I32 => Value::I32(0),
-                        ValueType::I64 => Value::I64(0),
-                        ValueType::F32 => Value::F32(0.0),
-                        ValueType::F64 => Value::F64(0.0),
-                        ValueType::FuncRef => Value::FuncRef(None),
-                        ValueType::ExternRef => Value::ExternRef(None),
-                        ValueType::V128 => Value::V128([0u8; 16]),
-                    };
-                    locals.push(zero_value);
+                    locals.push(default_value_for_type(*local_type)?);
                 }
             }
         }
@@ -727,7 +672,7 @@ impl<'a> Executor<'a> {
             on_complete: ContextCompletion::ReturnFunction,
         }];
 
-        let result = self.run_execution_loop(contexts, return_types.to_vec());
+        let result = self.run_execution_loop(contexts, return_types.to_vec(), resources);
 
         // On error, restore call stack to pre-call state
         if result.is_err() {
@@ -742,17 +687,19 @@ impl<'a> Executor<'a> {
     ///
     /// This method is called when a cross-module call returns. It pushes the
     /// results onto the operand stack and continues execution.
-    pub fn resume_with_results(&mut self, results: Vec<Value>) -> Result<ExecutionOutcome, RuntimeError> {
-        // Restore saved contexts
+    pub fn resume_with_results(
+        &mut self,
+        results: Vec<Value>,
+        resources: &mut Resources,
+    ) -> Result<ExecutionOutcome, RuntimeError> {
         let contexts = self.saved_contexts.take().ok_or(RuntimeError::InvalidFunctionType)?;
         let return_types = std::mem::take(&mut self.saved_return_types);
 
-        // Push results onto the operand stack
         for value in results {
             self.stack.push(value);
         }
 
-        self.run_execution_loop(contexts, return_types)
+        self.run_execution_loop(contexts, return_types, resources)
     }
 
     /// Main execution loop shared by execute_function_with_locals and resume_with_results
@@ -760,6 +707,7 @@ impl<'a> Executor<'a> {
         &mut self,
         mut contexts: Vec<ExecutionContext<'a>>,
         return_types: Vec<ValueType>,
+        resources: &mut Resources,
     ) -> Result<ExecutionOutcome, RuntimeError> {
         'execution: loop {
             // Get current context
@@ -800,7 +748,7 @@ impl<'a> Executor<'a> {
             // Execute current instruction
             let instruction = &context.instructions[context.position];
 
-            let state = self.execute_instruction_state_machine(instruction)?;
+            let state = self.execute_instruction_state_machine(instruction, resources)?;
 
             match state {
                 ExecutionState::Continue => {
@@ -883,8 +831,9 @@ impl<'a> Executor<'a> {
                 _ => return Err(RuntimeError::InvalidFunctionType),
             };
             let func_type = self
-                .function_types
-                .get(type_idx as usize)
+                .module
+                .types
+                .get(type_idx)
                 .ok_or(RuntimeError::InvalidFunctionType)?
                 .clone();
 
@@ -913,8 +862,9 @@ impl<'a> Executor<'a> {
             .ok_or(RuntimeError::FunctionIndexOutOfBounds(func_idx))?;
 
         let func_type = self
-            .function_types
-            .get(func.ftype_index as usize)
+            .module
+            .types
+            .get(func.ftype_index)
             .ok_or(RuntimeError::InvalidFunctionType)?
             .clone();
 
@@ -990,6 +940,7 @@ impl<'a> Executor<'a> {
     fn execute_instruction_state_machine(
         &mut self,
         instruction: &'a StructuredInstruction,
+        resources: &mut Resources,
     ) -> Result<ExecutionState<'a>, RuntimeError> {
         match instruction {
             StructuredInstruction::Plain(inst) => {
@@ -999,26 +950,25 @@ impl<'a> Executor<'a> {
                     return Ok(ExecutionState::CallFunction(*func_idx));
                 }
 
-                // Special handling for CallIndirect instruction
+                // call_indirect: dispatch through a table (indirect function call)
                 if let InstructionKind::CallIndirect { type_idx, table_idx } = &inst.kind {
-                    // Pop table element index from stack
+                    // Pop the table element index from the operand stack
                     let table_elem_idx = self.stack.pop_i32()? as u32;
 
-                    // Get table and lock it
-                    let table = self
-                        .tables
+                    // Look up the table and retrieve the function reference
+                    let table_addr = self
+                        .table_addresses
                         .get(*table_idx as usize)
                         .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                    let table_guard = table.borrow();
+                    let table = &resources.tables[table_addr.0];
 
-                    // Get function reference from table
                     // Spec: call_indirect OOB is "undefined element", not "out of bounds table access"
-                    let func_ref = table_guard.get(table_elem_idx).map_err(|e| match e {
+                    let func_ref = table.get(table_elem_idx).map_err(|e| match e {
                         RuntimeError::TableIndexOutOfBounds(_) => RuntimeError::UndefinedElement(table_elem_idx),
                         other => other,
                     })?;
 
-                    // Extract function address from reference
+                    // Extract the FuncAddr from the function reference
                     let func_addr = match func_ref {
                         Value::FuncRef(Some(addr)) => addr,
                         Value::FuncRef(None) => {
@@ -1032,10 +982,11 @@ impl<'a> Executor<'a> {
                         }
                     };
 
-                    // Get expected function type from type_idx
+                    // Get the expected function type from type_idx for signature validation
                     let expected_type = self
-                        .function_types
-                        .get(*type_idx as usize)
+                        .module
+                        .types
+                        .get(*type_idx)
                         .ok_or(RuntimeError::InvalidFunctionType)?
                         .clone();
 
@@ -1067,7 +1018,7 @@ impl<'a> Executor<'a> {
                 }
 
                 // Execute as normal and convert BlockEnd to ExecutionState
-                match self.execute_plain_instruction(inst)? {
+                match self.execute_plain_instruction(inst, resources)? {
                     BlockEnd::Normal => Ok(ExecutionState::Continue),
                     BlockEnd::Return => Ok(ExecutionState::ReturnFromFunction),
                     BlockEnd::Branch(depth) => Ok(ExecutionState::BranchTo(depth)),
@@ -1228,44 +1179,52 @@ impl<'a> Executor<'a> {
     }
 
     /// Execute a plain (non-control-flow) instruction
-    fn execute_plain_instruction(&mut self, inst: &Instruction) -> Result<BlockEnd, RuntimeError> {
+    fn execute_plain_instruction(
+        &mut self,
+        inst: &Instruction,
+        resources: &mut Resources,
+    ) -> Result<BlockEnd, RuntimeError> {
         use InstructionKind::*;
 
         macro_rules! with_memory {
             (load $op:ident($memarg:expr)) => {{
-                let memory = self
-                    .memories
+                let mem_idx = self
+                    .memory_addresses
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                let mem_guard = memory.borrow();
-                ops::memory::$op(&mut self.stack, &mem_guard, $memarg)?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                    .0;
+                let memory = &resources.memories[mem_idx];
+                ops::memory::$op(&mut self.stack, memory, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
             (store $op:ident($memarg:expr)) => {{
-                let memory = self
-                    .memories
+                let mem_idx = self
+                    .memory_addresses
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                let mut mem_guard = memory.borrow_mut();
-                ops::memory::$op(&mut self.stack, &mut mem_guard, $memarg)?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                    .0;
+                let memory = &mut resources.memories[mem_idx];
+                ops::memory::$op(&mut self.stack, memory, $memarg)?;
                 Ok(BlockEnd::Normal)
             }};
             (size $op:ident()) => {{
-                let memory = self
-                    .memories
+                let mem_idx = self
+                    .memory_addresses
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                let mem_guard = memory.borrow();
-                ops::memory::$op(&mut self.stack, &mem_guard)?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                    .0;
+                let memory = &resources.memories[mem_idx];
+                ops::memory::$op(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }};
             (grow $op:ident()) => {{
-                let memory = self
-                    .memories
+                let mem_idx = self
+                    .memory_addresses
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                let mut mem_guard = memory.borrow_mut();
-                ops::memory::$op(&mut self.stack, &mut mem_guard)?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                    .0;
+                let memory = &mut resources.memories[mem_idx];
+                ops::memory::$op(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }};
         }
@@ -1476,11 +1435,16 @@ impl<'a> Executor<'a> {
             // 3. Let val be the value F.module.globals[x].val.
             // 4. Push the value val to the stack.
             GlobalGet { global_idx } => {
-                let shared = self
-                    .globals
+                let addr = self
+                    .global_addresses
                     .get(*global_idx as usize)
                     .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
-                self.stack.push(shared.get());
+                let value = resources
+                    .globals
+                    .get(addr.0)
+                    .copied()
+                    .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
+                self.stack.push(value);
                 Ok(BlockEnd::Normal)
             }
 
@@ -1497,19 +1461,18 @@ impl<'a> Executor<'a> {
             GlobalSet { global_idx } => {
                 let value = self.stack.pop()?;
 
-                // Bounds check
-                if *global_idx as usize >= self.globals.len() {
-                    return Err(RuntimeError::GlobalIndexOutOfBounds(*global_idx));
-                }
+                let addr = self
+                    .global_addresses
+                    .get(*global_idx as usize)
+                    .ok_or(RuntimeError::GlobalIndexOutOfBounds(*global_idx))?;
 
-                // Check mutability
                 if !is_global_mutable(self.module, *global_idx)? {
                     return Err(RuntimeError::InvalidConversion(
                         "cannot set immutable global".to_string(),
                     ));
                 }
 
-                self.globals[*global_idx as usize].set(value);
+                resources.globals[addr.0] = value;
                 Ok(BlockEnd::Normal)
             }
 
@@ -1613,14 +1576,15 @@ impl<'a> Executor<'a> {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, src_offset, length]
             MemoryInit { data_idx } => {
-                let memory = self
-                    .memories
+                let mem_idx = self
+                    .memory_addresses
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory available".to_string()))?;
-                let mut mem_guard = memory.borrow_mut();
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                    .0;
+                let memory = &mut resources.memories[mem_idx];
                 ops::memory::memory_init(
                     &mut self.stack,
-                    &mut mem_guard,
+                    memory,
                     *data_idx,
                     &self.module.data.data,
                     &self.dropped_data,
@@ -1632,12 +1596,13 @@ impl<'a> Executor<'a> {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, src_addr, length]
             MemoryCopy => {
-                let memory = self
-                    .memories
+                let mem_idx = self
+                    .memory_addresses
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory available".to_string()))?;
-                let mut mem_guard = memory.borrow_mut();
-                ops::memory::memory_copy(&mut self.stack, &mut mem_guard)?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                    .0;
+                let memory = &mut resources.memories[mem_idx];
+                ops::memory::memory_copy(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }
 
@@ -1645,12 +1610,13 @@ impl<'a> Executor<'a> {
             // [i32 i32 i32] → []
             // Stack: [dest_addr, value, length]
             MemoryFill => {
-                let memory = self
-                    .memories
+                let mem_idx = self
+                    .memory_addresses
                     .first()
-                    .ok_or_else(|| RuntimeError::MemoryError("no memory available".to_string()))?;
-                let mut mem_guard = memory.borrow_mut();
-                ops::memory::memory_fill(&mut self.stack, &mut mem_guard)?;
+                    .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                    .0;
+                let memory = &mut resources.memories[mem_idx];
+                ops::memory::memory_fill(&mut self.stack, memory)?;
                 Ok(BlockEnd::Normal)
             }
 
@@ -2333,14 +2299,13 @@ impl<'a> Executor<'a> {
             // spec: 4.4.6.1
             TableGet { table_idx } => {
                 let idx = self.stack.pop_i32()?;
-                let table = self
-                    .tables
+                let table_addr = self
+                    .table_addresses
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table_guard = table.borrow();
+                let table = &resources.tables[table_addr.0];
 
-                let value = table_guard.get(idx as u32)?;
-
+                let value = table.get(idx as u32)?;
                 self.stack.push(value);
                 Ok(BlockEnd::Normal)
             }
@@ -2349,23 +2314,23 @@ impl<'a> Executor<'a> {
                 let value = self.stack.pop()?;
                 let idx = self.stack.pop_i32()?;
 
-                let table = self
-                    .tables
+                let table_addr = self
+                    .table_addresses
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table.borrow_mut();
+                let table = &mut resources.tables[table_addr.0];
 
-                table_guard.set(idx as u32, Some(value))?;
+                table.set(idx as u32, Some(value))?;
                 Ok(BlockEnd::Normal)
             }
             // spec: 4.4.6.3
             TableSize { table_idx } => {
-                let table = self
-                    .tables
+                let table_addr = self
+                    .table_addresses
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let table_guard = table.borrow();
-                self.stack.push(Value::I32(table_guard.size() as i32));
+                let table = &resources.tables[table_addr.0];
+                self.stack.push(Value::I32(table.size() as i32));
                 Ok(BlockEnd::Normal)
             }
             // spec: 4.4.6.4
@@ -2373,13 +2338,13 @@ impl<'a> Executor<'a> {
                 let delta = self.stack.pop_i32()?;
                 let init_value = self.stack.pop()?;
 
-                let table = self
-                    .tables
+                let table_addr = self
+                    .table_addresses
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table.borrow_mut();
+                let table = &mut resources.tables[table_addr.0];
 
-                let result = table_guard.grow(delta as u32, Some(init_value))?;
+                let result = table.grow(delta as u32, Some(init_value))?;
                 self.stack.push(Value::I32(result as i32));
                 Ok(BlockEnd::Normal)
             }
@@ -2394,13 +2359,13 @@ impl<'a> Executor<'a> {
                     .get(*elem_idx as usize)
                     .ok_or(RuntimeError::ElementIndexOutOfBounds(*elem_idx))?;
 
-                let table = self
-                    .tables
+                let table_addr = self
+                    .table_addresses
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table.borrow_mut();
+                let table = &mut resources.tables[table_addr.0];
 
-                table_guard.init(dst_idx, src_segment, src_idx, count)?;
+                table.init(dst_idx, src_segment, src_idx, count)?;
                 Ok(BlockEnd::Normal)
             }
             // spec: 4.4.6.6
@@ -2409,29 +2374,30 @@ impl<'a> Executor<'a> {
                 let src_idx = self.stack.pop_i32()? as u32;
                 let dst_idx = self.stack.pop_i32()? as u32;
 
-                if dst_table == src_table {
+                let dst_addr = self
+                    .table_addresses
+                    .get(*dst_table as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?
+                    .0;
+                let src_addr = self
+                    .table_addresses
+                    .get(*src_table as usize)
+                    .ok_or(RuntimeError::TableIndexOutOfBounds(*src_table))?
+                    .0;
+
+                if dst_addr == src_addr {
                     // Same table - use copy_within
-                    let table = self
-                        .tables
-                        .get(*dst_table as usize)
-                        .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?;
-                    let mut table_guard = table.borrow_mut();
-                    table_guard.copy_within(dst_idx, src_idx, count)?;
+                    let table = &mut resources.tables[dst_addr];
+                    table.copy_within(dst_idx, src_idx, count)?;
                 } else {
-                    // Different tables - borrow both independently
-                    let src_table_rc = self
-                        .tables
-                        .get(*src_table as usize)
-                        .ok_or(RuntimeError::TableIndexOutOfBounds(*src_table))?;
-                    let dst_table_rc = self
-                        .tables
-                        .get(*dst_table as usize)
-                        .ok_or(RuntimeError::TableIndexOutOfBounds(*dst_table))?;
-
-                    let src_guard = src_table_rc.borrow();
-                    let mut dst_guard = dst_table_rc.borrow_mut();
-
-                    dst_guard.copy_from(dst_idx, &src_guard, src_idx, count)?;
+                    // Different tables - use split_at_mut for simultaneous mutable borrows
+                    if src_addr < dst_addr {
+                        let (left, right) = resources.tables.split_at_mut(dst_addr);
+                        right[0].copy_from(dst_idx, &left[src_addr], src_idx, count)?;
+                    } else {
+                        let (left, right) = resources.tables.split_at_mut(src_addr);
+                        left[dst_addr].copy_from(dst_idx, &right[0], src_idx, count)?;
+                    }
                 }
 
                 Ok(BlockEnd::Normal)
@@ -2442,13 +2408,13 @@ impl<'a> Executor<'a> {
                 let value = self.stack.pop()?;
                 let start = self.stack.pop_i32()? as u32;
 
-                let table = self
-                    .tables
+                let table_addr = self
+                    .table_addresses
                     .get(*table_idx as usize)
                     .ok_or(RuntimeError::TableIndexOutOfBounds(*table_idx))?;
-                let mut table_guard = table.borrow_mut();
+                let table = &mut resources.tables[table_addr.0];
 
-                table_guard.fill(start, count, Some(value))?;
+                table.fill(start, count, Some(value))?;
                 Ok(BlockEnd::Normal)
             }
             // spec: 4.4.6.8
@@ -2456,7 +2422,6 @@ impl<'a> Executor<'a> {
                 if (*elem_idx as usize) >= self.element_segments.len() {
                     return Err(RuntimeError::ElementIndexOutOfBounds(*elem_idx));
                 }
-                // Clear the segment
                 self.element_segments[*elem_idx as usize].clear();
                 Ok(BlockEnd::Normal)
             }
@@ -2465,21 +2430,23 @@ impl<'a> Executor<'a> {
             Simd(op) => {
                 macro_rules! simd_mem {
                     (load $fn:ident($memarg:expr)) => {{
-                        let memory = self
-                            .memories
+                        let mem_idx = self
+                            .memory_addresses
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                        let mem_guard = memory.borrow();
-                        ops::simd::$fn(&mut self.stack, &mem_guard, $memarg)?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                            .0;
+                        let memory = &resources.memories[mem_idx];
+                        ops::simd::$fn(&mut self.stack, memory, $memarg)?;
                         Ok(BlockEnd::Normal)
                     }};
                     (store $fn:ident($memarg:expr)) => {{
-                        let memory = self
-                            .memories
+                        let mem_idx = self
+                            .memory_addresses
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                        let mut mem_guard = memory.borrow_mut();
-                        ops::simd::$fn(&mut self.stack, &mut mem_guard, $memarg)?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                            .0;
+                        let memory = &mut resources.memories[mem_idx];
+                        ops::simd::$fn(&mut self.stack, memory, $memarg)?;
                         Ok(BlockEnd::Normal)
                     }};
                 }
@@ -2500,21 +2467,23 @@ impl<'a> Executor<'a> {
                 // Dispatch SIMD load-lane ops (memarg + lane + v128 + i32 on stack)
                 macro_rules! simd_mem_lane {
                     (load $fn:ident($memarg:expr, $lane:expr)) => {{
-                        let memory = self
-                            .memories
+                        let mem_idx = self
+                            .memory_addresses
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                        let mem_guard = memory.borrow();
-                        ops::simd::$fn(&mut self.stack, &mem_guard, $memarg, *$lane)?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                            .0;
+                        let memory = &resources.memories[mem_idx];
+                        ops::simd::$fn(&mut self.stack, memory, $memarg, *$lane)?;
                         Ok(BlockEnd::Normal)
                     }};
                     (store $fn:ident($memarg:expr, $lane:expr)) => {{
-                        let memory = self
-                            .memories
+                        let mem_idx = self
+                            .memory_addresses
                             .first()
-                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?;
-                        let mut mem_guard = memory.borrow_mut();
-                        ops::simd::$fn(&mut self.stack, &mut mem_guard, $memarg, *$lane)?;
+                            .ok_or_else(|| RuntimeError::MemoryError("no memory instance available".to_string()))?
+                            .0;
+                        let memory = &mut resources.memories[mem_idx];
+                        ops::simd::$fn(&mut self.stack, memory, $memarg, *$lane)?;
                         Ok(BlockEnd::Normal)
                     }};
                 }
@@ -2970,9 +2939,9 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
             let outcome = executor
-                .execute_function(&func, vec![], &[ValueType::I32])
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
                 .expect("Execution should succeed");
 
             assert_eq!(unwrap_complete(outcome), vec![Value::I32(42)]);
@@ -2998,9 +2967,9 @@ mod tests {
 
             // Execute using structured executor
             let module = Module::new("test");
-            let mut executor = Executor::new(&module).expect("Executor creation should succeed");
+            let (mut executor, mut resources) = Executor::new(&module).expect("Executor creation should succeed");
             let outcome = executor
-                .execute_function(&func, vec![], &[ValueType::I32])
+                .execute_function(&func, vec![], &[ValueType::I32], &mut resources)
                 .expect("Execution should succeed");
 
             assert_eq!(unwrap_complete(outcome), vec![Value::I32(10)]); // Should take then branch
@@ -3115,7 +3084,7 @@ mod tests {
 
             // Add the imported env.log function as a host function
             let log_addr = store.allocate_function(FunctionInstance::Host {
-                func: Box::new(|_args| Ok(vec![])), // No-op log function
+                func: Box::new(|_caller, _args| Ok(vec![])), // No-op log function
                 func_type: module.types.types[0].clone(),
             });
             imports.add_function("env", "log", log_addr);

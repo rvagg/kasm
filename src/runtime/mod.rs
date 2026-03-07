@@ -20,9 +20,7 @@ pub mod wasi;
 pub use imports::ImportObject;
 pub use instance::Instance;
 pub use memory::Memory;
-pub use store::{
-    FuncAddr, FunctionInstance, GlobalAddr, MemoryAddr, SharedGlobal, SharedMemory, SharedTable, Store, TableAddr,
-};
+pub use store::{Caller, FuncAddr, FunctionInstance, GlobalAddr, HostFunc, MemoryAddr, Resources, Store, TableAddr};
 pub use table::Table;
 pub use value::Value;
 

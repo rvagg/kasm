@@ -135,11 +135,10 @@ mod tests {
                 }
                 WastAction::Get { module, name } => {
                     let instance_id = self.resolve_instance(module);
-                    let instance = self
+                    let value = self
                         .store
-                        .get_instance(instance_id)
-                        .ok_or_else(|| format!("instance {instance_id} not found"))?;
-                    let value = instance.get_global_export(name).map_err(|e| format!("{e}"))?;
+                        .get_global_export(instance_id, name)
+                        .map_err(|e| format!("{e}"))?;
                     Ok(vec![value])
                 }
             }

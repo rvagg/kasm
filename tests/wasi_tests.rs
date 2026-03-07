@@ -7,7 +7,7 @@ use kasm::parser;
 use kasm::parser::module::Module;
 use kasm::parser::reader::Reader;
 use kasm::runtime::store::Store;
-use kasm::runtime::wasi::{MEMORY_EXPORT, WasiContext, add_assemblyscript_imports, create_wasi_imports};
+use kasm::runtime::wasi::{WasiContext, add_assemblyscript_imports, create_wasi_imports};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
@@ -63,14 +63,6 @@ fn test_hello_wasi() {
     let instance_id = store
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
-
-    // Bind memory to WASI context
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr("memory")
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
 
     // Execute _start
     let result = store.invoke_export(instance_id, "_start", vec![], None);
@@ -138,13 +130,6 @@ fn test_fd_read_stdin() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr("memory")
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -210,13 +195,6 @@ fn test_args() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr("memory")
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -253,13 +231,6 @@ fn test_assemblyscript_hello() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -295,13 +266,6 @@ fn test_proc_exit() {
     let instance_id = store
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
-
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr("memory")
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
 
     // proc_exit should trap
     let result = store.invoke_export(instance_id, "_start", vec![], None);
@@ -357,13 +321,6 @@ fn test_multiple_iovecs() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -411,13 +368,6 @@ fn test_fd_read_eof() {
     let instance_id = store
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
-
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
 
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
@@ -527,13 +477,6 @@ fn test_environ() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -589,13 +532,6 @@ fn test_fd_prestat_returns_badf() {
     let instance_id = store
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
-
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
 
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
@@ -675,13 +611,6 @@ fn test_preopen_enumerate() {
     let instance_id = store
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
-
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
 
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
@@ -809,13 +738,6 @@ fn test_path_open_and_read() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -903,13 +825,6 @@ fn test_path_open_write() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -988,13 +903,6 @@ fn test_fd_close_then_read_fails() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -1050,13 +958,6 @@ fn test_path_traversal_blocked() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -1105,13 +1006,6 @@ fn test_path_open_nonexistent_file() {
     let instance_id = store
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
-
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
 
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
@@ -1212,13 +1106,6 @@ fn test_fd_seek() {
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
 
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
-
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
@@ -1286,13 +1173,6 @@ fn test_fd_fdstat_get() {
     let instance_id = store
         .create_instance(&module, Some(&imports))
         .expect("Failed to create instance");
-
-    let memory_addr = store
-        .get_instance(instance_id)
-        .unwrap()
-        .get_memory_addr(MEMORY_EXPORT)
-        .expect("Failed to get memory");
-    ctx.bind_memory(store.get_memory(memory_addr).unwrap().clone());
 
     let result = store.invoke_export(instance_id, "_start", vec![], None);
     assert!(result.is_ok(), "Execution failed: {:?}", result);
