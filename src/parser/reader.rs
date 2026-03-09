@@ -776,7 +776,7 @@ fn test_read_u8vec() {
     assert_eq!(reader.read_u8vec().unwrap(), vec![0xaa, 0xbb, 0xcc]);
 
     let mut reader = Reader::new(vec![0x00]); // length 0
-    assert_eq!(reader.read_u8vec().unwrap(), vec![]);
+    assert_eq!(reader.read_u8vec().unwrap(), Vec::<u8>::new());
 }
 
 #[test]

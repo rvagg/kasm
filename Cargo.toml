@@ -1,15 +1,35 @@
 [package]
 name = "kasm"
 version = "0.0.1"
-authors = [ "Rod Vagg <r@va.gg>" ]
+authors = ["Rod Vagg <r@va.gg>"]
 edition = "2024"
+description = "WebAssembly 2.0 runtime, parser, and toolkit with SIMD and WASI support"
+license = "Apache-2.0"
+repository = "https://github.com/rvagg/kasm"
+readme = "README.md"
+keywords = ["webassembly", "wasm", "interpreter", "wasi", "simd"]
+categories = ["wasm"]
+exclude = [
+    "tests/spec/",
+    "_webassembly-spec/",
+    "wasm-wabt/",
+    "fuzz/",
+    "docs/",
+    "examples/assemblyscript/node_modules/",
+    "examples/assemblyscript/package-lock.json",
+    "benches/commp_bench_500k.bin",
+    "src/bin/superinstruct.rs",
+]
+
+[features]
+default = ["cli"]
+cli = ["clap"]
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"], optional = true }
 byteorder = "1.5"
 hex = "0.4"
 once_cell = "1.18"
-rstest = "0.26"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 base64 = "0.22.1"
@@ -21,6 +41,12 @@ thiserror = "2.0.18"
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.10"
+rstest = "0.26"
+
+[[bin]]
+name = "kasm"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [[bench]]
 name = "validation"

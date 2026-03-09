@@ -106,19 +106,24 @@ pub use wat::ParseError;
 /// Provides the [`WasiContext`](wasi::WasiContext) builder and convenience
 /// functions for instantiating WASI-enabled WebAssembly modules.
 ///
-/// ```ignore
+/// ```no_run
+/// use kasm::{Store, Value};
 /// use kasm::wasi::{WasiContext, create_wasi_instance};
 /// use std::sync::Arc;
 ///
+/// let module = kasm::wat::parse(r#"(module
+///     (import "wasi_snapshot_preview1" "proc_exit" (func (param i32)))
+///     (memory (export "memory") 1)
+///     (func (export "_start"))
+/// )"#).unwrap();
+///
 /// let ctx = Arc::new(WasiContext::builder()
 ///     .args(["prog", "arg1"])
-///     .stdin(Box::new(std::io::stdin()))
-///     .stdout(Box::new(std::io::stdout()))
-///     .stderr(Box::new(std::io::stderr()))
 ///     .build());
 ///
-/// let instance_id = create_wasi_instance(&mut store, module, ctx, true)?;
-/// store.invoke_export(instance_id, "_start", vec![], None)?;
+/// let mut store = Store::new();
+/// let instance_id = create_wasi_instance(&mut store, Arc::new(module), ctx, true).unwrap();
+/// store.invoke_export(instance_id, "_start", vec![], None).unwrap();
 /// ```
 pub mod wasi {
     pub use crate::runtime::wasi::{

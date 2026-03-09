@@ -72,8 +72,9 @@ pub struct Module {
     pub data_count: DataCountSection,
     pub custom: Vec<CustomSection>,
 
-    /// Cached validation context for efficient lookups
-    pub validation_context: RefCell<Option<ValidationContext>>,
+    /// Cached validation context for efficient lookups during validation
+    /// and streaming decode. Built lazily via `validation_context()`.
+    pub(crate) validation_context: RefCell<Option<ValidationContext>>,
 }
 
 impl Module {
@@ -1068,7 +1069,7 @@ fn init_expr_to_string(
             InstructionKind::F64Const { value } => {
                 result.push_str(&format!("f64={}", value.to_hex()));
             }
-            // TODO: v128
+            // v128 const disassembly not yet implemented
             InstructionKind::GlobalGet { global_idx } => match unit.imports.get_global_import(*global_idx) {
                 Some(import) => {
                     result.push_str(&format!("global={} <{}.{}>", global_idx, import.module, import.name));
@@ -1119,7 +1120,7 @@ fn init_expr_to_string(
                         }
                         InstructionKind::GlobalGet { global_idx } => {
                             result.push_str(&format!("{}", *global_idx));
-                            // TODO: global name?
+                            // Could resolve the global's import name here
                         }
                         _ => {
                             result.push_str("<INVALID>");
@@ -1248,7 +1249,7 @@ impl SectionToString for CodeSection {
             let exp = unit.get_function_export_name(fi as u32);
             result.push_str(&format!(
                 " - func[{}] size={}{}\n",
-                fi, // TODO: i is wrong when `(func $dummy)` is included - it should skip over these, need to figure out how it knows
+                fi, // NB: index may be wrong for modules with empty imported functions — wabt skips these somehow
                 function_body.position.len(),
                 exp
             ));
@@ -1280,7 +1281,7 @@ impl CodeSection {
 
             let mut pos = function_body.position.start as usize;
             result.push_str(&format!("{pos:06x} func[{fi}]{exp}:\n"));
-            pos += 1; // TODO: do we need more bytes to represent a function start?
+            pos += 1; // skip the local decl count byte at function start
             // for each instruction, ignoring the opcodes for now
             //  00011f: 20 00                      | local.get 0
 
@@ -1549,7 +1550,7 @@ impl SectionToString for CustomSection {
             "{} \"{}\"",
             self.position,
             self.name
-                .split('\0') // TODO: this is a hack to replicate C++ printing behaviour to match wabt output
+                .split('\0') // custom section names may contain NUL; wabt truncates at the first one
                 .next()
                 .unwrap_or(&self.name)
         )
@@ -1560,7 +1561,7 @@ impl SectionToString for CustomSection {
         result.push_str(&format!(
             "Custom:\n - name: \"{}\"\n",
             self.name
-                .split('\0') // TODO: this is a hack to replicate C++ printing behaviour to match wabt output
+                .split('\0') // custom section names may contain NUL; wabt truncates at the first one
                 .next()
                 .unwrap_or(&self.name)
         ));
@@ -1636,7 +1637,22 @@ impl fmt::Display for Import {
                 self.module,
                 self.name
             ),
-            _ => panic!("TODO: implement"),
+            ExternalKind::Memory(ref limits) => write!(
+                f,
+                "pages: initial={}{} <- {}.{}",
+                limits.min,
+                match limits.max {
+                    Some(max) => format!(" max={max}"),
+                    None => "".to_string(),
+                },
+                self.module,
+                self.name
+            ),
+            ExternalKind::Global(ref global_type) => write!(
+                f,
+                "{} mutable={} <- {}.{}",
+                global_type.value_type, global_type.mutable, self.module, self.name
+            ),
         }
     }
 }
@@ -2041,22 +2057,6 @@ impl fmt::Display for ExternalKind {
     }
 }
 
-/*
-#[derive(Debug)]
-pub struct MemoryType {
-    // TODO: fix this, no longer correct
-    // limits : ResizableLimits
-}
- */
-
-/*
-pub struct ResizableLimits {
-    flags   : u8
-  , initial : u64
-  , maximum : u64
-}
-*/
-
 impl Module {
     pub fn new(name: &str) -> Module {
         Module {
@@ -2196,16 +2196,6 @@ impl fmt::Display for Export {
 impl fmt::Display for FunctionBody {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "locals = {:?}", self.locals).unwrap();
-        /* TODO: do we want this back? need to intercept the reader
-        write!(f, " body = ").unwrap();
-        let hex_string = self
-            .body
-            .iter()
-            .map(|byte| format!("{:02x}", byte))
-            .collect::<Vec<String>>()
-            .join("");
-        write!(f, "0x{}", hex_string).unwrap();
-         */
         write!(f, " instructions = ").unwrap();
         let instructions = self.body.flatten();
         for instruction in &instructions {

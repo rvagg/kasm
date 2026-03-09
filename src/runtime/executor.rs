@@ -3006,7 +3006,8 @@ mod tests {
         use crate::parser::module::{
             Export, ExportIndex, ExternalKind, Function, FunctionBody, Import, Locals, SectionPosition,
         };
-        use crate::runtime::{FunctionInstance, ImportObject, Store};
+        use crate::runtime::store::FunctionInstance;
+        use crate::runtime::{ImportObject, Store};
 
         #[test]
         fn test_call_with_imports() {

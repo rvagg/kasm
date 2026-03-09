@@ -2,8 +2,6 @@
 
 An experimental & educational WebAssembly runtime implementation in Rust that provides parsing, validation, and execution utilities for WebAssembly modules.
 
-**"kasm"** is a placeholder name for now, it won't be published to crates.io until it matures further.
-
 *If you want to join me in exploring WebAssembly by building, hit me up!*
 
 ## Features
@@ -69,10 +67,6 @@ fuzz/               Fuzz targets (binary parser, executor, WAT lexer/parser)
 cargo test              # Run all tests
 cargo bench             # Run benchmarks
 ```
-
-## Current Limitations
-
-- No filesystem WASI operations beyond preopened directories
 
 ## License
 

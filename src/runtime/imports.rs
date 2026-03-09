@@ -7,17 +7,21 @@ use super::{FuncAddr, GlobalAddr, MemoryAddr, RuntimeError, TableAddr, Value};
 use crate::parser::module::{ExternalKind, Module, ValueType};
 use std::collections::HashMap;
 
-/// Container for imported values that a module can reference
+/// Container for imported values that a module can reference.
+///
+/// Use the `add_*` methods to register imports and `get_*` methods to resolve
+/// them during instantiation. The `Store` handles this automatically when you
+/// call `Store::instantiate`.
 #[derive(Debug, Clone, Default)]
 pub struct ImportObject {
-    /// Imported global variables mapped by (module_name, field_name) -> (GlobalAddr, type, mutable)
-    pub globals: HashMap<(String, String), (GlobalAddr, ValueType, bool)>,
-    /// Imported functions mapped by (module_name, field_name)
-    pub functions: HashMap<(String, String), FuncAddr>,
-    /// Imported memories mapped by (module_name, field_name)
-    pub memories: HashMap<(String, String), MemoryAddr>,
-    /// Imported tables mapped by (module_name, field_name)
-    pub tables: HashMap<(String, String), TableAddr>,
+    // (module_name, field_name) -> (GlobalAddr, type, mutable)
+    globals: HashMap<(String, String), (GlobalAddr, ValueType, bool)>,
+    // (module_name, field_name) -> FuncAddr
+    functions: HashMap<(String, String), FuncAddr>,
+    // (module_name, field_name) -> MemoryAddr
+    memories: HashMap<(String, String), MemoryAddr>,
+    // (module_name, field_name) -> TableAddr
+    tables: HashMap<(String, String), TableAddr>,
 }
 
 impl ImportObject {
