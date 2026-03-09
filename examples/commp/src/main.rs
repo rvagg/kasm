@@ -1,6 +1,6 @@
 //! CommP CLI - compute Filecoin piece commitment from stdin
 //!
-//! Usage: cat file.bin | kasm run commp.wasm
+//! Usage: cat file.bin | krasm run commp.wasm
 //! Output: 64-character hex-encoded CommP root
 
 use std::io::{self, Read, Write};

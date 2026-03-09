@@ -1,4 +1,4 @@
-// Hello World example for kasm WebAssembly runtime
+// Hello World example for krasm WebAssembly runtime
 
 import { println } from "./std";
 

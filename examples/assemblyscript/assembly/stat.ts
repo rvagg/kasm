@@ -3,7 +3,7 @@
 // Exercises path_filestat_get and fd_filestat_get to read and display
 // file type and size information.
 //
-// Usage: kasm run --dir=. stat.wasm -- filename.txt
+// Usage: krasm run --dir=. stat.wasm -- filename.txt
 //
 // Output format:
 //   path: filename.txt

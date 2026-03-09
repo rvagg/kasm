@@ -487,7 +487,7 @@ impl ParseContext {
 /// # Example
 ///
 /// ```
-/// use kasm::wat::parse;
+/// use krasm::wat::parse;
 ///
 /// let module = parse("(module (func (result i32) (i32.const 42)))").unwrap();
 /// assert_eq!(module.functions.len(), 1);

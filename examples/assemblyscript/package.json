@@ -1,7 +1,7 @@
 {
-  "name": "kasm-assemblyscript-examples",
+  "name": "krasm-assemblyscript-examples",
   "version": "0.1.0",
-  "description": "AssemblyScript examples for the kasm WebAssembly runtime",
+  "description": "AssemblyScript examples for the krasm WebAssembly runtime",
   "scripts": {
     "asbuild": "asc assembly/index.ts --target release",
     "asbuild:debug": "asc assembly/index.ts --target debug",

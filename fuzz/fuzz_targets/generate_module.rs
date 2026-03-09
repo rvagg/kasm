@@ -10,9 +10,9 @@ use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use std::collections::HashMap;
 
-use kasm::parser::module::{ExportIndex, ValueType};
-use kasm::parser::{self, reader::Reader};
-use kasm::runtime::{Store, Value};
+use krasm::parser::module::{ExportIndex, ValueType};
+use krasm::parser::{self, reader::Reader};
+use krasm::runtime::{Store, Value};
 
 /// Configuration for generated module
 #[derive(Debug, Arbitrary)]

@@ -91,7 +91,7 @@ cargo test
 # Integration tests: run AssemblyScript examples and verify output
 if [[ -f "$AS_DIR/build/mktree.wasm" && -f "$AS_DIR/build/tree.wasm" && -f "$AS_DIR/build/stat.wasm" ]]; then
     echo -e "\n=== Running WASI integration examples ==="
-    KASM="cargo run -q --bin kasm --"
+    KASM="cargo run -q --bin krasm --"
     WORK=$(mktemp -d)
     trap 'rm -rf "$WORK"' EXIT
 

@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use kasm::parser;
+use krasm::parser;
 use std::collections::HashMap;
 use std::fs;
 use std::hint::black_box;

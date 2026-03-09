@@ -1,4 +1,6 @@
-# WebAssembly Runtime (Rust)
+# krasm - WebAssembly Runtime (Rust)
+
+Previously called "kasm", renamed to "krasm" for crates.io publication (March 2026).
 
 ## Critical Rules
 - Run `./check.sh` after changes (fmt, clippy, tests, builds AssemblyScript)
@@ -82,16 +84,16 @@ benches/                # Criterion benchmarks
 - WAT parser: complete WebAssembly 2.0 text format (inline exports, structured control flow)
 - Binary encoder: Module → .wasm (all 13 sections, 82 tests including spec fixture round-trips)
 - CLI: run/dump accept .wat natively, compile subcommand (WAT → .wasm)
-- No external `wat` crate dependency — all WAT parsing uses kasm::wat::parse()
+- No external `wat` crate dependency — all WAT parsing uses krasm::wat::parse()
 - Filesystem: path_open, path_create/remove_directory, path_unlink_file, path_rename, fd_readdir, fd_filestat_get
 
 ## CLI
 ```bash
-kasm run <file> [-- args...]        # Execute WASI module (.wasm or .wat)
-kasm dump <file>                    # Show module details (.wasm or .wat)
-kasm dump <file> --header           # Show only header
-kasm dump <file> -d                 # Disassemble
-kasm compile <file.wat> [-o out]    # Compile WAT to .wasm binary
+krasm run <file> [-- args...]        # Execute WASI module (.wasm or .wat)
+krasm dump <file>                    # Show module details (.wasm or .wat)
+krasm dump <file> --header           # Show only header
+krasm dump <file> -d                 # Disassemble
+krasm compile <file.wat> [-o out]    # Compile WAT to .wasm binary
 ```
 
 ## Development Workflow
@@ -196,7 +198,7 @@ python3 -c "import sys; sys.stdout.buffer.write(b'\x42' * 500000)" > benches/com
 cd examples/commp && RUSTFLAGS="-C target-feature=+simd128" cargo build --target wasm32-wasip1 --release
 
 # Run benchmark
-time cat benches/commp_bench_500k.bin | target/release/kasm run examples/commp/target/wasm32-wasip1/release/commp.wasm
+time cat benches/commp_bench_500k.bin | target/release/krasm run examples/commp/target/wasm32-wasip1/release/commp.wasm
 ```
 
 | Metric | Value |
@@ -213,7 +215,7 @@ time cat benches/commp_bench_500k.bin | target/release/kasm run examples/commp/t
 
 ## Test Infrastructure
 - **tests/wast_tests.rs** - Native .wast spec test runner (148/148 passing):
-  - Parses .wast files directly via `kasm::wast::parse_script()`
+  - Parses .wast files directly via `krasm::wast::parse_script()`
   - All assertion types: assert_return, assert_trap, assert_invalid, assert_malformed,
     assert_unlinkable, assert_uninstantiable, assert_exhaustion
   - Creates spectest imports (globals, table, memory, print functions)
@@ -243,7 +245,7 @@ cargo test --test wasi_tests           # 18 WASI tests
 The `src/wat/` module provides a complete WebAssembly 2.0 text format parser.
 
 ```rust
-use kasm::wat::parse;
+use krasm::wat::parse;
 
 let source = r#"(module
     (func $add (param i32 i32) (result i32)
@@ -286,8 +288,8 @@ let module = parse(source).unwrap();
 The `src/encoder.rs` module encodes a Module to WebAssembly binary format (.wasm).
 
 ```rust
-use kasm::encoder;
-use kasm::wat;
+use krasm::encoder;
+use krasm::wat;
 
 let module = wat::parse("(module (func))").unwrap();
 let bytes = encoder::encode(&module).unwrap();

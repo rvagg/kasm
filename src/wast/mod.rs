@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```
-//! use kasm::wast::parse_script;
+//! use krasm::wast::parse_script;
 //!
 //! let source = r#"
 //!     (module (func (export "f") (result i32) (i32.const 42)))

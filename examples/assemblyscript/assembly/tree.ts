@@ -3,7 +3,7 @@
 // Lists directories and files in a tree format similar to unix `tree`.
 // Exercises fd_readdir, path_open (for subdirectories), fd_close.
 //
-// Usage: kasm run --dir=/tmp/testdir tree.wasm [-- subdir]
+// Usage: krasm run --dir=/tmp/testdir tree.wasm [-- subdir]
 //
 // If a subdir argument is given, lists from that path within the preopen.
 // Otherwise lists the root of the preopened directory.

@@ -1,11 +1,11 @@
 [package]
-name = "kasm"
+name = "krasm"
 version = "0.0.1"
 authors = ["Rod Vagg <r@va.gg>"]
 edition = "2024"
 description = "WebAssembly 2.0 runtime, parser, and toolkit with SIMD and WASI support"
 license = "Apache-2.0"
-repository = "https://github.com/rvagg/kasm"
+repository = "https://github.com/rvagg/krasm"
 readme = "README.md"
 keywords = ["webassembly", "wasm", "interpreter", "wasi", "simd"]
 categories = ["wasm"]
@@ -44,7 +44,7 @@ proptest = "1.10"
 rstest = "0.26"
 
 [[bin]]
-name = "kasm"
+name = "krasm"
 path = "src/main.rs"
 required-features = ["cli"]
 

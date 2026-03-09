@@ -19,8 +19,8 @@
 //! # Example
 //!
 //! ```
-//! use kasm::encoder;
-//! use kasm::wat;
+//! use krasm::encoder;
+//! use krasm::wat;
 //!
 //! let module = wat::parse("(module (func))").unwrap();
 //! let bytes = encoder::encode(&module).unwrap();

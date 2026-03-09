@@ -80,7 +80,7 @@ impl Token {
     /// # Example
     ///
     /// ```
-    /// use kasm::wat::{Lexer, TokenKind};
+    /// use krasm::wat::{Lexer, TokenKind};
     ///
     /// let source = "(module)";
     /// let tokens: Vec<_> = Lexer::new(source).collect::<Result<_, _>>().unwrap();

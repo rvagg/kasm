@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```
-//! use kasm::wat::Lexer;
+//! use krasm::wat::Lexer;
 //!
 //! let source = "(module (func $add (param i32 i32) (result i32)))";
 //! for result in Lexer::new(source) {

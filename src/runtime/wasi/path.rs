@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_path_open_read_existing_file() {
-        let dir = std::env::temp_dir().join("kasm_test_path_open_read");
+        let dir = std::env::temp_dir().join("krasm_test_path_open_read");
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("hello.txt"), b"hello").unwrap();
 
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_path_open_create_file() {
-        let dir = std::env::temp_dir().join("kasm_test_path_open_create");
+        let dir = std::env::temp_dir().join("krasm_test_path_open_create");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_path_open_excl_existing_fails() {
-        let dir = std::env::temp_dir().join("kasm_test_path_open_excl");
+        let dir = std::env::temp_dir().join("krasm_test_path_open_excl");
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("exists.txt"), b"data").unwrap();
 
@@ -371,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_path_open_directory() {
-        let dir = std::env::temp_dir().join("kasm_test_path_open_dir");
+        let dir = std::env::temp_dir().join("krasm_test_path_open_dir");
         let _ = std::fs::create_dir_all(dir.join("subdir"));
 
         let ctx = ctx_with_preopen(&dir);
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_path_open_directory_on_file_fails() {
-        let dir = std::env::temp_dir().join("kasm_test_path_open_dir_file");
+        let dir = std::env::temp_dir().join("krasm_test_path_open_dir_file");
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("file.txt"), b"data").unwrap();
 
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_path_open_nonexistent() {
-        let dir = std::env::temp_dir().join("kasm_test_path_open_noent");
+        let dir = std::env::temp_dir().join("krasm_test_path_open_noent");
         let _ = std::fs::create_dir_all(&dir);
 
         let ctx = ctx_with_preopen(&dir);
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_path_open_negative_ptr() {
-        let dir = std::env::temp_dir().join("kasm_test_path_open_neg");
+        let dir = std::env::temp_dir().join("krasm_test_path_open_neg");
         let _ = std::fs::create_dir_all(&dir);
 
         let ctx = ctx_with_preopen(&dir);
@@ -443,7 +443,7 @@ mod tests {
 
     #[test]
     fn test_path_filestat_get_file() {
-        let dir = std::env::temp_dir().join("kasm_test_path_fstat_file");
+        let dir = std::env::temp_dir().join("krasm_test_path_fstat_file");
         let _ = std::fs::create_dir_all(&dir);
         std::fs::write(dir.join("data.bin"), b"abcdef").unwrap();
 
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_path_filestat_get_directory() {
-        let dir = std::env::temp_dir().join("kasm_test_path_fstat_dir");
+        let dir = std::env::temp_dir().join("krasm_test_path_fstat_dir");
         let _ = std::fs::create_dir_all(dir.join("child"));
 
         let ctx = ctx_with_preopen(&dir);
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_path_filestat_get_nonexistent() {
-        let dir = std::env::temp_dir().join("kasm_test_path_fstat_noent");
+        let dir = std::env::temp_dir().join("krasm_test_path_fstat_noent");
         let _ = std::fs::create_dir_all(&dir);
 
         let ctx = ctx_with_preopen(&dir);
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_path_filestat_get_negative_len() {
-        let dir = std::env::temp_dir().join("kasm_test_path_fstat_neg");
+        let dir = std::env::temp_dir().join("krasm_test_path_fstat_neg");
         let _ = std::fs::create_dir_all(&dir);
 
         let ctx = ctx_with_preopen(&dir);
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_path_create_directory() {
-        let dir = std::env::temp_dir().join("kasm_test_path_mkdir");
+        let dir = std::env::temp_dir().join("krasm_test_path_mkdir");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_path_create_directory_already_exists() {
-        let dir = std::env::temp_dir().join("kasm_test_path_mkdir_exists");
+        let dir = std::env::temp_dir().join("krasm_test_path_mkdir_exists");
         let _ = std::fs::create_dir_all(dir.join("existing"));
 
         let ctx = ctx_with_preopen(&dir);
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_path_remove_directory() {
-        let dir = std::env::temp_dir().join("kasm_test_path_rmdir");
+        let dir = std::env::temp_dir().join("krasm_test_path_rmdir");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("victim")).unwrap();
 
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_path_remove_directory_not_empty() {
-        let dir = std::env::temp_dir().join("kasm_test_path_rmdir_notempty");
+        let dir = std::env::temp_dir().join("krasm_test_path_rmdir_notempty");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("parent")).unwrap();
         std::fs::write(dir.join("parent/child.txt"), b"x").unwrap();
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_path_unlink_file() {
-        let dir = std::env::temp_dir().join("kasm_test_path_unlink");
+        let dir = std::env::temp_dir().join("krasm_test_path_unlink");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("doomed.txt"), b"bye").unwrap();
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn test_path_unlink_nonexistent() {
-        let dir = std::env::temp_dir().join("kasm_test_path_unlink_noent");
+        let dir = std::env::temp_dir().join("krasm_test_path_unlink_noent");
         let _ = std::fs::create_dir_all(&dir);
 
         let ctx = ctx_with_preopen(&dir);
@@ -647,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_path_rename() {
-        let dir = std::env::temp_dir().join("kasm_test_path_rename");
+        let dir = std::env::temp_dir().join("krasm_test_path_rename");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("old.txt"), b"content").unwrap();
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_path_rename_nonexistent_source() {
-        let dir = std::env::temp_dir().join("kasm_test_path_rename_noent");
+        let dir = std::env::temp_dir().join("krasm_test_path_rename_noent");
         let _ = std::fs::create_dir_all(&dir);
 
         let ctx = ctx_with_preopen(&dir);

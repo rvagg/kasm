@@ -8,8 +8,8 @@ A WASI example implementing Filecoin's CommP (Piece Commitment) algorithm. This 
 # Build for WASI
 cargo build --target wasm32-wasip1 --release
 
-# Run with kasm
-cat file.bin | kasm run target/wasm32-wasip1/release/commp.wasm
+# Run with krasm
+cat file.bin | krasm run target/wasm32-wasip1/release/commp.wasm
 
 # Output: 64-character hex CommP root
 ea94b28b4c72336a925aa555376cbca087b9aae7cf16bc69eb19e913106f6f0c

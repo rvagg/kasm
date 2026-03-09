@@ -3,7 +3,7 @@
 use libfuzzer_sys::fuzz_target;
 use std::collections::HashMap;
 
-use kasm::parser::{self, reader::Reader};
+use krasm::parser::{self, reader::Reader};
 
 fuzz_target!(|data: &[u8]| {
     let mut reader = Reader::new(data.to_vec());

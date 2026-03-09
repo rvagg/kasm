@@ -1,4 +1,4 @@
-# kasm
+# krasm
 
 An experimental & educational WebAssembly runtime implementation in Rust that provides parsing, validation, and execution utilities for WebAssembly modules.
 
@@ -25,26 +25,26 @@ An experimental & educational WebAssembly runtime implementation in Rust that pr
 
 ```bash
 # Run a WASI module (.wasm or .wat)
-kasm run examples/hello.wat
-kasm run module.wasm -- arg1 arg2
-kasm run module.wasm --dir ./data -- arg1
+krasm run examples/hello.wat
+krasm run module.wasm -- arg1 arg2
+krasm run module.wasm --dir ./data -- arg1
 
 # Compile WAT to binary
-kasm compile examples/hello.wat              # produces examples/hello.wasm
-kasm compile input.wat -o output.wasm
+krasm compile examples/hello.wat              # produces examples/hello.wasm
+krasm compile input.wat -o output.wasm
 
 # Inspect a module
-kasm dump module.wasm                        # detailed section info
-kasm dump module.wasm --header               # magic and version only
-kasm dump module.wasm -d                     # disassemble
+krasm dump module.wasm                        # detailed section info
+krasm dump module.wasm --header               # magic and version only
+krasm dump module.wasm -d                     # disassemble
 ```
 
 Build and run via cargo:
 
 ```bash
-cargo run --bin kasm -- run examples/hello.wat
-cargo run --bin kasm -- compile examples/hello.wat
-cargo run --bin kasm -- dump module.wasm -d
+cargo run --bin krasm -- run examples/hello.wat
+cargo run --bin krasm -- compile examples/hello.wat
+cargo run --bin krasm -- dump module.wasm -d
 ```
 
 ## Project Structure

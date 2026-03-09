@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use kasm::wast::*;
-    use kasm::{ImportObject, Module, Store, Value};
+    use krasm::wast::*;
+    use krasm::{ImportObject, Module, Store, Value};
     use rstest::rstest;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -10,7 +10,7 @@ mod tests {
     /*
      * Native .wast spec test runner.
      *
-     * Parses .wast files directly using kasm::wast::parse_script().
+     * Parses .wast files directly using krasm::wast::parse_script().
      * Executes all assertion types against our runtime.
      */
 
@@ -48,12 +48,12 @@ mod tests {
         fn parse_module(&self, wast_module: &WastModule) -> Result<Module, String> {
             match wast_module {
                 WastModule::Binary(bytes) => {
-                    let mut reader = kasm::parser::reader::Reader::new(bytes.clone());
-                    kasm::parser::parse(&self.module_registry, "<binary>", &mut reader).map_err(|e| format!("{e}"))
+                    let mut reader = krasm::parser::reader::Reader::new(bytes.clone());
+                    krasm::parser::parse(&self.module_registry, "<binary>", &mut reader).map_err(|e| format!("{e}"))
                 }
                 _ => {
                     let source = wast_module.to_wat_source().ok_or_else(|| "no WAT source".to_string())?;
-                    kasm::wat::parse(&source).map_err(|e| format!("{e}"))
+                    krasm::wat::parse(&source).map_err(|e| format!("{e}"))
                 }
             }
         }
@@ -132,7 +132,7 @@ mod tests {
     /// Check whether an actual error message matches a spec-expected message.
     ///
     /// Uses case-insensitive substring matching: the expected message may appear
-    /// within the actual message. For cases where kasm uses genuinely different
+    /// within the actual message. For cases where krasm uses genuinely different
     /// terminology, a curated equivalence table provides explicit mappings.
     /// Each mapping has a justification comment.
     fn error_message_matches(actual: &str, expected: &str) -> bool {
@@ -144,9 +144,9 @@ mod tests {
             return true;
         }
 
-        // Each equivalence maps a spec message to kasm alternatives with justification.
+        // Each equivalence maps a spec message to krasm alternatives with justification.
         // Entries are grouped by category. Within each entry, the spec message is
-        // matched case-insensitively (exact or substring), then each kasm alternative
+        // matched case-insensitively (exact or substring), then each krasm alternative
         // is checked as a substring of our actual error message (also case-insensitive).
         let equivalences: &[(&str, &[&str])] = &[
             // ================================================================
@@ -216,7 +216,7 @@ mod tests {
             ("invalid result arity", &["type mismatch"]),
             ("inline function type", &["type mismatch"]),
             // ================================================================
-            // More specific: kasm reports a more informative message
+            // More specific: krasm reports a more informative message
             // ================================================================
             ("data segment does not fit", &["out of bounds"]),
             ("elements segment does not fit", &["out of bounds"]),

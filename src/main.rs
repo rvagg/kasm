@@ -1,4 +1,4 @@
-//! CLI entry point for kasm.
+//! CLI entry point for krasm.
 //!
 //! Provides three subcommands:
 //! - `run` -- execute a WASI module (`.wasm` or `.wat`)
@@ -6,9 +6,9 @@
 //! - `compile` -- compile WAT text format to `.wasm` binary
 
 use clap::{Parser, Subcommand};
-use kasm::parser;
-use kasm::wasi::{WasiContext, create_wasi_instance};
-use kasm::{Module, Store};
+use krasm::parser;
+use krasm::wasi::{WasiContext, create_wasi_instance};
+use krasm::{Module, Store};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{stderr, stdin, stdout};
@@ -17,7 +17,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "kasm")]
+#[command(name = "krasm")]
 #[command(about = "WebAssembly runtime and toolkit")]
 struct Cli {
     #[command(subcommand)]
@@ -69,7 +69,7 @@ enum Commands {
 fn load_module(file: &str) -> Result<Module, String> {
     if file.ends_with(".wat") {
         let source = fs::read_to_string(file).map_err(|e| format!("Error reading {}: {}", file, e))?;
-        kasm::wat::parse(&source).map_err(|e| format!("Error parsing {}: {}", file, e))
+        krasm::wat::parse(&source).map_err(|e| format!("Error parsing {}: {}", file, e))
     } else {
         let bytes = fs::read(file).map_err(|e| format!("Error reading {}: {}", file, e))?;
         let module_registry = HashMap::new();
@@ -122,7 +122,7 @@ fn compile_module(file: &str, output: Option<String>) -> ExitCode {
         }
     };
 
-    let module = match kasm::wat::parse(&source) {
+    let module = match krasm::wat::parse(&source) {
         Ok(m) => m,
         Err(e) => {
             eprintln!("Error parsing {}: {}", file, e);
@@ -130,7 +130,7 @@ fn compile_module(file: &str, output: Option<String>) -> ExitCode {
         }
     };
 
-    let bytes = match kasm::encoder::encode(&module) {
+    let bytes = match krasm::encoder::encode(&module) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error encoding {}: {}", file, e);

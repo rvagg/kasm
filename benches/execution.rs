@@ -4,7 +4,7 @@
 //! and overall execution throughput.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use kasm::{Module, Store, Value};
+use krasm::{Module, Store, Value};
 use std::hint::black_box;
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use std::sync::Arc;
 fn load_module(name: &str) -> Module {
     let wat_path = format!("benches/modules/{}.wat", name);
     let wat_source = std::fs::read_to_string(&wat_path).expect(&format!("Failed to read {}", wat_path));
-    kasm::wat::parse(&wat_source).expect(&format!("Failed to parse WAT: {}", name))
+    krasm::wat::parse(&wat_source).expect(&format!("Failed to parse WAT: {}", name))
 }
 
 /// Create a store and instantiate a module
@@ -28,7 +28,7 @@ fn execute(
     instance_id: usize,
     func: &str,
     args: Vec<Value>,
-) -> Result<Vec<Value>, kasm::runtime::RuntimeError> {
+) -> Result<Vec<Value>, krasm::runtime::RuntimeError> {
     store.invoke_export(instance_id, func, args, None)
 }
 

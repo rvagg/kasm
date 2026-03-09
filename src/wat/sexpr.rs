@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```
-//! use kasm::wat::sexpr::read;
+//! use krasm::wat::sexpr::read;
 //!
 //! let sexpr = read("(module (func $add (param i32 i32) (result i32)))").unwrap();
 //! let list = sexpr.as_list().unwrap();
@@ -258,7 +258,7 @@ impl<'a> SExprList<'a> {
 /// # Example
 ///
 /// ```
-/// use kasm::wat::sexpr::read;
+/// use krasm::wat::sexpr::read;
 ///
 /// let sexpr = read("(module)").unwrap();
 /// assert!(sexpr.as_list().is_some());

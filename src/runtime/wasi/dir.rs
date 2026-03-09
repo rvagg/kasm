@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_fd_readdir() {
-        let dir = std::env::temp_dir().join("kasm_test_dir_readdir");
+        let dir = std::env::temp_dir().join("krasm_test_dir_readdir");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("aaa.txt"), "a").unwrap();
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_fd_readdir_with_cookie() {
-        let dir = std::env::temp_dir().join("kasm_test_dir_readdir_cookie");
+        let dir = std::env::temp_dir().join("krasm_test_dir_readdir_cookie");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("alpha"), "").unwrap();
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_fd_readdir_small_buffer() {
-        let dir = std::env::temp_dir().join("kasm_test_dir_readdir_small");
+        let dir = std::env::temp_dir().join("krasm_test_dir_readdir_small");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("file1.txt"), "").unwrap();

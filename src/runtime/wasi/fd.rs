@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_fd_seek_and_tell() {
-        let dir = std::env::temp_dir().join("kasm_test_fd_seek_tell");
+        let dir = std::env::temp_dir().join("krasm_test_fd_seek_tell");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("data.txt"), "0123456789").unwrap();
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_fd_filestat_get_real_file() {
-        let dir = std::env::temp_dir().join("kasm_test_fd_filestat");
+        let dir = std::env::temp_dir().join("krasm_test_fd_filestat");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("info.txt"), "twelve chars").unwrap();

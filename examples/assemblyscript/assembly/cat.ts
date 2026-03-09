@@ -1,6 +1,6 @@
 // Cat - read a file and write its contents to stdout
 //
-// Usage: kasm run --dir=. cat.wasm -- filename.txt
+// Usage: krasm run --dir=. cat.wasm -- filename.txt
 
 import {
   fd_read,

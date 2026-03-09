@@ -3,7 +3,7 @@
 // Creates directories, files, renames, and deletes to exercise filesystem
 // mutation WASI APIs. Prints each operation and result to stdout.
 //
-// Usage: kasm run --dir=/tmp/testdir mktree.wasm
+// Usage: krasm run --dir=/tmp/testdir mktree.wasm
 //
 // Expected output (on success):
 //   mkdir sub: 0

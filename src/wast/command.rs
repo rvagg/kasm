@@ -93,7 +93,7 @@ pub enum WastCommand {
 #[derive(Debug)]
 pub enum WastModule {
     /// Inline WAT text: `(module ...)`.
-    /// Contains the raw source text, to be parsed by `kasm::wat::parse()`.
+    /// Contains the raw source text, to be parsed by `krasm::wat::parse()`.
     Wat(String),
 
     /// Binary module: `(module binary "\00asm" ...)`.

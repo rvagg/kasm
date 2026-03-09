@@ -3,9 +3,9 @@
 use libfuzzer_sys::fuzz_target;
 use std::collections::HashMap;
 
-use kasm::parser::module::{ExportIndex, ValueType};
-use kasm::parser::{self, reader::Reader};
-use kasm::runtime::{Store, Value};
+use krasm::parser::module::{ExportIndex, ValueType};
+use krasm::parser::{self, reader::Reader};
+use krasm::runtime::{Store, Value};
 
 /// Generate a Value of the specified type from fuzz data
 fn generate_value(typ: &ValueType, data: &mut &[u8]) -> Value {

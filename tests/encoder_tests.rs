@@ -9,7 +9,7 @@
 #[cfg(test)]
 mod tests {
     use base64::{Engine as _, engine::general_purpose};
-    use kasm::{encoder, parser, wat};
+    use krasm::{encoder, parser, wat};
     use serde::Deserialize;
     use serde::de::{self, Deserializer};
     use std::collections::HashMap;
@@ -950,8 +950,8 @@ mod tests {
     #[test]
     fn invalid_element_flags() {
         // Construct a Module with element flags outside 0-7.
-        use kasm::parser::module::Element;
-        use kasm::parser::module::{ElementMode, ElementSection, Module, RefType, SectionPosition};
+        use krasm::parser::module::Element;
+        use krasm::parser::module::{ElementMode, ElementSection, Module, RefType, SectionPosition};
 
         let mut module = Module::new("test");
         module.magic = 0x6d736100;
@@ -980,7 +980,7 @@ mod tests {
         // Module with function declarations but no code bodies.
         // The encoder should produce valid (though semantically invalid) binary
         // without panicking.
-        use kasm::parser::module::{
+        use krasm::parser::module::{
             CodeSection, Function, FunctionSection, FunctionType, Module, SectionPosition, TypeSection,
         };
 

@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use kasm::wat::Lexer;
+use krasm::wat::Lexer;
 
 fuzz_target!(|data: &[u8]| {
     // Convert arbitrary bytes to a string (invalid UTF-8 becomes replacement chars)

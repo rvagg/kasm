@@ -3,16 +3,16 @@
 mod common;
 
 use common::CapturedWriter;
-use kasm::parser;
-use kasm::parser::reader::Reader;
-use kasm::wasi::{WasiContext, add_assemblyscript_imports, create_wasi_imports};
-use kasm::{Module, Store};
+use krasm::parser;
+use krasm::parser::reader::Reader;
+use krasm::wasi::{WasiContext, add_assemblyscript_imports, create_wasi_imports};
+use krasm::{Module, Store};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 /// Helper to parse WAT source into a Module
 fn parse_wat(wat: &str) -> Module {
-    kasm::wat::parse(wat).expect("Failed to parse WAT")
+    krasm::wat::parse(wat).expect("Failed to parse WAT")
 }
 
 #[test]
@@ -374,7 +374,7 @@ fn test_fd_read_eof() {
     // Function returns nread, which should be 0 for EOF
     let values = result.unwrap();
     assert_eq!(values.len(), 1);
-    if let kasm::runtime::Value::I32(nread) = values[0] {
+    if let krasm::runtime::Value::I32(nread) = values[0] {
         assert_eq!(nread, 0, "Expected 0 bytes read for EOF");
     } else {
         panic!("Expected i32 return value");
@@ -482,7 +482,7 @@ fn test_environ() {
     // Check environc return value
     let values = result.unwrap();
     assert_eq!(values.len(), 1);
-    if let kasm::runtime::Value::I32(environc) = values[0] {
+    if let krasm::runtime::Value::I32(environc) = values[0] {
         assert_eq!(environc, 2, "Expected 2 environment variables");
     } else {
         panic!("Expected i32 return value");
@@ -538,7 +538,7 @@ fn test_fd_prestat_returns_badf() {
     // Function returns errno, which should be EBADF (8)
     let values = result.unwrap();
     assert_eq!(values.len(), 1);
-    if let kasm::runtime::Value::I32(errno) = values[0] {
+    if let krasm::runtime::Value::I32(errno) = values[0] {
         assert_eq!(errno, 8, "Expected EBADF (8) for no preopened fds");
     } else {
         panic!("Expected i32 return value");
@@ -616,7 +616,7 @@ fn test_preopen_enumerate() {
 
     // Return value is fd_prestat_get(4) which should be EBADF (8)
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(errno) = values[0] {
+    if let krasm::runtime::Value::I32(errno) = values[0] {
         assert_eq!(errno, 8, "Expected EBADF for fd 4");
     } else {
         panic!("Expected i32 return value");
@@ -741,7 +741,7 @@ fn test_path_open_and_read() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(ret) = values[0] {
+    if let krasm::runtime::Value::I32(ret) = values[0] {
         assert_eq!(ret, 0, "Expected success (0), got {}", ret);
     }
 
@@ -828,7 +828,7 @@ fn test_path_open_write() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(ret) = values[0] {
+    if let krasm::runtime::Value::I32(ret) = values[0] {
         assert_eq!(ret, 0, "Expected success (0), got {}", ret);
     }
 
@@ -906,7 +906,7 @@ fn test_fd_close_then_read_fails() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(errno) = values[0] {
+    if let krasm::runtime::Value::I32(errno) = values[0] {
         assert_eq!(errno, 8, "Expected EBADF (8) for closed fd, got {}", errno);
     }
 
@@ -961,7 +961,7 @@ fn test_path_traversal_blocked() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(errno) = values[0] {
+    if let krasm::runtime::Value::I32(errno) = values[0] {
         // Should be EACCES (2) for path traversal
         assert_eq!(errno, 2, "Expected EACCES (2) for path traversal, got {}", errno);
     }
@@ -1010,7 +1010,7 @@ fn test_path_open_nonexistent_file() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(errno) = values[0] {
+    if let krasm::runtime::Value::I32(errno) = values[0] {
         assert_eq!(errno, 44, "Expected ENOENT (44), got {}", errno);
     }
 }
@@ -1109,7 +1109,7 @@ fn test_fd_seek() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(ret) = values[0] {
+    if let krasm::runtime::Value::I32(ret) = values[0] {
         assert_eq!(ret, 0, "Expected success (0), got {}", ret);
     }
 
@@ -1177,7 +1177,7 @@ fn test_fd_fdstat_get() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(combined) = values[0] {
+    if let krasm::runtime::Value::I32(combined) = values[0] {
         let stdout_type = (combined >> 8) & 0xff;
         let dir_type = combined & 0xff;
         assert_eq!(
@@ -1238,7 +1238,7 @@ fn test_return_from_nested_block_preserves_caller() {
     assert!(result.is_ok(), "Execution failed: {:?}", result);
 
     let values = result.unwrap();
-    if let kasm::runtime::Value::I32(v) = values[0] {
+    if let krasm::runtime::Value::I32(v) = values[0] {
         assert_eq!(v, 100, "Expected caller's local (100) to be preserved, got {}", v);
     } else {
         panic!("Expected i32 return value");
@@ -1341,7 +1341,7 @@ fn test_random_get() {
 #[test]
 fn test_fd_tell() {
     // Open a file, write to it, then fd_tell should report the current position
-    let dir = std::env::temp_dir().join("kasm_test_fd_tell");
+    let dir = std::env::temp_dir().join("krasm_test_fd_tell");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("tell_test.txt"), "Hello, World!").unwrap();
@@ -1416,7 +1416,7 @@ fn test_fd_tell() {
     let values = result.unwrap();
     assert_eq!(
         values[0],
-        kasm::runtime::Value::I32(0),
+        krasm::runtime::Value::I32(0),
         "fd_tell test returned non-zero error code"
     );
 }
@@ -1424,7 +1424,7 @@ fn test_fd_tell() {
 #[test]
 fn test_fd_readdir() {
     // Create a directory with known files, open it, and read entries via fd_readdir
-    let dir = std::env::temp_dir().join("kasm_test_fd_readdir");
+    let dir = std::env::temp_dir().join("krasm_test_fd_readdir");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("alpha.txt"), "a").unwrap();
@@ -1506,7 +1506,7 @@ fn test_fd_readdir() {
     let values = result.unwrap();
     assert_eq!(
         values[0],
-        kasm::runtime::Value::I32(3),
+        krasm::runtime::Value::I32(3),
         "Expected 3 directory entries, got {:?}",
         values[0]
     );
@@ -1515,7 +1515,7 @@ fn test_fd_readdir() {
 #[test]
 fn test_path_open_directory() {
     // Open a subdirectory via path_open, then fd_readdir on the opened fd
-    let dir = std::env::temp_dir().join("kasm_test_path_open_dir");
+    let dir = std::env::temp_dir().join("krasm_test_path_open_dir");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let sub = dir.join("mydir");
@@ -1610,7 +1610,7 @@ fn test_path_open_directory() {
     let values = result.unwrap();
     assert_eq!(
         values[0],
-        kasm::runtime::Value::I32(2),
+        krasm::runtime::Value::I32(2),
         "Expected 2 entries in subdir, got {:?}",
         values[0]
     );

@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod tests {
     use base64::{Engine as _, engine::general_purpose};
-    use kasm::parser::{module, parse, reader::Reader};
+    use krasm::parser::{module, parse, reader::Reader};
     use rstest::rstest;
     use serde::Deserialize;
     use serde::de::{self, Deserializer};

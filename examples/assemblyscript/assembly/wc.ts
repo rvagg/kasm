@@ -1,7 +1,7 @@
 // wc - count lines, words, and bytes in a file
 //
 // Uses fd_seek to determine file size, then reads and counts.
-// Usage: kasm run --dir=. wc.wasm -- filename.txt
+// Usage: krasm run --dir=. wc.wasm -- filename.txt
 
 import {
   fd_read,

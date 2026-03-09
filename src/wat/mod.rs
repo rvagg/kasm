@@ -6,7 +6,7 @@
 //! # Parsing Example
 //!
 //! ```
-//! use kasm::wat::parse;
+//! use krasm::wat::parse;
 //!
 //! let wat = r#"
 //!     (module
@@ -23,7 +23,7 @@
 //! # Lexer Example
 //!
 //! ```
-//! use kasm::wat::{Lexer, TokenKind};
+//! use krasm::wat::{Lexer, TokenKind};
 //!
 //! let source = "(module (func $main (result i32) (i32.const 42)))";
 //! let tokens: Vec<_> = Lexer::new(source).collect::<Result<_, _>>().unwrap();
@@ -38,7 +38,7 @@
 //! including source location:
 //!
 //! ```
-//! use kasm::wat::Lexer;
+//! use krasm::wat::Lexer;
 //!
 //! let source = "\"unterminated string";
 //! let result: Result<Vec<_>, _> = Lexer::new(source).collect();

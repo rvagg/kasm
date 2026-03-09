@@ -18,7 +18,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use kasm::runtime::wasi::{WasiContext, create_wasi_imports};
+//! use krasm::runtime::wasi::{WasiContext, create_wasi_imports};
 //! use std::sync::Arc;
 //!
 //! let ctx = Arc::new(WasiContext::builder()

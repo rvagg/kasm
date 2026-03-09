@@ -5,9 +5,9 @@
 //!
 //! Usage: cargo run --bin superinstruct -- module.wasm [--min-count N] [--ngram N]
 
-use kasm::parser;
-use kasm::parser::instruction::InstructionKind;
-use kasm::parser::structured::StructuredInstruction;
+use krasm::parser;
+use krasm::parser::instruction::InstructionKind;
+use krasm::parser::structured::StructuredInstruction;
 use std::collections::HashMap;
 use std::env;
 use std::fs;

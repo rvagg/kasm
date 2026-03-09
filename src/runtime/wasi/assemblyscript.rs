@@ -12,12 +12,12 @@
 //!
 //! When running in a browser or Node.js, AssemblyScript modules are loaded with
 //! JavaScript glue code that provides these functions. When running in a WASI
-//! runtime like kasm, we must provide them ourselves.
+//! runtime like krasm, we must provide them ourselves.
 //!
 //! # Usage
 //!
 //! ```ignore
-//! use kasm::runtime::wasi::{create_wasi_imports, add_assemblyscript_imports};
+//! use krasm::runtime::wasi::{create_wasi_imports, add_assemblyscript_imports};
 //!
 //! let mut imports = create_wasi_imports(&mut store, ctx.clone());
 //! add_assemblyscript_imports(&mut store, &mut imports, ctx.clone());

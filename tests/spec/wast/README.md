@@ -10,7 +10,7 @@ They are checked in directly rather than using git submodules.
 - Date: 2025-08-28
 
 This tag covers WebAssembly 1.0 plus the bulk memory, reference types, and SIMD
-proposals — matching the feature set implemented by kasm.
+proposals — matching the feature set implemented by krasm.
 
 ## Contents
 
