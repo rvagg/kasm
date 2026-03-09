@@ -12,7 +12,10 @@ const IOVECS_PTR: i32 = 0;       // address of iovec array
 const IOVECS_COUNT: i32 = 1;     // number of iovecs
 
 /**
- * Print a string to stdout
+ * Print a string to stdout.
+ *
+ * The encoded ArrayBuffer lives on the AS heap which is part of linear memory,
+ * so its pointer is valid for fd_write to read from directly.
  */
 export function print(s: string): void {
   const encoded = String.UTF8.encode(s);

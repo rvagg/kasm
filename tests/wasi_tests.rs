@@ -1244,3 +1244,374 @@ fn test_return_from_nested_block_preserves_caller() {
         panic!("Expected i32 return value");
     }
 }
+
+#[test]
+fn test_clock_time_get() {
+    // clock_time_get should return success (0) for CLOCK_REALTIME (0)
+    // and write a non-zero timestamp
+    let wat = r#"
+    (module
+      (import "wasi_snapshot_preview1" "clock_time_get"
+        (func $clock_time_get (param i32 i64 i32) (result i32)))
+      (memory (export "memory") 1)
+
+      (func (export "_start")
+        (local $err i32)
+
+        ;; clock_time_get(CLOCK_REALTIME=0, precision=1000, time_ptr=100)
+        (local.set $err (call $clock_time_get
+          (i32.const 0)
+          (i64.const 1000)
+          (i32.const 100)
+        ))
+        (if (local.get $err) (then unreachable))
+
+        ;; Timestamp should be non-zero (low 32 bits at offset 100)
+        (if (i32.eqz (i32.or
+          (i32.load (i32.const 100))
+          (i32.load (i32.const 104))
+        )) (then unreachable))
+      )
+    )
+    "#;
+
+    let module = parse_wat(wat);
+    let ctx = Arc::new(WasiContext::builder().build());
+    let mut store = Store::new();
+    let imports = create_wasi_imports(&mut store, ctx);
+    let instance_id = store
+        .create_instance(Arc::new(module), Some(&imports))
+        .expect("Failed to create instance");
+    let result = store.invoke_export(instance_id, "_start", vec![], None);
+    assert!(result.is_ok(), "clock_time_get failed: {:?}", result);
+}
+
+#[test]
+fn test_random_get() {
+    // random_get should fill a buffer with non-zero bytes (probabilistically)
+    let wat = r#"
+    (module
+      (import "wasi_snapshot_preview1" "random_get"
+        (func $random_get (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+
+      ;; Zero-initialise 32 bytes at offset 100, then fill with random
+      (data (i32.const 100) "\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+
+      (func (export "_start")
+        (local $err i32)
+        (local $sum i32)
+        (local $i i32)
+
+        ;; random_get(buf=100, len=32)
+        (local.set $err (call $random_get (i32.const 100) (i32.const 32)))
+        (if (local.get $err) (then unreachable))
+
+        ;; Sum all 32 bytes; astronomically unlikely to be all zero
+        (local.set $i (i32.const 0))
+        (block $done
+          (loop $loop
+            (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+            (local.set $sum (i32.add
+              (local.get $sum)
+              (i32.load8_u (i32.add (i32.const 100) (local.get $i)))
+            ))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $loop)
+          )
+        )
+
+        ;; Sum should be non-zero
+        (if (i32.eqz (local.get $sum)) (then unreachable))
+      )
+    )
+    "#;
+
+    let module = parse_wat(wat);
+    let ctx = Arc::new(WasiContext::builder().build());
+    let mut store = Store::new();
+    let imports = create_wasi_imports(&mut store, ctx);
+    let instance_id = store
+        .create_instance(Arc::new(module), Some(&imports))
+        .expect("Failed to create instance");
+    let result = store.invoke_export(instance_id, "_start", vec![], None);
+    assert!(result.is_ok(), "random_get failed: {:?}", result);
+}
+
+#[test]
+fn test_fd_tell() {
+    // Open a file, write to it, then fd_tell should report the current position
+    let dir = std::env::temp_dir().join("kasm_test_fd_tell");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tell_test.txt"), "Hello, World!").unwrap();
+
+    let dir_str = dir.to_str().unwrap();
+
+    let wat = r#"
+    (module
+      (import "wasi_snapshot_preview1" "path_open"
+        (func $path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_read"
+        (func $fd_read (param i32 i32 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_tell"
+        (func $fd_tell (param i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_close"
+        (func $fd_close (param i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_prestat_get"
+        (func $fd_prestat_get (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+
+      ;; "tell_test.txt" at offset 200 (13 bytes)
+      (data (i32.const 200) "tell_test.txt")
+
+      (func (export "_start") (result i32)
+        (local $file_fd i32)
+        (local $err i32)
+
+        ;; Verify preopen exists
+        (if (call $fd_prestat_get (i32.const 3) (i32.const 500)) (then (return (i32.const 1))))
+
+        ;; Open the file
+        (local.set $err (call $path_open
+          (i32.const 3) (i32.const 0)
+          (i32.const 200) (i32.const 13)
+          (i32.const 0) (i64.const 0x1fffffff) (i64.const 0x1fffffff)
+          (i32.const 0) (i32.const 300)
+        ))
+        (if (local.get $err) (then (return (i32.const 2))))
+        (local.set $file_fd (i32.load (i32.const 300)))
+
+        ;; Read 5 bytes
+        (i32.store (i32.const 0) (i32.const 100))  ;; iov.buf = 100
+        (i32.store (i32.const 4) (i32.const 5))    ;; iov.len = 5
+        (local.set $err (call $fd_read
+          (local.get $file_fd) (i32.const 0) (i32.const 1) (i32.const 310)
+        ))
+        (if (local.get $err) (then (return (i32.const 3))))
+
+        ;; fd_tell should report position 5
+        (local.set $err (call $fd_tell (local.get $file_fd) (i32.const 400)))
+        (if (local.get $err) (then (return (i32.const 4))))
+
+        ;; Check low 32 bits of offset == 5
+        (if (i32.ne (i32.load (i32.const 400)) (i32.const 5))
+          (then (return (i32.const 5))))
+
+        (drop (call $fd_close (local.get $file_fd)))
+        (i32.const 0)
+      )
+    )
+    "#;
+
+    let module = parse_wat(wat);
+    let ctx = Arc::new(WasiContext::builder().preopen_dir(dir_str, dir_str).build());
+    let mut store = Store::new();
+    let imports = create_wasi_imports(&mut store, ctx);
+    let instance_id = store
+        .create_instance(Arc::new(module), Some(&imports))
+        .expect("Failed to create instance");
+    let result = store.invoke_export(instance_id, "_start", vec![], None);
+    assert!(result.is_ok(), "fd_tell test execution failed: {:?}", result);
+    let values = result.unwrap();
+    assert_eq!(
+        values[0],
+        kasm::runtime::Value::I32(0),
+        "fd_tell test returned non-zero error code"
+    );
+}
+
+#[test]
+fn test_fd_readdir() {
+    // Create a directory with known files, open it, and read entries via fd_readdir
+    let dir = std::env::temp_dir().join("kasm_test_fd_readdir");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("alpha.txt"), "a").unwrap();
+    std::fs::write(dir.join("beta.txt"), "b").unwrap();
+    std::fs::create_dir(dir.join("gamma")).unwrap();
+
+    let dir_str = dir.to_str().unwrap();
+
+    // This module opens the preopened dir itself (fd 3 is the directory),
+    // calls fd_readdir, and counts entries. It returns the count.
+    let wat = r#"
+    (module
+      (import "wasi_snapshot_preview1" "fd_readdir"
+        (func $fd_readdir (param i32 i32 i32 i64 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_prestat_get"
+        (func $fd_prestat_get (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+
+      (func (export "_start") (result i32)
+        (local $err i32)
+        (local $bufused i32)
+        (local $count i32)
+        (local $offset i32)
+        (local $namelen i32)
+
+        ;; Verify preopen exists
+        (if (call $fd_prestat_get (i32.const 3) (i32.const 500)) (then (return (i32.const -1))))
+
+        ;; fd_readdir(fd=3, buf=1000, buf_len=4096, cookie=0, bufused_ptr=900)
+        (local.set $err (call $fd_readdir
+          (i32.const 3) (i32.const 1000) (i32.const 4096) (i64.const 0) (i32.const 900)
+        ))
+        (if (local.get $err) (then (return (i32.const -2))))
+
+        (local.set $bufused (i32.load (i32.const 900)))
+
+        ;; Walk entries: each dirent is 24-byte header + variable-length name
+        (local.set $offset (i32.const 0))
+        (block $done
+          (loop $loop
+            ;; Need at least 24 bytes for the header
+            (br_if $done (i32.gt_u
+              (i32.add (local.get $offset) (i32.const 24))
+              (local.get $bufused)
+            ))
+            ;; Read namelen at offset+16
+            (local.set $namelen (i32.load (i32.add (i32.const 1000) (i32.add (local.get $offset) (i32.const 16)))))
+            ;; Check we have the full name
+            (br_if $done (i32.gt_u
+              (i32.add (i32.add (local.get $offset) (i32.const 24)) (local.get $namelen))
+              (local.get $bufused)
+            ))
+            ;; Count this entry
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            ;; Advance past header + name
+            (local.set $offset (i32.add
+              (i32.add (local.get $offset) (i32.const 24))
+              (local.get $namelen)
+            ))
+            (br $loop)
+          )
+        )
+
+        ;; Return count (should be 3: alpha.txt, beta.txt, gamma)
+        (local.get $count)
+      )
+    )
+    "#;
+
+    let module = parse_wat(wat);
+    let ctx = Arc::new(WasiContext::builder().preopen_dir(dir_str, dir_str).build());
+    let mut store = Store::new();
+    let imports = create_wasi_imports(&mut store, ctx);
+    let instance_id = store
+        .create_instance(Arc::new(module), Some(&imports))
+        .expect("Failed to create instance");
+    let result = store.invoke_export(instance_id, "_start", vec![], None);
+    assert!(result.is_ok(), "fd_readdir test failed: {:?}", result);
+    let values = result.unwrap();
+    assert_eq!(
+        values[0],
+        kasm::runtime::Value::I32(3),
+        "Expected 3 directory entries, got {:?}",
+        values[0]
+    );
+}
+
+#[test]
+fn test_path_open_directory() {
+    // Open a subdirectory via path_open, then fd_readdir on the opened fd
+    let dir = std::env::temp_dir().join("kasm_test_path_open_dir");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let sub = dir.join("mydir");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("file1.txt"), "one").unwrap();
+    std::fs::write(sub.join("file2.txt"), "two").unwrap();
+
+    let dir_str = dir.to_str().unwrap();
+
+    let wat = r#"
+    (module
+      (import "wasi_snapshot_preview1" "path_open"
+        (func $path_open (param i32 i32 i32 i32 i32 i64 i64 i32 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_readdir"
+        (func $fd_readdir (param i32 i32 i32 i64 i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_close"
+        (func $fd_close (param i32) (result i32)))
+      (import "wasi_snapshot_preview1" "fd_prestat_get"
+        (func $fd_prestat_get (param i32 i32) (result i32)))
+      (memory (export "memory") 1)
+
+      ;; "mydir" at offset 200
+      (data (i32.const 200) "mydir")
+
+      (func (export "_start") (result i32)
+        (local $dir_fd i32)
+        (local $err i32)
+        (local $bufused i32)
+        (local $count i32)
+        (local $offset i32)
+        (local $namelen i32)
+
+        (if (call $fd_prestat_get (i32.const 3) (i32.const 500)) (then (return (i32.const -1))))
+
+        ;; path_open with O_DIRECTORY (oflags=2)
+        (local.set $err (call $path_open
+          (i32.const 3) (i32.const 0)
+          (i32.const 200) (i32.const 5)
+          (i32.const 2) (i64.const 0x1fffffff) (i64.const 0x1fffffff)
+          (i32.const 0) (i32.const 300)
+        ))
+        (if (local.get $err) (then (return (i32.const -2))))
+        (local.set $dir_fd (i32.load (i32.const 300)))
+
+        ;; fd_readdir on the opened directory
+        (local.set $err (call $fd_readdir
+          (local.get $dir_fd) (i32.const 1000) (i32.const 4096) (i64.const 0) (i32.const 900)
+        ))
+        (if (local.get $err) (then (return (i32.const -3))))
+
+        (local.set $bufused (i32.load (i32.const 900)))
+
+        ;; Count entries
+        (local.set $offset (i32.const 0))
+        (block $done
+          (loop $loop
+            (br_if $done (i32.gt_u
+              (i32.add (local.get $offset) (i32.const 24))
+              (local.get $bufused)
+            ))
+            (local.set $namelen (i32.load (i32.add (i32.const 1000) (i32.add (local.get $offset) (i32.const 16)))))
+            (br_if $done (i32.gt_u
+              (i32.add (i32.add (local.get $offset) (i32.const 24)) (local.get $namelen))
+              (local.get $bufused)
+            ))
+            (local.set $count (i32.add (local.get $count) (i32.const 1)))
+            (local.set $offset (i32.add
+              (i32.add (local.get $offset) (i32.const 24))
+              (local.get $namelen)
+            ))
+            (br $loop)
+          )
+        )
+
+        (drop (call $fd_close (local.get $dir_fd)))
+
+        ;; Should have 2 entries: file1.txt, file2.txt
+        (local.get $count)
+      )
+    )
+    "#;
+
+    let module = parse_wat(wat);
+    let ctx = Arc::new(WasiContext::builder().preopen_dir(dir_str, dir_str).build());
+    let mut store = Store::new();
+    let imports = create_wasi_imports(&mut store, ctx);
+    let instance_id = store
+        .create_instance(Arc::new(module), Some(&imports))
+        .expect("Failed to create instance");
+    let result = store.invoke_export(instance_id, "_start", vec![], None);
+    assert!(result.is_ok(), "path_open directory test failed: {:?}", result);
+    let values = result.unwrap();
+    assert_eq!(
+        values[0],
+        kasm::runtime::Value::I32(2),
+        "Expected 2 entries in subdir, got {:?}",
+        values[0]
+    );
+}

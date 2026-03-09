@@ -51,6 +51,8 @@ let inputEof: bool = false;
 let patternPtr: i32 = 0;
 let patternLen: i32 = 0;
 
+// The encoded ArrayBuffer lives on the AS heap which is part of linear memory,
+// so its pointer is valid for fd_write to read from directly.
 function writeStderr(msg: string): void {
   const encoded = String.UTF8.encode(msg);
   store<i32>(IOVEC_BUF_PTR, changetype<i32>(encoded));

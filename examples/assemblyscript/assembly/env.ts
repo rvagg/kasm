@@ -44,6 +44,33 @@ export declare function fd_fdstat_get(fd: i32, buf: i32): i32;
 @external("wasi_snapshot_preview1", "fd_seek")
 export declare function fd_seek(fd: i32, offset: i64, whence: i32, newoffset: i32): i32;
 
+@external("wasi_snapshot_preview1", "fd_tell")
+export declare function fd_tell(fd: i32, offset: i32): i32;
+
+@external("wasi_snapshot_preview1", "fd_readdir")
+export declare function fd_readdir(fd: i32, buf: i32, buf_len: i32, cookie: i64, bufused: i32): i32;
+
+@external("wasi_snapshot_preview1", "fd_filestat_get")
+export declare function fd_filestat_get(fd: i32, buf: i32): i32;
+
+@external("wasi_snapshot_preview1", "path_filestat_get")
+export declare function path_filestat_get(fd: i32, flags: i32, path: i32, path_len: i32, buf: i32): i32;
+
+@external("wasi_snapshot_preview1", "path_create_directory")
+export declare function path_create_directory(fd: i32, path: i32, path_len: i32): i32;
+
+@external("wasi_snapshot_preview1", "path_remove_directory")
+export declare function path_remove_directory(fd: i32, path: i32, path_len: i32): i32;
+
+@external("wasi_snapshot_preview1", "path_unlink_file")
+export declare function path_unlink_file(fd: i32, path: i32, path_len: i32): i32;
+
+@external("wasi_snapshot_preview1", "path_rename")
+export declare function path_rename(
+  old_fd: i32, old_path: i32, old_path_len: i32,
+  new_fd: i32, new_path: i32, new_path_len: i32
+): i32;
+
 // File descriptor constants
 export const STDIN: i32 = 0;
 export const STDOUT: i32 = 1;

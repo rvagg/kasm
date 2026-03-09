@@ -45,7 +45,16 @@ src/runtime/        # Interpreter
   memory.rs         # Linear memory (64KB pages, 4GB max)
   stack.rs          # Operand stack
   value.rs          # i32/i64/f32/f64/v128/funcref/externref
-  wasi/             # WASI preview1 implementation
+  wasi/             # WASI preview1 implementation (46/46 functions)
+    mod.rs          # Registration (create_wasi_imports), shared helpers
+    context.rs      # WasiContext, FileDescriptor, WasiContextBuilder
+    types.rs        # WasiErrno, WasiFileType, flag/struct constants
+    assemblyscript.rs  # AssemblyScript env.abort support
+    fd.rs           # fd_read/write/close/seek/tell/fdstat_get/filestat_get
+    dir.rs          # fd_prestat_get/dir_name, fd_readdir
+    path.rs         # path_open/filestat_get/create_directory/remove_directory/unlink/rename
+    process.rs      # args_get/sizes_get, environ_get/sizes_get, proc_exit
+    clock.rs        # clock_time_get/res_get, random_get, sched_yield
     mod.rs          # WASI imports (fd_read, fd_write, args_*, environ_*, proc_exit)
     context.rs      # WasiContext with lazy memory binding
     types.rs        # WASI errno codes
@@ -66,15 +75,15 @@ benches/                # Criterion benchmarks
 ## Status
 - 427+ instructions implemented including all 236 SIMD
 - 148/148 spec tests pass (90 core + 58 SIMD) via native .wast runner, pinned to wg-2.0 tag
-- 725 unit tests, 82 encoder tests, 148 dump tests, 148 wast tests, 18 WASI tests
+- 754 unit tests, 82 encoder tests, 148 dump tests, 148 wast tests, 18 WASI tests
 - SIMD: all v128 operations (integer, float, bitwise, comparison, shuffle, conversion, memory)
-- WASI preview1: fd_read/write, args_*, environ_*, proc_exit, fd_prestat_* (stub)
+- WASI preview1: 46/46 functions (28 implemented, 18 NOSYS stubs)
 - AssemblyScript support: env.abort with UTF-16 string extraction
 - WAT parser: complete WebAssembly 2.0 text format (inline exports, structured control flow)
 - Binary encoder: Module → .wasm (all 13 sections, 82 tests including spec fixture round-trips)
 - CLI: run/dump accept .wat natively, compile subcommand (WAT → .wasm)
 - No external `wat` crate dependency — all WAT parsing uses kasm::wat::parse()
-- Missing: filesystem operations
+- Filesystem: path_open, path_create/remove_directory, path_unlink_file, path_rename, fd_readdir, fd_filestat_get
 
 ## CLI
 ```bash
@@ -309,8 +318,8 @@ cargo test --test encoder_tests    # 82 encoder tests
 - src/main.rs - CLI with `run`, `dump`, and `compile` subcommands
 - src/runtime/store.rs - Store, FuncAddr, MemoryAddr, TableAddr, cross-module execution
 - src/runtime/executor.rs - State machine interpreter
-- src/runtime/wasi/mod.rs - WASI imports and create_wasi_instance helper
-- src/runtime/wasi/context.rs - WasiContext (memory, fds, args, env)
+- src/runtime/wasi/mod.rs - WASI imports (46/46 functions) and create_wasi_instance helper
+- src/runtime/wasi/context.rs - WasiContext (fds, args, env, preopens)
 - src/runtime/ops/*.rs - Instruction implementations by category
 - src/encoder.rs - Binary encoder (Module → .wasm bytes)
 - src/parser/encoding.rs - Encoding primitives (LEB128, floats, vectors)

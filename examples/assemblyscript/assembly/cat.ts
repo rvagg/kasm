@@ -39,6 +39,8 @@ const OPENED_FD_PTR: i32 = BASE + 300;
 const DATA_BUF: i32 = BASE + 512;
 const DATA_SIZE: i32 = 2048;
 
+// The encoded ArrayBuffer lives on the AS heap which is part of linear memory,
+// so its pointer is valid for fd_write to read from directly.
 function writeStderr(msg: string): void {
   const encoded = String.UTF8.encode(msg);
   store<i32>(IOVEC_BUF_PTR, changetype<i32>(encoded));

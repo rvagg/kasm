@@ -9,7 +9,10 @@
     "asbuild:grep": "asc assembly/grep.ts -o build/grep.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
     "asbuild:cat": "asc assembly/cat.ts -o build/cat.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
     "asbuild:wc": "asc assembly/wc.ts -o build/wc.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
-    "asbuild:all": "npm run asbuild && npm run asbuild:echo && npm run asbuild:grep && npm run asbuild:cat && npm run asbuild:wc"
+    "asbuild:mktree": "asc assembly/mktree.ts -o build/mktree.wasm --runtime stub --optimizeLevel 3 --initialMemory 4",
+    "asbuild:tree": "asc assembly/tree.ts -o build/tree.wasm --runtime stub --optimizeLevel 3 --initialMemory 4",
+    "asbuild:stat": "asc assembly/stat.ts -o build/stat.wasm --runtime stub --optimizeLevel 3 --initialMemory 1",
+    "asbuild:all": "npm run asbuild && npm run asbuild:echo && npm run asbuild:grep && npm run asbuild:cat && npm run asbuild:wc && npm run asbuild:mktree && npm run asbuild:tree && npm run asbuild:stat"
   },
   "devDependencies": {
     "assemblyscript": "^0.28.9"

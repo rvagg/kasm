@@ -34,16 +34,21 @@
 //! ```
 
 pub mod assemblyscript;
+mod clock;
 pub mod context;
+mod dir;
+mod fd;
+mod path;
+mod process;
 pub mod types;
 
 pub use assemblyscript::add_assemblyscript_imports;
-pub use context::{FileDescriptor, WasiContext, WasiContextBuilder};
+pub use context::{DEFAULT_MAX_FDS, DEFAULT_MAX_IOVECS, FileDescriptor, WasiContext, WasiContextBuilder};
 pub use types::WasiErrno;
 
-use crate::parser::module::{FunctionType, Module, ValueType};
-use crate::runtime::store::{Caller, FunctionInstance, Store};
-use crate::runtime::{ImportObject, Memory, RuntimeError, Value};
+use crate::parser::module::Module;
+use crate::runtime::store::{Caller, Store};
+use crate::runtime::{ImportObject, Memory, RuntimeError};
 use std::sync::Arc;
 
 /// Create a WASI instance with all necessary setup.
@@ -63,7 +68,7 @@ use std::sync::Arc;
 /// # Returns
 ///
 /// The instance ID on success, or a RuntimeError on failure.
-pub fn create_wasi_instance<T>(
+pub fn create_wasi_instance<T: 'static>(
     store: &mut Store<T>,
     module: Arc<Module>,
     ctx: Arc<WasiContext>,
@@ -87,572 +92,310 @@ fn require_memory<'a, T>(caller: &'a mut Caller<'_, T>) -> Result<&'a mut Memory
         .ok_or_else(|| RuntimeError::MemoryError("wasi: no linear memory available".to_string()))
 }
 
-/// Extract an i32 value from a WASI function argument at the given index.
-fn extract_i32(args: &[Value], index: usize) -> Result<i32, RuntimeError> {
-    match args.get(index) {
-        Some(Value::I32(v)) => Ok(*v),
-        other => Err(RuntimeError::TypeMismatch {
-            expected: "i32".to_string(),
-            actual: format!("{:?}", other),
-        }),
-    }
-}
-
-/// Extract an i64 value from a WASI function argument at the given index.
-fn extract_i64(args: &[Value], index: usize) -> Result<i64, RuntimeError> {
-    match args.get(index) {
-        Some(Value::I64(v)) => Ok(*v),
-        other => Err(RuntimeError::TypeMismatch {
-            expected: "i64".to_string(),
-            actual: format!("{:?}", other),
-        }),
-    }
-}
-
 /// Create WASI import functions and register them in the store
 ///
 /// Returns an ImportObject with all WASI functions registered.
-pub fn create_wasi_imports<T>(store: &mut Store<T>, ctx: Arc<WasiContext>) -> ImportObject {
+pub fn create_wasi_imports<T: 'static>(store: &mut Store<T>, ctx: Arc<WasiContext>) -> ImportObject {
     let mut imports = ImportObject::new();
 
-    // fd_write: (fd, iovs_ptr, iovs_len, nwritten_ptr) -> errno
-    let fd_write_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_fd_write = ctx.clone();
-    let fd_write_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_fd_write(&ctx_fd_write, caller, args)),
-        func_type: fd_write_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "fd_write", fd_write_addr);
-
-    // fd_read: (fd, iovs_ptr, iovs_len, nread_ptr) -> errno
-    let fd_read_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_fd_read = ctx.clone();
-    let fd_read_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_fd_read(&ctx_fd_read, caller, args)),
-        func_type: fd_read_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "fd_read", fd_read_addr);
-
-    // fd_close: (fd) -> errno
-    let fd_close_type = FunctionType {
-        parameters: vec![ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_fd_close = ctx.clone();
-    let fd_close_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |_caller, args| wasi_fd_close(&ctx_fd_close, args)),
-        func_type: fd_close_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "fd_close", fd_close_addr);
-
-    // args_sizes_get: (argc_ptr, argv_buf_size_ptr) -> errno
-    let args_sizes_get_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_args_sizes = ctx.clone();
-    let args_sizes_get_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_args_sizes_get(&ctx_args_sizes, caller, args)),
-        func_type: args_sizes_get_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "args_sizes_get", args_sizes_get_addr);
-
-    // args_get: (argv_ptr, argv_buf_ptr) -> errno
-    let args_get_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_args_get = ctx.clone();
-    let args_get_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_args_get(&ctx_args_get, caller, args)),
-        func_type: args_get_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "args_get", args_get_addr);
-
-    // environ_sizes_get: (environc_ptr, environ_buf_size_ptr) -> errno
-    let environ_sizes_get_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_environ_sizes = ctx.clone();
-    let environ_sizes_get_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_environ_sizes_get(&ctx_environ_sizes, caller, args)),
-        func_type: environ_sizes_get_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "environ_sizes_get", environ_sizes_get_addr);
-
-    // environ_get: (environ_ptr, environ_buf_ptr) -> errno
-    let environ_get_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_environ_get = ctx.clone();
-    let environ_get_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_environ_get(&ctx_environ_get, caller, args)),
-        func_type: environ_get_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "environ_get", environ_get_addr);
-
-    // fd_prestat_get: (fd, buf_ptr) -> errno
-    let fd_prestat_get_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_prestat_get = ctx.clone();
-    let fd_prestat_get_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_fd_prestat_get(&ctx_prestat_get, caller, args)),
-        func_type: fd_prestat_get_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "fd_prestat_get", fd_prestat_get_addr);
-
-    // fd_prestat_dir_name: (fd, path_ptr, path_len) -> errno
-    let fd_prestat_dir_name_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_prestat_dir_name = ctx.clone();
-    let fd_prestat_dir_name_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_fd_prestat_dir_name(&ctx_prestat_dir_name, caller, args)),
-        func_type: fd_prestat_dir_name_type,
-    });
-    imports.add_function(
-        "wasi_snapshot_preview1",
-        "fd_prestat_dir_name",
-        fd_prestat_dir_name_addr,
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              fd: i32,
+              iovs_ptr: i32,
+              iovs_len: i32,
+              nwritten_ptr: i32|
+              -> Result<i32, RuntimeError> {
+            fd::wasi_fd_write(&c, caller, fd, iovs_ptr, iovs_len, nwritten_ptr)
+        },
     );
+    imports.add_function("wasi_snapshot_preview1", "fd_write", addr);
 
-    // path_open: (fd, dirflags, path_ptr, path_len, oflags, rights_base, rights_inheriting, fdflags, opened_fd_ptr) -> errno
-    let path_open_type = FunctionType {
-        parameters: vec![
-            ValueType::I32,
-            ValueType::I32,
-            ValueType::I32,
-            ValueType::I32,
-            ValueType::I32,
-            ValueType::I64,
-            ValueType::I64,
-            ValueType::I32,
-            ValueType::I32,
-        ],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_path_open = ctx.clone();
-    let path_open_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_path_open(&ctx_path_open, caller, args)),
-        func_type: path_open_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "path_open", path_open_addr);
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              fd: i32,
+              iovs_ptr: i32,
+              iovs_len: i32,
+              nread_ptr: i32|
+              -> Result<i32, RuntimeError> { fd::wasi_fd_read(&c, caller, fd, iovs_ptr, iovs_len, nread_ptr) },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_read", addr);
 
-    // fd_fdstat_get: (fd, buf_ptr) -> errno
-    let fd_fdstat_get_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_fdstat_get = ctx.clone();
-    let fd_fdstat_get_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_fd_fdstat_get(&ctx_fdstat_get, caller, args)),
-        func_type: fd_fdstat_get_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "fd_fdstat_get", fd_fdstat_get_addr);
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(move |_caller: &mut Caller<'_, T>, fd: i32| -> i32 { fd::wasi_fd_close(&c, fd) });
+    imports.add_function("wasi_snapshot_preview1", "fd_close", addr);
 
-    // fd_seek: (fd, offset, whence, newoffset_ptr) -> errno
-    let fd_seek_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I64, ValueType::I32, ValueType::I32],
-        return_types: vec![ValueType::I32],
-    };
-    let ctx_fd_seek = ctx.clone();
-    let fd_seek_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| wasi_fd_seek(&ctx_fd_seek, caller, args)),
-        func_type: fd_seek_type,
-    });
-    imports.add_function("wasi_snapshot_preview1", "fd_seek", fd_seek_addr);
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, argc_ptr: i32, argv_buf_size_ptr: i32| -> Result<i32, RuntimeError> {
+            process::wasi_args_sizes_get(&c, caller, argc_ptr, argv_buf_size_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "args_sizes_get", addr);
 
-    // proc_exit: (code) -> !
-    let proc_exit_type = FunctionType {
-        parameters: vec![ValueType::I32],
-        return_types: vec![],
-    };
-    let ctx_proc_exit = ctx;
-    let proc_exit_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |_caller, args| wasi_proc_exit(&ctx_proc_exit, args)),
-        func_type: proc_exit_type,
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, argv_ptr: i32, argv_buf_ptr: i32| -> Result<i32, RuntimeError> {
+            process::wasi_args_get(&c, caller, argv_ptr, argv_buf_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "args_get", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, environc_ptr: i32, environ_buf_size_ptr: i32| -> Result<i32, RuntimeError> {
+            process::wasi_environ_sizes_get(&c, caller, environc_ptr, environ_buf_size_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "environ_sizes_get", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, environ_ptr: i32, environ_buf_ptr: i32| -> Result<i32, RuntimeError> {
+            process::wasi_environ_get(&c, caller, environ_ptr, environ_buf_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "environ_get", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, buf_ptr: i32| -> Result<i32, RuntimeError> {
+            dir::wasi_fd_prestat_get(&c, caller, fd, buf_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_prestat_get", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, path_ptr: i32, path_len: i32| -> Result<i32, RuntimeError> {
+            dir::wasi_fd_prestat_dir_name(&c, caller, fd, path_ptr, path_len)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_prestat_dir_name", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              dir_fd: i32,
+              dirflags: i32,
+              path_ptr: i32,
+              path_len: i32,
+              oflags: i32,
+              rights_base: i64,
+              rights_inheriting: i64,
+              fdflags: i32,
+              opened_fd_ptr: i32|
+              -> Result<i32, RuntimeError> {
+            path::wasi_path_open(
+                &c,
+                caller,
+                dir_fd,
+                dirflags,
+                path_ptr,
+                path_len,
+                oflags,
+                rights_base,
+                rights_inheriting,
+                fdflags,
+                opened_fd_ptr,
+            )
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "path_open", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, buf_ptr: i32| -> Result<i32, RuntimeError> {
+            fd::wasi_fd_fdstat_get(&c, caller, fd, buf_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_fdstat_get", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              fd: i32,
+              offset: i64,
+              whence: i32,
+              newoffset_ptr: i32|
+              -> Result<i32, RuntimeError> { fd::wasi_fd_seek(&c, caller, fd, offset, whence, newoffset_ptr) },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_seek", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, offset_ptr: i32| -> Result<i32, RuntimeError> {
+            fd::wasi_fd_tell(&c, caller, fd, offset_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_tell", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, buf_ptr: i32| -> Result<i32, RuntimeError> {
+            fd::wasi_fd_filestat_get(&c, caller, fd, buf_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_filestat_get", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(move |_caller: &mut Caller<'_, T>, fd: i32, flags: i32| -> i32 {
+        fd::wasi_fd_fdstat_set_flags(&c, fd, flags)
     });
-    imports.add_function("wasi_snapshot_preview1", "proc_exit", proc_exit_addr);
+    imports.add_function("wasi_snapshot_preview1", "fd_fdstat_set_flags", addr);
+
+    let c = ctx.clone();
+    #[allow(clippy::too_many_arguments)]
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              dir_fd: i32,
+              flags: i32,
+              path_ptr: i32,
+              path_len: i32,
+              buf_ptr: i32|
+              -> Result<i32, RuntimeError> {
+            path::wasi_path_filestat_get(&c, caller, dir_fd, flags, path_ptr, path_len, buf_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "path_filestat_get", addr);
+
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, clockid: i32, precision: i64, time_ptr: i32| -> Result<i32, RuntimeError> {
+            clock::wasi_clock_time_get(&c, caller, clockid, precision, time_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "clock_time_get", addr);
+
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, clockid: i32, resolution_ptr: i32| -> Result<i32, RuntimeError> {
+            clock::wasi_clock_res_get(caller, clockid, resolution_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "clock_res_get", addr);
+
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, buf_ptr: i32, buf_len: i32| -> Result<i32, RuntimeError> {
+            clock::wasi_random_get(caller, buf_ptr, buf_len)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "random_get", addr);
+
+    let addr = store.wrap_with_caller(move |_caller: &mut Caller<'_, T>| -> i32 { clock::wasi_sched_yield() });
+    imports.add_function("wasi_snapshot_preview1", "sched_yield", addr);
+
+    // fd_readdir
+    let c = ctx.clone();
+    #[allow(clippy::too_many_arguments)]
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              fd: i32,
+              buf_ptr: i32,
+              buf_len: i32,
+              cookie: i64,
+              bufused_ptr: i32|
+              -> Result<i32, RuntimeError> {
+            dir::wasi_fd_readdir(&c, caller, fd, buf_ptr, buf_len, cookie, bufused_ptr)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "fd_readdir", addr);
+
+    // path_create_directory
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, path_ptr: i32, path_len: i32| -> Result<i32, RuntimeError> {
+            path::wasi_path_create_directory(&c, caller, fd, path_ptr, path_len)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "path_create_directory", addr);
+
+    // path_remove_directory
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, path_ptr: i32, path_len: i32| -> Result<i32, RuntimeError> {
+            path::wasi_path_remove_directory(&c, caller, fd, path_ptr, path_len)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "path_remove_directory", addr);
+
+    // path_unlink_file
+    let c = ctx.clone();
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>, fd: i32, path_ptr: i32, path_len: i32| -> Result<i32, RuntimeError> {
+            path::wasi_path_unlink_file(&c, caller, fd, path_ptr, path_len)
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "path_unlink_file", addr);
+
+    // path_rename
+    let c = ctx.clone();
+    #[allow(clippy::too_many_arguments)]
+    let addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              old_fd: i32,
+              old_path_ptr: i32,
+              old_path_len: i32,
+              new_fd: i32,
+              new_path_ptr: i32,
+              new_path_len: i32|
+              -> Result<i32, RuntimeError> {
+            path::wasi_path_rename(
+                &c,
+                caller,
+                old_fd,
+                old_path_ptr,
+                old_path_len,
+                new_fd,
+                new_path_ptr,
+                new_path_len,
+            )
+        },
+    );
+    imports.add_function("wasi_snapshot_preview1", "path_rename", addr);
+
+    // NOSYS stubs — all remaining WASI preview1 functions return ENOSYS.
+    // The macro generates a typed closure matching each function's wasm signature.
+    macro_rules! nosys {
+        ($name:expr, $($p:ty),*) => {{
+            let nosys = WasiErrno::NoSys.as_i32();
+            #[allow(clippy::too_many_arguments)]
+            let addr = store.wrap_with_caller(
+                move |_c: &mut Caller<'_, T>, $(_: $p),*| -> i32 { nosys },
+            );
+            imports.add_function("wasi_snapshot_preview1", $name, addr);
+        }};
+    }
+
+    nosys!("fd_advise", i32, i64, i64, i32);
+    nosys!("fd_allocate", i32, i64, i64);
+    nosys!("fd_datasync", i32);
+    nosys!("fd_sync", i32);
+    nosys!("fd_renumber", i32, i32);
+    nosys!("fd_pread", i32, i32, i32, i64, i32);
+    nosys!("fd_pwrite", i32, i32, i32, i64, i32);
+    nosys!("fd_filestat_set_size", i32, i64);
+    nosys!("fd_filestat_set_times", i32, i64, i64, i32);
+    nosys!("fd_fdstat_set_rights", i32, i64, i64);
+    nosys!("path_filestat_set_times", i32, i32, i32, i32, i64, i64, i32);
+    nosys!("path_link", i32, i32, i32, i32, i32, i32, i32);
+    nosys!("path_readlink", i32, i32, i32, i32, i32, i32);
+    nosys!("path_symlink", i32, i32, i32, i32, i32);
+    nosys!("poll_oneoff", i32, i32, i32, i32);
+    nosys!("proc_raise", i32);
+    nosys!("sock_accept", i32, i32, i32);
+    nosys!("sock_recv", i32, i32, i32, i32, i32, i32);
+    nosys!("sock_send", i32, i32, i32, i32, i32);
+    nosys!("sock_shutdown", i32, i32);
+
+    // proc_exit (must be last — consumes ctx)
+    let c = ctx;
+    let addr = store.wrap_with_caller(
+        move |_caller: &mut Caller<'_, T>, rval: i32| -> Result<(), RuntimeError> { process::wasi_proc_exit(&c, rval) },
+    );
+    imports.add_function("wasi_snapshot_preview1", "proc_exit", addr);
 
     imports
-}
-
-// === WASI function implementations ===
-
-/// fd_write: Write to a file descriptor using scatter/gather I/O.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_write>
-fn wasi_fd_write<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let fd = extract_i32(&args, 0)? as u32;
-    let iovs_ptr = extract_i32(&args, 1)? as u32;
-    let iovs_len = extract_i32(&args, 2)? as u32;
-    let nwritten_ptr = extract_i32(&args, 3)? as u32;
-
-    let memory = require_memory(caller)?;
-
-    match ctx.fd_write(memory, fd, iovs_ptr, iovs_len) {
-        Ok(nwritten) => {
-            memory.write_u32(nwritten_ptr, nwritten as u32)?;
-            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-        }
-        Err(errno) => Ok(vec![Value::I32(errno.as_u32() as i32)]),
-    }
-}
-
-/// fd_read: Read from a file descriptor using scatter/gather I/O.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_read>
-fn wasi_fd_read<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let fd = extract_i32(&args, 0)? as u32;
-    let iovs_ptr = extract_i32(&args, 1)? as u32;
-    let iovs_len = extract_i32(&args, 2)? as u32;
-    let nread_ptr = extract_i32(&args, 3)? as u32;
-
-    let memory = require_memory(caller)?;
-
-    match ctx.fd_read(memory, fd, iovs_ptr, iovs_len) {
-        Ok(nread) => {
-            memory.write_u32(nread_ptr, nread as u32)?;
-            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-        }
-        Err(errno) => Ok(vec![Value::I32(errno.as_u32() as i32)]),
-    }
-}
-
-/// fd_close: Close a file descriptor.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_close>
-fn wasi_fd_close(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
-    let fd = extract_i32(&args, 0)? as u32;
-
-    match ctx.close_fd(fd) {
-        Ok(()) => Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)]),
-        Err(errno) => Ok(vec![Value::I32(errno.as_u32() as i32)]),
-    }
-}
-
-/// args_sizes_get: Return the number of arguments and the size of the argument string data.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#args_sizes_get>
-fn wasi_args_sizes_get<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let argc_ptr = extract_i32(&args, 0)? as u32;
-    let argv_buf_size_ptr = extract_i32(&args, 1)? as u32;
-
-    let argc = ctx.args().len() as u32;
-    // Each arg is null-terminated, so +1 for each
-    let argv_buf_size: u32 = ctx.args().iter().map(|s| s.len() as u32 + 1).sum();
-
-    let memory = require_memory(caller)?;
-    memory.write_u32(argc_ptr, argc)?;
-    memory.write_u32(argv_buf_size_ptr, argv_buf_size)?;
-
-    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-}
-
-/// args_get: Read command-line argument data into provided buffers.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#args_get>
-fn wasi_args_get<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let argv_ptr = extract_i32(&args, 0)? as u32;
-    let argv_buf_ptr = extract_i32(&args, 1)? as u32;
-
-    let memory = require_memory(caller)?;
-
-    let mut buf_offset = 0u32;
-    for (i, arg) in ctx.args().iter().enumerate() {
-        let arg_addr = argv_buf_ptr + buf_offset;
-        memory.write_u32(argv_ptr + (i as u32 * 4), arg_addr)?;
-
-        let mut arg_bytes = arg.as_bytes().to_vec();
-        arg_bytes.push(0); // null terminator
-        memory.write_bytes(arg_addr, &arg_bytes)?;
-
-        buf_offset += arg_bytes.len() as u32;
-    }
-
-    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-}
-
-/// environ_sizes_get: Return the number of environment variables and the size of the data.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#environ_sizes_get>
-fn wasi_environ_sizes_get<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let environc_ptr = extract_i32(&args, 0)? as u32;
-    let environ_buf_size_ptr = extract_i32(&args, 1)? as u32;
-
-    let environc = ctx.env().len() as u32;
-    let environ_buf_size: u32 = ctx.env().iter().map(|s| s.len() as u32 + 1).sum();
-
-    let memory = require_memory(caller)?;
-    memory.write_u32(environc_ptr, environc)?;
-    memory.write_u32(environ_buf_size_ptr, environ_buf_size)?;
-
-    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-}
-
-/// environ_get: Read environment variable data into provided buffers.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#environ_get>
-fn wasi_environ_get<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let environ_ptr = extract_i32(&args, 0)? as u32;
-    let environ_buf_ptr = extract_i32(&args, 1)? as u32;
-
-    let memory = require_memory(caller)?;
-
-    let mut buf_offset = 0u32;
-    for (i, env_var) in ctx.env().iter().enumerate() {
-        let env_addr = environ_buf_ptr + buf_offset;
-        memory.write_u32(environ_ptr + (i as u32 * 4), env_addr)?;
-
-        let mut env_bytes = env_var.as_bytes().to_vec();
-        env_bytes.push(0);
-        memory.write_bytes(env_addr, &env_bytes)?;
-
-        buf_offset += env_bytes.len() as u32;
-    }
-
-    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-}
-
-/// fd_prestat_get: Return preopen directory info for a given fd.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_get>
-fn wasi_fd_prestat_get<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let fd = extract_i32(&args, 0)? as u32;
-    let buf_ptr = extract_i32(&args, 1)? as u32;
-
-    match ctx.get_preopen(fd) {
-        Some(path) => {
-            let path_len = path.len() as u32;
-            let memory = require_memory(caller)?;
-            // prestat struct: u8 tag (0 = dir) + 3 bytes padding + u32 name_len
-            memory.write_u32(buf_ptr, 0)?; // tag = __WASI_PREOPENTYPE_DIR (0)
-            memory.write_u32(buf_ptr + 4, path_len)?;
-            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-        }
-        None => Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)]),
-    }
-}
-
-/// fd_prestat_dir_name: Return the path for a preopened fd.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_prestat_dir_name>
-fn wasi_fd_prestat_dir_name<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let fd = extract_i32(&args, 0)? as u32;
-    let path_ptr = extract_i32(&args, 1)? as u32;
-    let path_len = extract_i32(&args, 2)? as u32;
-
-    match ctx.get_preopen(fd) {
-        Some(path) => {
-            let bytes = path.as_bytes();
-            if bytes.len() > path_len as usize {
-                return Ok(vec![Value::I32(WasiErrno::Overflow.as_u32() as i32)]);
-            }
-            let memory = require_memory(caller)?;
-            memory.write_bytes(path_ptr, bytes)?;
-            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-        }
-        None => Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)]),
-    }
-}
-
-/// path_open: Open a file or directory.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#path_open>
-fn wasi_path_open<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let dir_fd = extract_i32(&args, 0)? as u32;
-    let _dirflags = extract_i32(&args, 1)?;
-    let path_ptr = extract_i32(&args, 2)? as u32;
-    let path_len = extract_i32(&args, 3)? as u32;
-    let oflags = extract_i32(&args, 4)?;
-    let _rights_base = extract_i64(&args, 5)?;
-    let _rights_inheriting = extract_i64(&args, 6)?;
-    let fdflags = extract_i32(&args, 7)?;
-    let opened_fd_ptr = extract_i32(&args, 8)? as u32;
-
-    let memory = require_memory(caller)?;
-
-    // Read path from memory
-    let path_bytes = memory
-        .read_bytes(path_ptr, path_len as usize)
-        .map_err(|_| RuntimeError::MemoryError("failed to read path".to_string()))?;
-    let path =
-        std::str::from_utf8(&path_bytes).map_err(|_| RuntimeError::MemoryError("invalid utf-8 path".to_string()))?;
-
-    // Resolve path relative to preopen dir
-    let resolved = match ctx.resolve_path(dir_fd, path) {
-        Ok(p) => p,
-        Err(errno) => return Ok(vec![Value::I32(errno.as_u32() as i32)]),
-    };
-
-    // Build open options from oflags and fdflags
-    let o_creat = (oflags & 1) != 0;
-    let o_excl = (oflags & 4) != 0;
-    let o_trunc = (oflags & 8) != 0;
-    let append = (fdflags & 1) != 0;
-
-    let mut open_opts = std::fs::OpenOptions::new();
-
-    // Determine read/write from rights (be permissive)
-    open_opts.read(true);
-    if o_creat || o_trunc || append {
-        open_opts.write(true);
-    }
-    if o_creat {
-        open_opts.create(true);
-    }
-    if o_excl {
-        open_opts.create_new(true);
-    }
-    if o_trunc {
-        open_opts.truncate(true);
-    }
-    if append {
-        open_opts.append(true);
-    }
-
-    let file = match open_opts.open(&resolved) {
-        Ok(f) => f,
-        Err(e) => {
-            let errno = match e.kind() {
-                std::io::ErrorKind::NotFound => WasiErrno::NoEnt,
-                std::io::ErrorKind::PermissionDenied => WasiErrno::Access,
-                std::io::ErrorKind::AlreadyExists => WasiErrno::Exist,
-                _ => WasiErrno::Io,
-            };
-            return Ok(vec![Value::I32(errno.as_u32() as i32)]);
-        }
-    };
-
-    let writable = o_creat || o_trunc || append;
-    let fd = match context::FileDescriptor::new_file(file, true, writable) {
-        Ok(fd) => fd,
-        Err(_) => return Ok(vec![Value::I32(WasiErrno::Io.as_u32() as i32)]),
-    };
-
-    let new_fd_num = ctx.allocate_fd(fd);
-    memory.write_u32(opened_fd_ptr, new_fd_num)?;
-
-    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-}
-
-/// fd_fdstat_get: Get the attributes of a file descriptor.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_fdstat_get>
-fn wasi_fd_fdstat_get<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let fd = extract_i32(&args, 0)? as u32;
-    let buf_ptr = extract_i32(&args, 1)? as u32;
-
-    let fds = ctx.fds_ref();
-    let fd_entry = match fds.get(fd as usize) {
-        Some(Some(entry)) => entry,
-        _ => return Ok(vec![Value::I32(WasiErrno::BadF.as_u32() as i32)]),
-    };
-
-    let filetype = fd_entry.file_type as u8;
-
-    // fdstat struct: u8 filetype, u8 pad, u16 fdflags, u32 pad, u64 rights_base, u64 rights_inheriting
-    // Total: 24 bytes
-    let mut buf = [0u8; 24];
-    buf[0] = filetype;
-    // fdflags = 0, padding = 0
-    // rights: be permissive, set all bits
-    let all_rights: u64 = 0x1fff_ffff; // all defined rights
-    buf[8..16].copy_from_slice(&all_rights.to_le_bytes());
-    buf[16..24].copy_from_slice(&all_rights.to_le_bytes());
-
-    // Release the RefCell borrow before taking &mut Caller for memory access
-    drop(fds);
-    let memory = require_memory(caller)?;
-    memory.write_bytes(buf_ptr, &buf)?;
-
-    Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-}
-
-/// fd_seek: Move the offset of a file descriptor.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#fd_seek>
-fn wasi_fd_seek<T>(
-    ctx: &WasiContext,
-    caller: &mut Caller<'_, T>,
-    args: Vec<Value>,
-) -> Result<Vec<Value>, RuntimeError> {
-    let fd = extract_i32(&args, 0)? as u32;
-    let offset = extract_i64(&args, 1)?;
-    let whence = extract_i32(&args, 2)? as u32;
-    let newoffset_ptr = extract_i32(&args, 3)? as u32;
-
-    match ctx.fd_seek(fd, offset, whence) {
-        Ok(new_offset) => {
-            let memory = require_memory(caller)?;
-            memory.write_u64(newoffset_ptr, new_offset)?;
-            Ok(vec![Value::I32(WasiErrno::Success.as_u32() as i32)])
-        }
-        Err(errno) => Ok(vec![Value::I32(errno.as_u32() as i32)]),
-    }
-}
-
-/// proc_exit: Terminate the process normally with the given exit code.
-///
-/// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#proc_exit>
-fn wasi_proc_exit(ctx: &WasiContext, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
-    let code = extract_i32(&args, 0)?;
-
-    ctx.set_exit_code(code);
-
-    // Return a special error to signal exit
-    Err(RuntimeError::Trap(format!("proc_exit({})", code)))
 }
 
 #[cfg(test)]
@@ -661,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_create_wasi_imports() {
-        let mut store = Store::new();
+        let mut store: Store<()> = Store::new();
         let ctx = Arc::new(WasiContext::builder().build());
 
         let imports = create_wasi_imports(&mut store, ctx);
@@ -686,6 +429,80 @@ mod tests {
         assert!(imports.get_function("wasi_snapshot_preview1", "path_open").is_ok());
         assert!(imports.get_function("wasi_snapshot_preview1", "fd_fdstat_get").is_ok());
         assert!(imports.get_function("wasi_snapshot_preview1", "fd_seek").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_tell").is_ok());
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "fd_filestat_get")
+                .is_ok()
+        );
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "fd_fdstat_set_flags")
+                .is_ok()
+        );
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "path_filestat_get")
+                .is_ok()
+        );
+        assert!(imports.get_function("wasi_snapshot_preview1", "clock_time_get").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "clock_res_get").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "random_get").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "sched_yield").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_readdir").is_ok());
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "path_create_directory")
+                .is_ok()
+        );
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "path_remove_directory")
+                .is_ok()
+        );
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "path_unlink_file")
+                .is_ok()
+        );
+        assert!(imports.get_function("wasi_snapshot_preview1", "path_rename").is_ok());
+        // NOSYS stubs
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_advise").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_allocate").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_datasync").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_sync").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_renumber").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_pread").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "fd_pwrite").is_ok());
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "fd_filestat_set_size")
+                .is_ok()
+        );
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "fd_filestat_set_times")
+                .is_ok()
+        );
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "fd_fdstat_set_rights")
+                .is_ok()
+        );
+        assert!(
+            imports
+                .get_function("wasi_snapshot_preview1", "path_filestat_set_times")
+                .is_ok()
+        );
+        assert!(imports.get_function("wasi_snapshot_preview1", "path_link").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "path_readlink").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "path_symlink").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "poll_oneoff").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "proc_raise").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "sock_accept").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "sock_recv").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "sock_send").is_ok());
+        assert!(imports.get_function("wasi_snapshot_preview1", "sock_shutdown").is_ok());
         assert!(imports.get_function("wasi_snapshot_preview1", "proc_exit").is_ok());
 
         // env.abort should NOT be included in pure WASI imports
@@ -694,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_create_wasi_imports_with_assemblyscript() {
-        let mut store = Store::new();
+        let mut store: Store<()> = Store::new();
         let ctx = Arc::new(WasiContext::builder().build());
 
         let mut imports = create_wasi_imports(&mut store, ctx.clone());
@@ -708,14 +525,11 @@ mod tests {
         let ctx = WasiContext::builder().args(["prog", "hello", "world"]).build();
 
         let mut memory = Memory::new(1, None).unwrap();
-
-        let args = vec![Value::I32(0), Value::I32(4)]; // argc_ptr=0, argv_buf_size_ptr=4
         let mut data = ();
         let mut caller = Caller::for_test(Some(&mut memory), &mut data);
-        let result = wasi_args_sizes_get(&ctx, &mut caller, args).unwrap();
+        let result = process::wasi_args_sizes_get(&ctx, &mut caller, 0, 4).unwrap();
 
-        assert_eq!(result, vec![Value::I32(0)]); // Success
-
+        assert_eq!(result, 0); // Success
         assert_eq!(memory.read_u32(0).unwrap(), 3);
         // argv_buf_size = 5 + 6 + 6 = 17 ("prog\0" + "hello\0" + "world\0")
         assert_eq!(memory.read_u32(4).unwrap(), 17);
@@ -726,14 +540,11 @@ mod tests {
         let ctx = WasiContext::builder().args(["prog", "hello"]).build();
 
         let mut memory = Memory::new(1, None).unwrap();
-
-        let args = vec![Value::I32(0), Value::I32(100)];
         let mut data = ();
         let mut caller = Caller::for_test(Some(&mut memory), &mut data);
-        let result = wasi_args_get(&ctx, &mut caller, args).unwrap();
+        let result = process::wasi_args_get(&ctx, &mut caller, 0, 100).unwrap();
 
-        assert_eq!(result, vec![Value::I32(0)]); // Success
-
+        assert_eq!(result, 0); // Success
         assert_eq!(memory.read_u32(0).unwrap(), 100);
         assert_eq!(memory.read_u32(4).unwrap(), 105);
 
@@ -747,8 +558,7 @@ mod tests {
     fn test_proc_exit() {
         let ctx = WasiContext::builder().build();
 
-        let args = vec![Value::I32(42)];
-        let result = wasi_proc_exit(&ctx, args);
+        let result = process::wasi_proc_exit(&ctx, 42);
 
         assert!(result.is_err());
         assert_eq!(ctx.exit_code(), Some(42));
@@ -758,10 +568,9 @@ mod tests {
     fn test_wasi_function_without_memory() {
         let ctx = WasiContext::builder().args(["prog"]).build();
 
-        let args = vec![Value::I32(0), Value::I32(4)];
         let mut data = ();
         let mut caller = Caller::for_test(None, &mut data);
-        let result = wasi_args_sizes_get(&ctx, &mut caller, args);
+        let result = process::wasi_args_sizes_get(&ctx, &mut caller, 0, 4);
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();

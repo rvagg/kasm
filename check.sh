@@ -88,6 +88,63 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --quiet
 echo -e "\n=== Running tests ==="
 cargo test
 
+# Integration tests: run AssemblyScript examples and verify output
+if [[ -f "$AS_DIR/build/mktree.wasm" && -f "$AS_DIR/build/tree.wasm" && -f "$AS_DIR/build/stat.wasm" ]]; then
+    echo -e "\n=== Running WASI integration examples ==="
+    KASM="cargo run -q --bin kasm --"
+    WORK=$(mktemp -d)
+    trap 'rm -rf "$WORK"' EXIT
+
+    # mktree: create a known directory structure
+    MKTREE_OUT=$($KASM run --dir="$WORK" "$AS_DIR/build/mktree.wasm" 2>&1)
+    echo "$MKTREE_OUT" | grep -q "^done$" || { echo "FAIL: mktree did not complete"; echo "$MKTREE_OUT"; exit 1; }
+    # Verify all operations returned errno 0
+    if echo "$MKTREE_OUT" | grep -v '^done$' | grep -qv ': 0$'; then
+        echo "FAIL: mktree had non-zero errno"
+        echo "$MKTREE_OUT"
+        exit 1
+    fi
+
+    # tree: verify the structure matches expected output
+    TREE_EXPECTED="sub
+sub/deep
+sub/deep/nested.txt
+sub/empty-dir
+sub/greeting.txt"
+    TREE_OUT=$($KASM run --dir="$WORK" "$AS_DIR/build/tree.wasm" 2>&1)
+    if [[ "$TREE_OUT" != "$TREE_EXPECTED" ]]; then
+        echo "FAIL: tree output mismatch"
+        echo "Expected:"
+        echo "$TREE_EXPECTED"
+        echo "Got:"
+        echo "$TREE_OUT"
+        exit 1
+    fi
+
+    # stat: verify file metadata
+    STAT_OUT=$($KASM run --dir="$WORK" "$AS_DIR/build/stat.wasm" -- sub/greeting.txt 2>&1)
+    echo "$STAT_OUT" | grep -q "type: regular" || { echo "FAIL: stat type"; echo "$STAT_OUT"; exit 1; }
+    echo "$STAT_OUT" | grep -q "size: 14" || { echo "FAIL: stat size"; echo "$STAT_OUT"; exit 1; }
+    echo "$STAT_OUT" | grep -q "fd_size: 14" || { echo "FAIL: stat fd_size"; echo "$STAT_OUT"; exit 1; }
+
+    # cat: read a file created by mktree
+    CAT_OUT=$($KASM run --dir="$WORK" "$AS_DIR/build/cat.wasm" -- sub/greeting.txt 2>&1)
+    if [[ "$CAT_OUT" != "Hello, world!" ]]; then
+        echo "FAIL: cat output mismatch"
+        echo "Expected: Hello, world!"
+        echo "Got: $CAT_OUT"
+        exit 1
+    fi
+
+    # wc: count the file
+    WC_OUT=$($KASM run --dir="$WORK" "$AS_DIR/build/wc.wasm" -- sub/greeting.txt 2>&1)
+    echo "$WC_OUT" | grep -q "1.*2.*14" || { echo "FAIL: wc counts"; echo "$WC_OUT"; exit 1; }
+
+    echo "  mktree + tree + stat + cat + wc: ok"
+    rm -rf "$WORK"
+    trap - EXIT
+fi
+
 echo -e "\n=== All checks passed! ==="
 
 if $RUN_FUZZ; then

@@ -11,6 +11,7 @@ use crate::runtime::Memory;
 use std::cell::RefCell;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::time::Instant;
 
 /// A file descriptor entry for WASI
 pub struct FileDescriptor {
@@ -26,6 +27,8 @@ pub struct FileDescriptor {
     pub writable: bool,
     /// The WASI file type
     pub file_type: WasiFileType,
+    /// Host filesystem path (for metadata queries)
+    pub host_path: Option<PathBuf>,
 }
 
 impl FileDescriptor {
@@ -38,6 +41,7 @@ impl FileDescriptor {
             readable: true,
             writable: false,
             file_type: WasiFileType::CharacterDevice,
+            host_path: None,
         }
     }
 
@@ -50,11 +54,12 @@ impl FileDescriptor {
             readable: false,
             writable: true,
             file_type: WasiFileType::CharacterDevice,
+            host_path: None,
         }
     }
 
     /// Create a new FileDescriptor for a directory (preopens)
-    pub fn new_directory() -> Self {
+    pub fn new_directory(host_path: PathBuf) -> Self {
         FileDescriptor {
             reader: None,
             writer: None,
@@ -62,13 +67,19 @@ impl FileDescriptor {
             readable: false,
             writable: false,
             file_type: WasiFileType::Directory,
+            host_path: Some(host_path),
         }
     }
 
     /// Create a new FileDescriptor for a regular file
     ///
     /// Uses the same underlying std::fs::File for reading, writing, and seeking.
-    pub fn new_file(file: std::fs::File, readable: bool, writable: bool) -> Result<Self, std::io::Error> {
+    pub fn new_file(
+        file: std::fs::File,
+        readable: bool,
+        writable: bool,
+        host_path: Option<PathBuf>,
+    ) -> Result<Self, std::io::Error> {
         let reader: Option<Box<dyn Read + Send>> = if readable {
             Some(Box::new(file.try_clone()?))
         } else {
@@ -90,6 +101,7 @@ impl FileDescriptor {
             readable,
             writable,
             file_type: WasiFileType::RegularFile,
+            host_path,
         })
     }
 
@@ -150,6 +162,12 @@ impl std::fmt::Debug for FileDescriptor {
 /// The context is shared between all WASI functions via `Arc<WasiContext>`.
 /// Linear memory is accessed through `Caller` at each host function invocation,
 /// not stored in the context.
+/// Default maximum number of file descriptors a guest can have open.
+pub const DEFAULT_MAX_FDS: u32 = 1024;
+
+/// Default maximum number of iovecs per read/write call.
+pub const DEFAULT_MAX_IOVECS: u32 = 1024;
+
 pub struct WasiContext {
     /// File descriptors (0=stdin, 1=stdout, 2=stderr, 3+=preopens/files)
     fds: RefCell<Vec<Option<FileDescriptor>>>,
@@ -161,6 +179,12 @@ pub struct WasiContext {
     env: Vec<String>,
     /// Process exit code (set by proc_exit)
     exit_code: RefCell<Option<i32>>,
+    /// Monotonic clock baseline (captured at context construction)
+    monotonic_epoch: Instant,
+    /// Maximum number of open file descriptors (prevents resource exhaustion)
+    max_fds: u32,
+    /// Maximum iovec count per read/write call (prevents allocation bombs)
+    max_iovecs: u32,
 }
 
 impl WasiContext {
@@ -172,6 +196,11 @@ impl WasiContext {
     /// Get the exit code if proc_exit was called
     pub fn exit_code(&self) -> Option<i32> {
         *self.exit_code.borrow()
+    }
+
+    /// Return the monotonic clock baseline
+    pub fn monotonic_epoch(&self) -> Instant {
+        self.monotonic_epoch
     }
 
     /// Set the exit code (called by proc_exit)
@@ -218,6 +247,21 @@ impl WasiContext {
     /// directory (symlink traversal, `..` components). For paths that do not
     /// yet exist (e.g. a file about to be created), the parent directory is
     /// canonicalised instead and the filename is appended.
+    /// Resolve a guest-provided path relative to a preopened directory.
+    ///
+    /// Returns the canonicalised host path on success, ensuring it falls within
+    /// the preopened directory tree. For non-existent files (e.g. O_CREAT), the
+    /// parent directory is canonicalised and the final component is appended.
+    ///
+    /// # Security
+    ///
+    /// This check is subject to TOCTOU (time-of-check-time-of-use): between
+    /// canonicalisation and the subsequent filesystem operation, a symlink
+    /// could be swapped in. Full mitigation requires `openat()`-style
+    /// fd-relative operations, which `std::fs` does not expose. The current
+    /// approach is sufficient when the embedder controls the host filesystem
+    /// (the typical case) but should not be relied upon for sandboxing
+    /// untrusted code with concurrent host filesystem access.
     pub fn resolve_path(&self, dir_fd: u32, path: &str) -> Result<PathBuf, WasiErrno> {
         let (_, _, host_dir) = self
             .preopens
@@ -227,25 +271,25 @@ impl WasiContext {
 
         let resolved = host_dir.join(path);
 
-        // Canonicalise the parent directory to check for traversal
-        // (the file itself may not exist yet for O_CREAT)
         let canonical_dir = host_dir.canonicalize().map_err(|_| WasiErrno::NoEnt)?;
 
-        let check_path = if resolved.exists() {
+        // Return the canonicalised path to close the TOCTOU window as
+        // tightly as possible. For non-existent files, canonicalise the
+        // parent and re-append the final component.
+        let canonical = if resolved.exists() {
             resolved.canonicalize().map_err(|_| WasiErrno::NoEnt)?
         } else {
-            // For non-existent files, canonicalise the parent
             let parent = resolved.parent().ok_or(WasiErrno::NoEnt)?;
             let canonical_parent = parent.canonicalize().map_err(|_| WasiErrno::NoEnt)?;
             let filename = resolved.file_name().ok_or(WasiErrno::Inval)?;
             canonical_parent.join(filename)
         };
 
-        if !check_path.starts_with(&canonical_dir) {
+        if !canonical.starts_with(&canonical_dir) {
             return Err(WasiErrno::Access);
         }
 
-        Ok(resolved)
+        Ok(canonical)
     }
 
     // === File descriptor management ===
@@ -253,21 +297,32 @@ impl WasiContext {
     /// Allocate a new file descriptor, returning its number.
     ///
     /// Reuses closed (None) slots before appending to avoid unbounded growth.
-    pub fn allocate_fd(&self, fd: FileDescriptor) -> u32 {
+    /// Allocate a new file descriptor, returning its number.
+    ///
+    /// Reuses closed (None) slots before appending. Returns ENFILE if the
+    /// configured `max_fds` limit would be exceeded.
+    pub fn allocate_fd(&self, fd: FileDescriptor) -> Result<u32, WasiErrno> {
         let mut fds = self.fds.borrow_mut();
         // Reuse a closed slot if available (skip stdin/stdout/stderr)
         for (i, slot) in fds.iter_mut().enumerate().skip(3) {
             if slot.is_none() {
                 *slot = Some(fd);
-                return i as u32;
+                return Ok(i as u32);
             }
+        }
+        if fds.len() as u32 >= self.max_fds {
+            return Err(WasiErrno::Nfile);
         }
         let idx = fds.len();
         fds.push(Some(fd));
-        idx as u32
+        Ok(idx as u32)
     }
 
-    /// Close a file descriptor
+    /// Close a file descriptor.
+    ///
+    /// Note: this allows closing stdin/stdout/stderr (fds 0-2), consistent
+    /// with the WASI spec. The slot is set to None; a subsequent path_open
+    /// will not reuse it (allocation starts from fd 3).
     pub fn close_fd(&self, fd: u32) -> Result<(), WasiErrno> {
         let mut fds = self.fds.borrow_mut();
         let entry = fds.get_mut(fd as usize).ok_or(WasiErrno::BadF)?;
@@ -308,7 +363,7 @@ impl WasiContext {
     ///
     /// Returns the number of bytes read or a WASI errno.
     pub fn fd_read(&self, memory: &mut Memory, fd: u32, iovs_ptr: u32, iovs_len: u32) -> Result<usize, WasiErrno> {
-        let iovecs = Self::read_iovecs(memory, iovs_ptr, iovs_len)?;
+        let iovecs = self.read_iovecs(memory, iovs_ptr, iovs_len)?;
 
         let mut fds = self.fds.borrow_mut();
         let fd_entry = fds
@@ -351,7 +406,7 @@ impl WasiContext {
     ///
     /// Returns the number of bytes written or a WASI errno.
     pub fn fd_write(&self, memory: &Memory, fd: u32, iovs_ptr: u32, iovs_len: u32) -> Result<usize, WasiErrno> {
-        let iovecs = Self::read_iovecs(memory, iovs_ptr, iovs_len)?;
+        let iovecs = self.read_iovecs(memory, iovs_ptr, iovs_len)?;
 
         let mut fds = self.fds.borrow_mut();
         let fd_entry = fds
@@ -386,8 +441,9 @@ impl WasiContext {
             }
         }
 
-        // Flush after writing
-        let _ = fd_entry.flush();
+        // Flush after writing — propagate errors so callers know if data
+        // did not reach the underlying device.
+        fd_entry.flush().map_err(|_| WasiErrno::Io)?;
 
         Ok(total_written)
     }
@@ -395,12 +451,18 @@ impl WasiContext {
     /// Read iovec structures from memory.
     ///
     /// Each iovec is 8 bytes: 4-byte pointer (buf) + 4-byte length (buf_len).
+    /// Capped by `max_iovecs` to prevent allocation bombs from malicious guests.
     ///
     /// See: <https://github.com/WebAssembly/WASI/blob/wasi-0.1/preview1/docs.md#iovec>
-    fn read_iovecs(memory: &Memory, ptr: u32, len: u32) -> Result<Vec<(u32, u32)>, WasiErrno> {
+    fn read_iovecs(&self, memory: &Memory, ptr: u32, len: u32) -> Result<Vec<(u32, u32)>, WasiErrno> {
+        if len > self.max_iovecs {
+            return Err(WasiErrno::Inval);
+        }
         let mut iovecs = Vec::with_capacity(len as usize);
         for i in 0..len {
-            let base = ptr + i * 8;
+            let base = ptr
+                .checked_add(i.checked_mul(8).ok_or(WasiErrno::Inval)?)
+                .ok_or(WasiErrno::Fault)?;
             let buf_ptr = memory.read_u32(base).map_err(|_| WasiErrno::Fault)?;
             let buf_len = memory.read_u32(base + 4).map_err(|_| WasiErrno::Fault)?;
             iovecs.push((buf_ptr, buf_len));
@@ -427,6 +489,8 @@ pub struct WasiContextBuilder {
     stdout: Option<Box<dyn Write + Send>>,
     stderr: Option<Box<dyn Write + Send>>,
     preopens: Vec<(String, String)>,
+    max_fds: u32,
+    max_iovecs: u32,
 }
 
 impl WasiContextBuilder {
@@ -439,6 +503,8 @@ impl WasiContextBuilder {
             stdout: None,
             stderr: None,
             preopens: Vec::new(),
+            max_fds: DEFAULT_MAX_FDS,
+            max_iovecs: DEFAULT_MAX_IOVECS,
         }
     }
 
@@ -481,6 +547,24 @@ impl WasiContextBuilder {
         self
     }
 
+    /// Set the maximum number of open file descriptors (default: 1024).
+    ///
+    /// Prevents a malicious guest from exhausting host memory by opening
+    /// files in a loop. Returns ENFILE when the limit is reached.
+    pub fn max_fds(mut self, max: u32) -> Self {
+        self.max_fds = max;
+        self
+    }
+
+    /// Set the maximum iovec count per read/write call (default: 1024).
+    ///
+    /// Prevents a malicious guest from triggering a huge allocation by
+    /// passing a large iovs_len to fd_read/fd_write. Returns EINVAL when exceeded.
+    pub fn max_iovecs(mut self, max: u32) -> Self {
+        self.max_iovecs = max;
+        self
+    }
+
     /// Build the WasiContext
     pub fn build(self) -> WasiContext {
         let mut fds: Vec<Option<FileDescriptor>> = vec![
@@ -497,7 +581,7 @@ impl WasiContextBuilder {
             let path = PathBuf::from(host_path);
             if path.is_dir() {
                 let fd_num = fds.len() as u32;
-                fds.push(Some(FileDescriptor::new_directory()));
+                fds.push(Some(FileDescriptor::new_directory(path.clone())));
                 preopens.push((fd_num, guest_path.clone(), path));
             }
         }
@@ -508,6 +592,9 @@ impl WasiContextBuilder {
             args: self.args,
             env: self.env,
             exit_code: RefCell::new(None),
+            monotonic_epoch: Instant::now(),
+            max_fds: self.max_fds,
+            max_iovecs: self.max_iovecs,
         }
     }
 }
@@ -648,5 +735,71 @@ mod tests {
 
         let result = ctx.fd_read(&mut memory, 99, 0, 1);
         assert_eq!(result, Err(WasiErrno::BadF));
+    }
+
+    #[test]
+    fn test_max_fds_limit() {
+        // Set limit to 5 (stdin/stdout/stderr = 3, so only 2 more allowed)
+        let ctx = WasiContext::builder().max_fds(5).build();
+
+        let fd1 = ctx.allocate_fd(FileDescriptor::new_reader(Box::new(std::io::empty())));
+        assert!(fd1.is_ok(), "First allocation should succeed");
+
+        let fd2 = ctx.allocate_fd(FileDescriptor::new_reader(Box::new(std::io::empty())));
+        assert!(fd2.is_ok(), "Second allocation should succeed");
+
+        let fd3 = ctx.allocate_fd(FileDescriptor::new_reader(Box::new(std::io::empty())));
+        assert_eq!(fd3, Err(WasiErrno::Nfile), "Third allocation should hit limit");
+    }
+
+    #[test]
+    fn test_max_fds_reuse_after_close() {
+        let ctx = WasiContext::builder().max_fds(5).build();
+
+        let fd1 = ctx
+            .allocate_fd(FileDescriptor::new_reader(Box::new(std::io::empty())))
+            .unwrap();
+        let _fd2 = ctx
+            .allocate_fd(FileDescriptor::new_reader(Box::new(std::io::empty())))
+            .unwrap();
+
+        // At limit now. Close fd1, then allocate again -- should reuse the slot.
+        ctx.close_fd(fd1).unwrap();
+        let fd3 = ctx.allocate_fd(FileDescriptor::new_reader(Box::new(std::io::empty())));
+        assert!(fd3.is_ok(), "Should reuse closed slot");
+        assert_eq!(fd3.unwrap(), fd1, "Should reuse the same fd number");
+    }
+
+    #[test]
+    fn test_max_iovecs_limit() {
+        let ctx = WasiContext::builder()
+            .max_iovecs(2)
+            .stdin(Box::new(std::io::empty()))
+            .build();
+
+        let mut memory = Memory::new(1, None).unwrap();
+        // Set up 3 iovecs (over the limit of 2)
+        for i in 0..3u32 {
+            memory.write_u32(i * 8, 100).unwrap();
+            memory.write_u32(i * 8 + 4, 10).unwrap();
+        }
+
+        let result = ctx.fd_read(&mut memory, 0, 0, 3);
+        assert_eq!(result, Err(WasiErrno::Inval), "Should reject excessive iovec count");
+
+        // 2 iovecs should be fine
+        let result = ctx.fd_read(&mut memory, 0, 0, 2);
+        assert!(result.is_ok(), "2 iovecs should be within limit");
+    }
+
+    #[test]
+    fn test_iovec_pointer_overflow() {
+        let ctx = WasiContext::builder().stdin(Box::new(std::io::empty())).build();
+
+        let mut memory = Memory::new(1, None).unwrap();
+        // Attempt to read iovecs from near the end of u32 space
+        // ptr = u32::MAX - 4, len = 2 would overflow ptr + i*8
+        let result = ctx.fd_read(&mut memory, 0, u32::MAX - 4, 2);
+        assert!(result.is_err(), "Should detect pointer arithmetic overflow");
     }
 }

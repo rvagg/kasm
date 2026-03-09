@@ -24,36 +24,24 @@
 //! ```
 
 use super::WasiContext;
-use crate::parser::module::{FunctionType, ValueType};
-use crate::runtime::store::{Caller, FunctionInstance, Store};
-use crate::runtime::{ImportObject, Memory, RuntimeError, Value};
+use crate::runtime::store::{Caller, Store};
+use crate::runtime::{ImportObject, Memory, RuntimeError};
 use std::sync::Arc;
 
 /// Add AssemblyScript-specific imports to an ImportObject.
 ///
 /// This registers the `env.abort` function required by AssemblyScript's runtime.
 /// Call this after `create_wasi_imports` if your module is compiled from AssemblyScript.
-pub fn add_assemblyscript_imports<T>(store: &mut Store<T>, imports: &mut ImportObject, ctx: Arc<WasiContext>) {
-    // env.abort: AssemblyScript abort function
-    // Called when an assertion fails or abort() is called explicitly.
-    // Signature: (message: i32, fileName: i32, line: i32, column: i32) -> void
-    let abort_type = FunctionType {
-        parameters: vec![ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32],
-        return_types: vec![],
-    };
-    let abort_addr = store.allocate_function(FunctionInstance::Host {
-        func: Box::new(move |caller, args| env_abort(&ctx, caller, args)),
-        func_type: abort_type,
-    });
+pub fn add_assemblyscript_imports<T: 'static>(store: &mut Store<T>, imports: &mut ImportObject, ctx: Arc<WasiContext>) {
+    let abort_addr = store.wrap_with_caller(
+        move |caller: &mut Caller<'_, T>,
+              message_ptr: i32,
+              filename_ptr: i32,
+              line: i32,
+              column: i32|
+              -> Result<(), RuntimeError> { env_abort(&ctx, caller, message_ptr, filename_ptr, line, column) },
+    );
     imports.add_function("env", "abort", abort_addr);
-}
-
-/// Extract an i32 value from function arguments at the given index.
-fn extract_i32(args: &[Value], index: usize) -> Option<i32> {
-    match args.get(index) {
-        Some(Value::I32(v)) => Some(*v),
-        _ => None,
-    }
 }
 
 /// Read an AssemblyScript string from memory.
@@ -93,17 +81,19 @@ fn read_as_string(memory: &Memory, ptr: u32) -> Option<String> {
 /// Called when an assertion fails or when `abort()` is called explicitly in
 /// AssemblyScript code. The message and filename pointers reference UTF-16
 /// encoded strings in linear memory (AssemblyScript's native string format).
-fn env_abort<T>(ctx: &WasiContext, caller: &mut Caller<'_, T>, args: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
-    let message_ptr = extract_i32(&args, 0).unwrap_or(0) as u32;
-    let filename_ptr = extract_i32(&args, 1).unwrap_or(0) as u32;
-    let line = extract_i32(&args, 2).unwrap_or(0);
-    let column = extract_i32(&args, 3).unwrap_or(0);
-
+fn env_abort<T>(
+    ctx: &WasiContext,
+    caller: &mut Caller<'_, T>,
+    message_ptr: i32,
+    filename_ptr: i32,
+    line: i32,
+    column: i32,
+) -> Result<(), RuntimeError> {
     // Try to read the message and filename from memory (best-effort)
     let (message, filename) = match caller.memory() {
         Some(memory) => (
-            read_as_string(memory, message_ptr),
-            read_as_string(memory, filename_ptr),
+            read_as_string(memory, message_ptr as u32),
+            read_as_string(memory, filename_ptr as u32),
         ),
         None => (None, None),
     };
@@ -151,16 +141,9 @@ mod tests {
         let ctx = WasiContext::builder().build();
 
         let mut memory = Memory::new(1, None).unwrap();
-
-        let args = vec![
-            Value::I32(0),  // message ptr (null)
-            Value::I32(0),  // filename ptr (null)
-            Value::I32(42), // line
-            Value::I32(10), // column
-        ];
         let mut data = ();
         let mut caller = Caller::for_test(Some(&mut memory), &mut data);
-        let result = env_abort(&ctx, &mut caller, args);
+        let result = env_abort(&ctx, &mut caller, 0, 0, 42, 10);
 
         assert!(result.is_err());
         assert_eq!(ctx.exit_code(), Some(1));
@@ -208,15 +191,9 @@ mod tests {
         }
         memory.write_bytes(200, &utf16_fn_bytes).unwrap();
 
-        let args = vec![
-            Value::I32(100), // message ptr
-            Value::I32(200), // filename ptr
-            Value::I32(42),  // line
-            Value::I32(10),  // column
-        ];
         let mut data = ();
         let mut caller = Caller::for_test(Some(&mut memory), &mut data);
-        let result = env_abort(&ctx, &mut caller, args);
+        let result = env_abort(&ctx, &mut caller, 100, 200, 42, 10);
 
         assert!(result.is_err());
         if let Err(RuntimeError::Trap(msg)) = result {
